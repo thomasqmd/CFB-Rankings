@@ -7,11 +7,29 @@ cat("====================================================================\n")
 cat("  CFB Retrospective Bayesian Ranking Engine: Environment Setup      \n")
 cat("====================================================================\n\n")
 
-# Set CRAN mirror
-options(repos = c(
-  stan = "https://stan-dev.r-universe.dev",
-  CRAN = "https://cloud.r-project.org"
-))
+# Determine available CPU cores for parallel installation
+num_cores <- max(1L, parallel::detectCores(), na.rm = TRUE)
+
+# Set CRAN mirror and enable parallel installation
+options(
+  repos = c(
+    stan = "https://stan-dev.r-universe.dev",
+    CRAN = "https://cloud.r-project.org"
+  ),
+  Ncpus = num_cores
+)
+
+# Speed up C/C++ compilation and use prebuilt Arrow binaries:
+# - LIBARROW_BINARY="true": Pop!_OS is not on Arrow's default allowlist, causing it
+#   to compile from source by default. Setting this downloads official precompiled C++ binaries in seconds.
+# - CMAKE_BUILD_PARALLEL_LEVEL & MAKEFLAGS: Build C/C++ packages across all cores if compiled from source.
+Sys.setenv(
+  LIBARROW_BINARY = "true",
+  CMAKE_BUILD_PARALLEL_LEVEL = num_cores,
+  MAKEFLAGS = sprintf("-j%d", num_cores)
+)
+
+
 
 # 1. List of required CRAN packages
 cran_packages <- c(
@@ -60,9 +78,9 @@ cran_packages <- c(
 missing_pkgs <- cran_packages[!cran_packages %in% installed.packages()[, "Package"]]
 
 if (length(missing_pkgs) > 0) {
-  cat(sprintf("[CRAN] Installing %d missing package(s):\n%s\n\n", 
-              length(missing_pkgs), paste(paste0("  - ", missing_pkgs), collapse = "\n")))
-  install.packages(missing_pkgs, dependencies = TRUE)
+  cat(sprintf("[CRAN] Installing %d missing package(s) using %d parallel worker(s):\n%s\n\n", 
+              length(missing_pkgs), num_cores, paste(paste0("  - ", missing_pkgs), collapse = "\n")))
+  install.packages(missing_pkgs, dependencies = TRUE, Ncpus = num_cores)
 } else {
   cat("[CRAN] All base packages are already installed.\n\n")
 }
@@ -70,7 +88,11 @@ if (length(missing_pkgs) > 0) {
 # 3. Install cmdstanr if not present
 if (!"cmdstanr" %in% installed.packages()[, "Package"]) {
   cat("[cmdstanr] Installing cmdstanr from Stan R-Universe...\n")
-  install.packages("cmdstanr", repos = c("https://stan-dev.r-universe.dev", "https://cloud.r-project.org"))
+  install.packages(
+    "cmdstanr",
+    repos = c("https://stan-dev.r-universe.dev", "https://cloud.r-project.org"),
+    Ncpus = num_cores
+  )
 } else {
   cat("[cmdstanr] cmdstanr package is already installed.\n")
 }
