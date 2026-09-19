@@ -1,44 +1,42 @@
 # ==============================================================================
 # Script: install_packages.R
 # Purpose: Installs all R and C++ dependencies for the CFB Bayesian Ranking Engine
+#          Uses 'pak' with Pop!_OS -> Ubuntu 24.04 binary mapping and GitHub support.
 # ==============================================================================
 
 cat("====================================================================\n")
 cat("  CFB Retrospective Bayesian Ranking Engine: Environment Setup      \n")
 cat("====================================================================\n\n")
 
-# Determine available CPU cores for parallel installation
-num_cores <- max(1L, parallel::detectCores(), na.rm = TRUE)
-
-# Set CRAN mirror and enable parallel installation
-options(
-  repos = c(
-    stan = "https://stan-dev.r-universe.dev",
-    CRAN = "https://cloud.r-project.org"
-  ),
-  Ncpus = num_cores
-)
-
-# Speed up C/C++ compilation and use prebuilt Arrow binaries:
-# - LIBARROW_BINARY="true": Pop!_OS is not on Arrow's default allowlist, causing it
-#   to compile from source by default. Setting this downloads official precompiled C++ binaries in seconds.
-# - CMAKE_BUILD_PARALLEL_LEVEL & MAKEFLAGS: Build C/C++ packages across all cores if compiled from source.
+# 1. Map Pop!_OS to Ubuntu 24.04 (noble) for pak and Posit Package Manager
+# Pop!_OS identifies as ID=pop in /etc/os-release. Without this explicit mapping,
+# pak falls back to source compilation, failing on missing C/C++ dev headers.
 Sys.setenv(
-  LIBARROW_BINARY = "true",
-  CMAKE_BUILD_PARALLEL_LEVEL = num_cores,
-  MAKEFLAGS = sprintf("-j%d", num_cores)
+  PKG_SYSREQS_PLATFORM = "ubuntu-24.04",
+  LIBARROW_BINARY = "true"
 )
 
+options(
+  pkg.sysreqs_platform = "ubuntu-24.04",
+  repos = c(
+    CRAN = "https://packagemanager.posit.co/cran/__linux__/noble/latest"
+  )
+)
 
+# 2. Ensure 'pak' is installed
+if (!requireNamespace("pak", quietly = TRUE)) {
+  cat("[Setup] Installing 'pak' package manager...\n")
+  install.packages("pak", repos = "https://cloud.r-project.org")
+}
 
-# 1. List of required CRAN packages
-cran_packages <- c(
+# 3. Define required packages (CRAN and GitHub references)
+packages_to_install <- c(
   # Core data manipulation & analytical database
   "tidyverse",
   "duckdb",
   "DBI",
   "arrow",
-  "qs",
+  "qs2",                  # Modern fast serialization (successor to qs; fully compatible with targets format='qs' and R >= 4.5)
   
   # College Football Data (SportsDataverse)
   "cfbfastR",
@@ -48,6 +46,7 @@ cran_packages <- c(
   "posterior",
   "bayesplot",
   "tidybayes",
+  "stan-dev/cmdstanr",    # GitHub / Stan R-Universe: CmdStan interface
   
   # Pipeline orchestration & parallel execution
   "targets",
@@ -74,60 +73,57 @@ cran_packages <- c(
   "remotes"
 )
 
-# 2. Identify missing CRAN packages
-missing_pkgs <- cran_packages[!cran_packages %in% installed.packages()[, "Package"]]
-
-if (length(missing_pkgs) > 0) {
-  cat(sprintf("[CRAN] Installing %d missing package(s) using %d parallel worker(s):\n%s\n\n", 
-              length(missing_pkgs), num_cores, paste(paste0("  - ", missing_pkgs), collapse = "\n")))
-  install.packages(missing_pkgs, dependencies = TRUE, Ncpus = num_cores)
-} else {
-  cat("[CRAN] All base packages are already installed.\n\n")
+# Helper function to extract base package name from reference (e.g. "traversc/qs" -> "qs")
+pkg_name <- function(ref) {
+  sub(".*/", "", ref)
 }
 
-# 3. Install cmdstanr if not present
-if (!"cmdstanr" %in% installed.packages()[, "Package"]) {
-  cat("[cmdstanr] Installing cmdstanr from Stan R-Universe...\n")
-  install.packages(
-    "cmdstanr",
-    repos = c("https://stan-dev.r-universe.dev", "https://cloud.r-project.org"),
-    Ncpus = num_cores
-  )
+expected_pkg_names <- vapply(packages_to_install, pkg_name, character(1), USE.NAMES = FALSE)
+installed_pkgs <- installed.packages()[, "Package"]
+
+# 4. Identify and install missing packages
+missing_mask <- !expected_pkg_names %in% installed_pkgs
+missing_refs <- packages_to_install[missing_mask]
+
+if (length(missing_refs) > 0) {
+  cat(sprintf("[pak] Installing %d missing package(s) using Ubuntu 24.04 binaries:\n%s\n\n", 
+              length(missing_refs), paste(paste0("  - ", missing_refs), collapse = "\n")))
+  pak::pkg_install(missing_refs, ask = FALSE)
 } else {
-  cat("[cmdstanr] cmdstanr package is already installed.\n")
+  cat("[pak] All required packages are already installed.\n\n")
 }
 
-# 4. Check CmdStan C++ Toolchain
+# 5. Check CmdStan C++ Toolchain & Backend
 cat("\nChecking CmdStan C++ backend...\n")
-has_cmdstan <- FALSE
-if ("cmdstanr" %in% installed.packages()[, "Package"]) {
-  library(cmdstanr)
+if (requireNamespace("cmdstanr", quietly = TRUE)) {
   tryCatch({
-    cs_path <- cmdstan_path()
-    cs_ver <- cmdstan_version()
+    cs_path <- cmdstanr::cmdstan_path()
+    cs_ver <- cmdstanr::cmdstan_version()
     cat(sprintf("[CmdStan] Found CmdStan version %s at %s\n", cs_ver, cs_path))
-    has_cmdstan <- TRUE
   }, error = function(e) {
     cat("[CmdStan] CmdStan C++ backend is not yet installed.\n")
     cat("To install CmdStan, run in R:\n")
     cat("  cmdstanr::check_cmdstan_toolchain()\n")
     cat("  cmdstanr::install_cmdstan(cores = parallel::detectCores())\n")
   })
+} else {
+  cat("[CmdStan] cmdstanr package is not yet available.\n")
 }
 
-# 5. Summary Verification
+# 6. Summary Verification
 cat("\n====================================================================\n")
 cat("                     Dependency Check Summary                       \n")
 cat("====================================================================\n")
 
-all_req <- c(cran_packages, "cmdstanr")
-installed_check <- all_req %in% installed.packages()[, "Package"]
+current_installed <- installed.packages()[, "Package"]
+installed_check <- expected_pkg_names %in% current_installed
 
 status_df <- data.frame(
-  Package = all_req,
+  Package = expected_pkg_names,
+  Reference = packages_to_install,
   Installed = ifelse(installed_check, "YES", "NO"),
-  Version = sapply(all_req, function(p) {
-    if (p %in% installed.packages()[, "Package"]) as.character(packageVersion(p)) else "N/A"
+  Version = sapply(expected_pkg_names, function(p) {
+    if (p %in% current_installed) as.character(packageVersion(p)) else "N/A"
   }),
   stringsAsFactors = FALSE
 )
