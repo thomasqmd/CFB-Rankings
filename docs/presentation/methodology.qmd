@@ -1,0 +1,168 @@
+---
+title: "Retrospective Bayesian Ranking Engine"
+subtitle: "College Football Strength of Record & Latent Efficiency Decomposition"
+author: "CFB Bayesian Analytics Team"
+date: today
+format:
+  revealjs:
+    theme: default
+    slide-number: true
+    transition: fade
+    chalkboard: true
+    preview-links: auto
+    css: ../styles/custom.scss
+    self-contained: true
+    math: katex
+---
+
+## Philosophy: Retrospective vs. Predictive
+
+::: {.columns}
+::: {.column width="50%"}
+### Predictive Systems (SP+, FPI)
+- **Objective:** Forecast who wins tomorrow on a neutral field.
+- **Weights:** Margin of victory, play efficiency, recruiting rankings.
+- **Penalty:** Does not strictly reward earning tough wins over weak schedules.
+:::
+
+::: {.column width="50%"}
+### Retrospective Systems (Our Engine)
+- **Objective:** What did teams mathematically earn given what transpired?
+- **Standard of Proof:** End-of-season opponent performance back-calculated.
+- **Integrity:** Pure game outcomes (W/L/OT) balanced with per-play dominance (EPA).
+:::
+:::
+
+---
+
+## Graph Disconnection & The FCS Silo
+
+* CFB competition forms a **directed multi-graph** $\mathcal{G} = (\mathcal{V}, \mathcal{E})$.
+* Across 134 FBS teams and 128 FCS teams:
+  * Only ~110 cross-division matchups occur annually.
+  * Connectivity is sparse and one-sided (FBS hosts ~98% of matchups).
+* **Failure of flat priors:**
+  * Top FCS teams can inflate via internal transitive cycles without proper regularization.
+* **Our Solution:** Hierarchical Bayesian shrinkage.
+
+---
+
+## Pipeline 1: WLD Ordered Logit Resume
+
+We map discrete game outcomes $Y_k \in \{1: \text{L}, 2: \text{OTL}, 3: \text{OTW}, 4: \text{W}\}$:
+
+$$Y_k \sim \text{OrderedLogit}(\eta_k, \mathbf{c})$$
+
+$$\eta_k = \theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}} \cdot (1 - \text{neutral}_k)$$
+
+* $\theta_i$: Latent resume strength of team $i$.
+* $\gamma_{\text{home}} \sim \mathcal{N}(0.2, 0.1^2)$: Home field advantage log-odds.
+* $\mathbf{c} = (c_1, c_2, c_3)$: Internal thresholds with $c_1 < c_2 < c_3$.
+
+---
+
+## Pipeline 2: XPD Student-$t$ Efficiency
+
+Net Expected Points Added (EPA) aggregated across all offensive plays:
+
+$$\text{XPD}_k = \sum_{p \in \text{Plays}(k)} \text{EPA}_{p, \text{home}} - \sum_{p \in \text{Plays}(k)} \text{EPA}_{p, \text{away}}$$
+
+Robust Student-$t$ regression protects against 70-point blowouts and garbage time:
+
+$$\text{XPD}_k \sim \text{Student-}t\left(\nu, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home}} \cdot (1 - \text{neutral}_k), \, \tau^2\right)$$
+
+* $\alpha_i$: Latent per-play efficiency rating.
+* $\nu \sim \text{Gamma}(2, 0.1)$: Heavy-tailed degree of freedom ($\nu \in [4, 8]$).
+
+---
+
+## Hierarchical FCS Regularization
+
+To connect the sparse graph without arbitrary penalty downweighting:
+
+$$\theta_i \sim \mathcal{N}\left(\mu_{\text{sub}[i]}, \, \sigma^2_{\text{sub}[i]}\right)$$
+
+$$\mu_{\text{FBS}} = 0 \quad (\text{Identifiability Anchor})$$
+
+$$\mu_{\text{FCS}} \sim \mathcal{N}(-1.5, 0.5^2) \quad [\text{or } \xi_{\text{FCS}} \sim \mathcal{N}(-21.0, 3.0^2) \text{ in XPD}]$$
+
+* **Elite FCS Programs:** (e.g. North Dakota State) shrink toward upper tail of $\mathcal{N}(\mu_{\text{FCS}}, \sigma^2_{\text{FCS}})$.
+* **Weak FCS Programs:** Yield negligible resume equity in $\theta$ and cap XPD gains.
+
+---
+
+## Sonneborn-Berger & Buchholz Metrics
+
+Map posterior opponent strength into game equity: $\mathcal{M}(\theta_j) = \text{logit}^{-1}(\theta_j)$
+
+::: {.columns}
+::: {.column width="50%"}
+### Sonneborn-Berger (SB)
+$$\text{SB}_i = \sum_{k \in \text{Games}(i)} w_{k, i} \cdot \mathcal{M}(\theta_{\text{opp}[k]})$$
+* Outcome weight $w_{k, i} \in \{0, 1, 2, 3\}$.
+* Directly rewards defeating high-quality opponents.
+:::
+
+::: {.column width="50%"}
+### Buchholz (BH / SOS)
+$$\text{BH}_i = \sum_{k \in \text{Games}(i)} \mathcal{M}(\theta_{\text{opp}[k]})$$
+* Sum of total schedule difficulty faced.
+:::
+:::
+
+---
+
+## High-Dimensional Bradley-Terry Insights
+
+Recent theoretical advances formalize non-asymptotic behavior on sparse graphs:
+
+> **Fang, Han, Luo, & Xu (2026)**, *Recent advances in the Bradley–Terry Model: theory, algorithms, and applications*, arXiv:2601.14727.
+
+* Establishes convergence rates under irregular comparison topologies ($p \ll n$).
+* Verifies that hierarchical Gaussian shrinkage enforces spectral gap stability.
+* Confirms uniform consistency over dynamic ranges when anchor sets are identifiability-constrained.
+
+---
+
+## Production Pipeline: `targets` + DuckDB
+
+```
+[ cfbfastR / CFBD API ]
+          │
+          ▼
+   [ data/cfb.duckdb ]  ◄── Incremental Sync (Weekly)
+          │
+    targets Graph
+    ├── 1. raw_schedules_pbp
+    ├── 2. transform_wld_xpd
+    ├── 3. fit_wld_stan (cmdstanr)
+    ├── 4. fit_xpd_stan (cmdstanr)
+    ├── 5. convergence_diagnostics (R-hat <= 1.01, ESS >= 400)
+    ├── 6. prior_sensitivity_sweep (Spearman rho >= 0.985)
+    ├── 7. benchmark_comparison (AP, CFP, Colley Matrix)
+    └── 8. render_reports_and_dashboards
+```
+
+---
+
+## Diagnostic Gates & Quality Control
+
+Target pipeline halts if MCMC convergence fails:
+
+| Diagnostic Metric | Strict Threshold | Justification |
+|:---|:---:|:---|
+| **Max $\widehat{R}$** | $\le 1.01$ | Chains have thoroughly mixed |
+| **Min $\text{ESS}_{\text{bulk}}$** | $\ge 400$ | Stable posterior mean & median |
+| **Min $\text{ESS}_{\text{tail}}$** | $\ge 400$ | Accurate tail credible intervals |
+| **Post-warmup Divergences** | $= 0$ | No geometric funnel traps |
+| **Prior Sensitivity $\rho$** | $\ge 0.985$ | Robust to FCS hyperparameter shift |
+
+---
+
+## Conclusion & Q&A
+
+* Dual-pipeline architecture cleanly separates **resume accomplishment** from **play efficiency**.
+* Non-centered hierarchical modeling enables robust estimation across 260+ teams.
+* Complete reproducibility managed by `targets` and DuckDB.
+
+**Thank you!**

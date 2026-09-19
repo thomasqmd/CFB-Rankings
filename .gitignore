@@ -1,0 +1,34 @@
+# History & Environment
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Targets workflow store
+_targets/
+_targets_r/
+*.qs
+
+# DuckDB database and write-ahead logs
+data/*.duckdb
+data/*.duckdb.wal
+data/*.tmp
+
+# Compiled binaries and models
+*.o
+*.so
+*.rds
+stan/*.exe
+stan/*_model
+
+# Quarto rendering outputs and cache
+.quarto/
+*_cache/
+*_files/
+docs/reports/*.html
+docs/reports/*.pdf
+docs/presentation/*.html
+
+# OS artifacts
+.DS_Store
+Thumbs.db

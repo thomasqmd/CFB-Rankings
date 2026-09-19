@@ -1,0 +1,43 @@
+// ==============================================================================
+// Stylesheet: tol_palette.scss
+// Purpose: Paul Tol Colorblind-Safe Palettes for CFB Bayesian Analytics
+// ==============================================================================
+
+// Paul Tol "Bright" Palette
+$tol-bright-blue:    #4477AA;
+$tol-bright-cyan:    #66CCEE;
+$tol-bright-green:   #228833;
+$tol-bright-yellow:  #CCBB44;
+$tol-bright-red:     #EE6677;
+$tol-bright-purple:  #AA3377;
+$tol-bright-grey:    #BBBBBB;
+
+// Paul Tol "Muted" Palette (Subdued, high-legibility)
+$tol-muted-rose:     #CC6677;
+$tol-muted-indigo:   #332288;
+$tol-muted-sand:     #DDCC77;
+$tol-muted-green:    #117733;
+$tol-muted-cyan:     #88CCEE;
+$tol-muted-wine:     #882255;
+$tol-muted-teal:     #44AA99;
+$tol-muted-olive:    #999933;
+$tol-muted-purple:   #AA4499;
+$tol-muted-grey:     #DDDDDD;
+
+// Paul Tol "High-Contrast" Palette (Bichromatic and trichromatic extremes)
+$tol-hc-blue:        #004488;
+$tol-hc-yellow:      #DDAA33;
+$tol-hc-red:         #BB5566;
+$tol-hc-black:       #000000;
+$tol-hc-white:       #FFFFFF;
+
+:root {
+  --color-primary: #{$tol-bright-blue};
+  --color-secondary: #{$tol-bright-cyan};
+  --color-accent: #{$tol-bright-red};
+  --color-success: #{$tol-bright-green};
+  --color-warning: #{$tol-bright-yellow};
+  --color-fbs: #{$tol-bright-blue};
+  --color-fcs: #{$tol-muted-rose};
+  --color-neutral: #{$tol-bright-grey};
+}
