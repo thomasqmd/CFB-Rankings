@@ -32,3 +32,4 @@ docs/presentation/*.html
 # OS artifacts
 .DS_Store
 Thumbs.db
+.agents
