@@ -39,18 +39,33 @@ tar_source("R")
 
 # Pipeline Target Graph Definition
 list(
-  # 1. Season & Week tracker (runs once, caches result, skips on subsequent runs)
+  # 1. Target Seasons configuration & Week tracker (checks local DuckDB first)
   tar_target(
     name = current_season_info,
-    command = get_latest_cfb_week(season = 2024)
+    command = get_latest_cfb_week(db_path = "data/cfb.duckdb")
   ),
   
-  # 2. Sync analytical store (DuckDB)
+  # Multi-season historical sync vector: all seasons back to 2013/2014 (BCS finale & CFP era)
+  tar_target(
+    name = active_seasons,
+    command = c(2013L:current_season_info$season)
+  ),
+  
+  # 2. Sync analytical store (DuckDB) across all historical and current seasons
   tar_target(
     name = duckdb_sync,
     command = pull_and_sync_duckdb(
-      season = current_season_info$season, 
+      seasons = active_seasons, 
       db_path = "data/cfb.duckdb"
+    )
+  ),
+  
+  # 2b. Multi-season historical records across all synced seasons in DuckDB
+  tar_target(
+    name = historical_standings,
+    command = get_multi_season_records(
+      db_path = duckdb_sync$db_path,
+      min_season = 2013
     )
   ),
   
@@ -59,6 +74,7 @@ list(
     name = modeling_data,
     command = transform_all_pipelines(
       season = current_season_info$season,
+      max_week = current_season_info$week,
       db_path = duckdb_sync$db_path,
       filter_garbage_time = TRUE
     )
@@ -223,24 +239,31 @@ list(
     )
   ),
   
-  # 15. Quarto Weekly Briefing Report
+  # 15. Quarto Interactive Standalone Dashboard
+  tar_quarto(
+    name = render_dashboard,
+    path = "docs/dashboard.qmd",
+    quiet = FALSE
+  ),
+  
+  # 16. Quarto Weekly Briefing Report
   tar_quarto(
     name = render_weekly_briefing,
     path = "docs/reports/weekly_briefing.qmd",
     quiet = FALSE
   ),
   
-  # 16. Quarto Season Retrospective Report
+  # 17. Quarto Season Retrospective Report
   tar_quarto(
     name = render_season_retro,
     path = "docs/reports/season_retro.qmd",
     quiet = FALSE
   ),
   
-  # 17. Revealjs Methodology Presentation
+  # 18. Quarto Dedicated Model Diagnostics & Convergence Certification Document
   tar_quarto(
-    name = render_methodology_presentation,
-    path = "docs/presentation/methodology.qmd",
+    name = render_model_diagnostics,
+    path = "docs/reports/model_diagnostics.qmd",
     quiet = FALSE
   )
 )

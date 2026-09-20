@@ -53,14 +53,24 @@ build_team_lookup <- function(sched_df) {
 #' @param con Active DuckDB connection
 #' @param season Target season integer
 #' @param team_lookup Master team lookup table
+#' @param max_week Optional maximum week integer threshold
 #' @return Cleaned tibble of discrete game outcomes
-build_wld_dataset <- function(con, season, team_lookup) {
-  query <- sprintf("
-    SELECT game_id, season, week, neutral_site, home_team, away_team, 
-           home_points, away_points, notes
-    FROM schedules
-    WHERE season = %d AND home_points IS NOT NULL AND away_points IS NOT NULL
-  ", season)
+build_wld_dataset <- function(con, season, team_lookup, max_week = NULL) {
+  query <- if (!is.null(max_week)) {
+    sprintf("
+      SELECT game_id, season, week, neutral_site, home_team, away_team, 
+             home_points, away_points, notes
+      FROM schedules
+      WHERE season = %d AND week <= %d AND home_points IS NOT NULL AND away_points IS NOT NULL
+    ", season, as.integer(max_week))
+  } else {
+    sprintf("
+      SELECT game_id, season, week, neutral_site, home_team, away_team, 
+             home_points, away_points, notes
+      FROM schedules
+      WHERE season = %d AND home_points IS NOT NULL AND away_points IS NOT NULL
+    ", season)
+  }
   
   raw_games <- DBI::dbGetQuery(con, query)
   
@@ -100,14 +110,24 @@ build_wld_dataset <- function(con, season, team_lookup) {
 #' @param con Active DuckDB connection
 #' @param season Target season integer
 #' @param team_lookup Master team lookup table
+#' @param max_week Optional maximum week integer threshold
 #' @return Cleaned tibble of actual point differentials
-build_pd_dataset <- function(con, season, team_lookup) {
-  query <- sprintf("
-    SELECT game_id, season, week, neutral_site, home_team, away_team, 
-           home_points, away_points, notes
-    FROM schedules
-    WHERE season = %d AND home_points IS NOT NULL AND away_points IS NOT NULL
-  ", season)
+build_pd_dataset <- function(con, season, team_lookup, max_week = NULL) {
+  query <- if (!is.null(max_week)) {
+    sprintf("
+      SELECT game_id, season, week, neutral_site, home_team, away_team, 
+             home_points, away_points, notes
+      FROM schedules
+      WHERE season = %d AND week <= %d AND home_points IS NOT NULL AND away_points IS NOT NULL
+    ", season, as.integer(max_week))
+  } else {
+    sprintf("
+      SELECT game_id, season, week, neutral_site, home_team, away_team, 
+             home_points, away_points, notes
+      FROM schedules
+      WHERE season = %d AND home_points IS NOT NULL AND away_points IS NOT NULL
+    ", season)
+  }
   
   raw_games <- DBI::dbGetQuery(con, query)
   
@@ -137,19 +157,31 @@ build_pd_dataset <- function(con, season, team_lookup) {
 #' @param con Active DuckDB connection
 #' @param season Target season integer
 #' @param team_lookup Master team lookup table
+#' @param max_week Optional maximum week integer threshold
 #' @param filter_garbage_time Logical indicating whether to filter garbage time plays
 #' @param garbage_threshold Absolute point threshold in 2nd half (default: 28 points)
 #' @return Cleaned tibble of game-level net EPA differential (XPD)
-build_xpd_dataset <- function(con, season, team_lookup, filter_garbage_time = TRUE, garbage_threshold = 28) {
+build_xpd_dataset <- function(con, season, team_lookup, max_week = NULL, filter_garbage_time = TRUE, garbage_threshold = 28) {
   # Query play-by-play joined with schedule metadata
-  query <- sprintf("
-    SELECT p.game_id, p.period, p.posteam, p.defteam, p.epa,
-           s.neutral_site, s.home_team, s.away_team,
-           abs(p.home_score - p.away_score) AS score_diff
-    FROM pbp p
-    JOIN schedules s ON p.game_id = s.game_id
-    WHERE s.season = %d AND p.epa IS NOT NULL
-  ", season)
+  query <- if (!is.null(max_week)) {
+    sprintf("
+      SELECT p.game_id, p.period, p.posteam, p.defteam, p.epa,
+             s.neutral_site, s.home_team, s.away_team,
+             abs(p.home_score - p.away_score) AS score_diff
+      FROM pbp p
+      JOIN schedules s ON p.game_id = s.game_id
+      WHERE s.season = %d AND s.week <= %d AND p.epa IS NOT NULL
+    ", season, as.integer(max_week))
+  } else {
+    sprintf("
+      SELECT p.game_id, p.period, p.posteam, p.defteam, p.epa,
+             s.neutral_site, s.home_team, s.away_team,
+             abs(p.home_score - p.away_score) AS score_diff
+      FROM pbp p
+      JOIN schedules s ON p.game_id = s.game_id
+      WHERE s.season = %d AND p.epa IS NOT NULL
+    ", season)
+  }
   
   raw_pbp <- DBI::dbGetQuery(con, query)
   
@@ -248,28 +280,36 @@ build_xwld_dataset <- function(xpd_df, team_lookup) {
 
 #' Coordinate transformation and package inputs for all 4 Stan models
 #' @param season Target season integer
+#' @param max_week Optional maximum week integer threshold to align with concluded weeks
 #' @param db_path File path to DuckDB
 #' @param filter_garbage_time Logical to filter garbage time in XPD
 #' @return Comprehensive list containing data frames, team lookup, and 4 Stan data lists
-transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_garbage_time = TRUE) {
+transform_all_pipelines <- function(season, max_week = NULL, db_path = "data/cfb.duckdb", filter_garbage_time = TRUE) {
   con <- get_duckdb_connection(db_path, read_only = TRUE)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
   
-  sched_df <- DBI::dbGetQuery(con, sprintf("SELECT * FROM schedules WHERE season = %d", season))
+  sched_query <- if (!is.null(max_week)) {
+    sprintf("SELECT * FROM schedules WHERE season = %d AND week <= %d", season, as.integer(max_week))
+  } else {
+    sprintf("SELECT * FROM schedules WHERE season = %d", season)
+  }
+  sched_df <- DBI::dbGetQuery(con, sched_query)
   team_lookup <- build_team_lookup(sched_df)
   
   # Build 4 modeling datasets
-  wld_df <- build_wld_dataset(con, season, team_lookup)
-  pd_df <- build_pd_dataset(con, season, team_lookup)
-  xpd_df <- build_xpd_dataset(con, season, team_lookup, filter_garbage_time = filter_garbage_time)
+  wld_df <- build_wld_dataset(con, season, team_lookup, max_week = max_week)
+  pd_df <- build_pd_dataset(con, season, team_lookup, max_week = max_week)
+  xpd_df <- build_xpd_dataset(con, season, team_lookup, max_week = max_week, filter_garbage_time = filter_garbage_time)
   xwld_df <- build_xwld_dataset(xpd_df, team_lookup)
   
   # Validate that modeling datasets contain games and plays before constructing Stan inputs
   if (nrow(wld_df) == 0) {
-    stop(sprintf("Cannot construct Stan datasets: 0 completed games found for season %d. Ensure the season has completed games.", season))
+    stop(sprintf("Cannot construct Stan datasets: 0 completed games found for season %d (week <= %s). Ensure the season has completed games.", 
+                 season, ifelse(is.null(max_week), "all", as.character(max_week))))
   }
   if (nrow(xpd_df) == 0) {
-    stop(sprintf("Cannot construct Stan datasets: 0 play-by-play EPA records found for season %d in DuckDB. Ensure DuckDB has synced PBP data for this season.", season))
+    stop(sprintf("Cannot construct Stan datasets: 0 play-by-play EPA records found for season %d (week <= %s) in DuckDB. Ensure DuckDB has synced PBP data for this season.", 
+                 season, ifelse(is.null(max_week), "all", as.character(max_week))))
   }
   
   # 1. Stan data for Pipeline 1: WLD (Ordered Logit Actual Outcomes)
@@ -342,6 +382,7 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   
   return(list(
     season = season,
+    max_week = max_week,
     team_lookup = team_lookup,
     wld_df = wld_df,
     pd_df = pd_df,

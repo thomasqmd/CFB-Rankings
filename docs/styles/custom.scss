@@ -1,13 +1,50 @@
+/*-- scss:defaults --*/
 // ==============================================================================
-// Stylesheet: custom.scss
-// Purpose: Custom typography, layout, cards, and theme overrides for Quarto docs
+// Stylesheet: custom.scss (Defaults Layer)
+// Purpose: Custom variables and theme tokens for Quarto docs & dashboard
 // ==============================================================================
 
-@import "tol_palette.scss";
-
-// Base styling inherited from brand.yml
+// Base styling from _brand.yml
 $brand-primary: #303e4e !default;
 $brand-secondary: #0f9a7d !default;
+
+$primary: #303e4e !default;
+$secondary: #0f9a7d !default;
+$body-bg: #ffffff !default;
+$body-color: #222222 !default;
+
+// Paul Tol Colorblind-Safe Palettes
+$tol-bright-blue:    #4477AA !default;
+$tol-bright-cyan:    #66CCEE !default;
+$tol-bright-green:   #228833 !default;
+$tol-bright-yellow:  #CCBB44 !default;
+$tol-bright-red:     #EE6677 !default;
+$tol-bright-purple:  #AA3377 !default;
+$tol-bright-grey:    #BBBBBB !default;
+
+$tol-muted-rose:     #CC6677 !default;
+$tol-muted-indigo:   #332288 !default;
+$tol-muted-sand:     #DDCC77 !default;
+$tol-muted-green:    #117733 !default;
+$tol-muted-cyan:     #88CCEE !default;
+$tol-muted-wine:     #882255 !default;
+$tol-muted-teal:     #44AA99 !default;
+$tol-muted-olive:    #999933 !default;
+$tol-muted-purple:   #AA4499 !default;
+$tol-muted-grey:     #DDDDDD !default;
+
+/*-- scss:rules --*/
+// ==============================================================================
+// Stylesheet: custom.scss (Rules Layer)
+// Purpose: CSS classes, rules, and layout styling
+// ==============================================================================
+
+:root {
+  --color-primary: #{$brand-primary};
+  --color-secondary: #{$brand-secondary};
+  --color-fbs: #{$brand-primary};
+  --color-fcs: #{$brand-secondary};
+}
 
 // Technical metrics callout cards
 .stat-card {

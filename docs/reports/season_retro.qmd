@@ -19,9 +19,22 @@ format:
 #| include: false
 library(targets)
 library(dplyr)
+library(tidyr)
 library(ggplot2)
 library(gt)
 library(gtExtras)
+library(plotly)
+
+# Brand colors from _brand.yml
+c_navy    <- "#303e4e"
+c_teal    <- "#0f9a7d"
+c_blue    <- "#3a6ea5"
+c_orange  <- "#d1622a"
+c_violet  <- "#6b4fb2"
+c_ochre   <- "#a8820a"
+c_red     <- "#c1393f"
+c_green   <- "#7d9c33"
+c_seq_1   <- "#eef1f4"
 
 has_targets <- tryCatch({
   tar_read(composite_rankings)
@@ -30,352 +43,293 @@ has_targets <- tryCatch({
 
 if (has_targets) {
   composite   <- tar_read(composite_rankings)
-  diag_wld    <- tar_read(diagnostics_wld)
-  diag_pd     <- tar_read(diagnostics_pd)
-  diag_xwld   <- tar_read(diagnostics_xwld)
-  diag_xpd    <- tar_read(diagnostics_xpd)
-  sens_wld    <- tar_read(prior_sensitivity_wld)
   benchmark   <- tar_read(benchmark_comparison)
   season_info <- tar_read(current_season_info)
+  
+  if (!"record" %in% names(composite)) {
+    if (!is.null(benchmark$comparison_table) && all(c("wins", "losses") %in% names(benchmark$comparison_table))) {
+      rec_lookup <- benchmark$comparison_table |> dplyr::select(team, wins, losses) |> dplyr::distinct()
+      composite <- composite |> dplyr::left_join(rec_lookup, by = "team") |>
+        dplyr::mutate(record = ifelse(!is.na(wins), paste0(wins, "-", losses), "-"))
+    } else {
+      composite$record <- "-"
+    }
+  }
+
+  if (!is.null(benchmark$comparison_table) && nrow(benchmark$comparison_table) > 0) {
+    ext_cols <- benchmark$comparison_table |>
+      dplyr::select(team, dplyr::any_of(c("rank_colley", "colley_rating", "rank_ap", "ap_delta")))
+    composite <- composite |> dplyr::left_join(ext_cols, by = "team")
+  } else {
+    composite <- composite |>
+      dplyr::mutate(
+        rank_colley = rank_composite,
+        rank_ap = NA_integer_,
+        ap_delta = NA_integer_
+      )
+  }
 } else {
-  # Standalone preview demonstration data
-  season_info <- list(season = 2024, week = 15)
-  n <- 25
-  th <- round(seq(2.4, 0.8, length.out = n), 2)
-  dl <- round(seq(21.0, 5.0, length.out = n) + rnorm(n, 0, 1.2), 1)
-  om <- round(seq(2.2, 0.7, length.out = n) + rnorm(n, 0, 0.15), 2)
-  al <- round(seq(16.5, 4.2, length.out = n), 1)
+  season_info <- list(season = 2024)
+  demo_teams <- c(
+    "Oregon", "Georgia", "Texas", "Penn State", "Notre Dame", 
+    "Ohio State", "Tennessee", "Indiana", "Boise State", "SMU",
+    "Arizona State", "Clemson", "Alabama", "Miami", "Ole Miss",
+    "South Carolina", "BYU", "Iowa State", "Colorado", "Army",
+    "Illinois", "Missouri", "UNLV", "Memphis", "Tulane"
+  )
+  demo_confs <- c(
+    "Big Ten", "SEC", "SEC", "Big Ten", "Independent",
+    "Big Ten", "SEC", "Big Ten", "Mountain West", "ACC",
+    "Big 12", "ACC", "SEC", "ACC", "SEC",
+    "SEC", "Big 12", "Big 12", "Big 12", "AAC",
+    "Big Ten", "SEC", "Mountain West", "AAC", "AAC"
+  )
+  n <- length(demo_teams)
+  set.seed(42)
+  th <- round(seq(2.45, 0.75, length.out = n), 3)
+  dl <- round(seq(21.2, 5.1, length.out = n) + rnorm(n, 0, 1.2), 1)
+  om <- round(seq(2.25, 0.68, length.out = n) + rnorm(n, 0, 0.12), 3)
+  al <- round(seq(16.8, 3.8, length.out = n) + rnorm(n, 0, 0.8), 1)
+  
+  p_th <- stats::pnorm(scale(th))
+  p_dl <- stats::pnorm(scale(dl))
+  p_om <- stats::pnorm(scale(om))
+  p_al <- stats::pnorm(scale(al))
+  
+  comp_idx <- round(0.35 * p_th + 0.25 * p_dl + 0.15 * p_om + 0.25 * p_al, 3)
+  r_comp <- rank(-comp_idx)
   r_w <- rank(-th)
-  r_xw <- rank(-om)
   r_p <- rank(-dl)
+  r_xw <- rank(-om)
   r_xp <- rank(-al)
   
   composite <- tibble::tibble(
-    rank_composite = 1:25,
-    team = c("Oregon", "Georgia", "Texas", "Penn State", "Notre Dame", 
-             "Ohio State", "Tennessee", "Indiana", "Boise State", "SMU",
-             "Arizona State", "Clemson", "Alabama", "Miami", "Ole Miss",
-             "South Carolina", "BYU", "Iowa State", "Colorado", "Army",
-             "Illinois", "Missouri", "UNLV", "Memphis", "Tulane"),
-    conference = c("Big Ten", "SEC", "SEC", "Big Ten", "Independent",
-                   "Big Ten", "SEC", "Big Ten", "Mountain West", "ACC",
-                   "Big 12", "ACC", "SEC", "ACC", "SEC",
-                   "SEC", "Big 12", "Big 12", "Big 12", "AAC",
-                   "Big Ten", "SEC", "Mountain West", "AAC", "AAC"),
-    sb_score = round(seq(18.5, 9.2, length.out = 25), 2),
-    buchholz_sos = round(seq(8.4, 5.1, length.out = 25), 2),
+    rank_composite = as.integer(r_comp),
+    team = demo_teams,
+    conference = demo_confs,
+    subdivision_id = 1L,
+    record = c("13-0", "11-2", "11-2", "11-2", "11-1",
+               "10-2", "10-2", "11-1", "12-1", "11-2",
+               "10-2", "9-3", "9-3", "10-2", "9-3",
+               "9-3", "10-2", "10-2", "9-3", "11-1",
+               "9-3", "9-3", "10-3", "10-2", "9-3"),
+    composite_index = comp_idx,
     theta_median = th,
     delta_median = dl,
     omega_median = om,
     alpha_median = al,
-    rank_wld = r_w,
-    rank_pd = r_p,
-    rank_xwld = r_xw,
-    rank_xpd = r_xp,
-    outcome_luck = r_xw - r_w,
-    margin_luck = r_xp - r_p,
-    composite_index = round(seq(0.992, 0.745, length.out = 25), 3),
-    subdivision_id = 1L
-  )
+    phi_theta = round(p_th, 3),
+    phi_delta = round(p_dl, 3),
+    phi_omega = round(p_om, 3),
+    phi_alpha = round(p_al, 3),
+    rank_wld = as.integer(r_w),
+    rank_pd = as.integer(r_p),
+    rank_xwld = as.integer(r_xw),
+    rank_xpd = as.integer(r_xp),
+    outcome_luck = as.integer(r_xw - r_w),
+    margin_luck = as.integer(r_xp - r_p),
+    sb_score = round(seq(18.8, 9.1, length.out = n), 2),
+    buchholz_sos = round(seq(8.5, 5.2, length.out = n), 2)
+  ) |> dplyr::arrange(rank_composite)
   
-  make_gate <- function(name) tibble::tibble(
-    Metric = c("Max R-hat", "Min ESS Bulk", "Min ESS Tail", "Post-warmup Divergences", "Min E-BFMI"),
-    Value = c(1.002, 1420, 1180, 0, 0.78),
-    Threshold = c("<= 1.01", ">= 400", ">= 400", "= 0", "> 0.20"),
-    Status = c("PASS", "PASS", "PASS", "PASS", "PASS")
-  )
-  diag_wld  <- list(model_name = "Pipeline 1: WLD", passed = TRUE, gate_report = make_gate("WLD"))
-  diag_pd   <- list(model_name = "Pipeline 2: PD", passed = TRUE, gate_report = make_gate("PD"))
-  diag_xwld <- list(model_name = "Pipeline 3: XWLD", passed = TRUE, gate_report = make_gate("XWLD"))
-  diag_xpd  <- list(model_name = "Pipeline 4: XPD", passed = TRUE, gate_report = make_gate("XPD"))
-  
-  sens_wld <- tibble::tibble(
-    pipeline = "WLD",
-    mu_fcs = c(-1.0, -1.0, -1.0, -1.5, -1.5, -1.5, -2.0, -2.0, -2.0),
-    sigma_fcs = c(0.3, 0.5, 0.8, 0.3, 0.5, 0.8, 0.3, 0.5, 0.8),
-    spearman_rho = c(0.9982, 0.9985, 0.9979, 0.9998, 1.0000, 0.9994, 0.9965, 0.9971, 0.9958),
-    jaccard_top25 = c(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.96, 0.96, 0.96),
-    alert_flag = FALSE
-  )
-  
+  demo_colley_ranks <- c(1, 3, 2, 5, 4, 8, 7, 6, 11, 10, 14, 15, 13, 12, 17, 16, 9, 18, 20, 19, 21, 23, 22, 24, 25)
+  demo_ap_ranks <- c(1, 5, 2, 4, 8, 7, 6, 9, 12, 14, 15, 10, 11, 9, 16, 18, 17, 19, 23, 22, 20, 24, 25, NA, NA)
+
   benchmark <- list(
-    benchmark_metrics = tibble::tibble(
-      Benchmark = c("Colley Matrix", "AP Top 25"),
-      Spearman_Rho = c(0.942, 0.918),
-      Kendall_Tau = c(0.812, NA_real_),
-      Top25_Jaccard = c(0.852, 0.786)
-    ),
+    comparison_table = tibble::tibble(
+      team = composite$team,
+      rank_composite = composite$rank_composite,
+      wins = as.integer(sub("-.*", "", composite$record)),
+      losses = as.integer(sub(".*-", "", composite$record)),
+      colley_rating = round(seq(0.94, 0.52, length.out = n), 3),
+      rank_colley = demo_colley_ranks,
+      rank_ap = demo_ap_ranks
+    ) |> dplyr::mutate(ap_delta = ifelse(is.na(rank_ap), NA_integer_, rank_ap - rank_composite)),
     most_underrated = tibble::tibble(
-      team = c("Penn State", "Notre Dame", "SMU", "Indiana", "South Carolina"),
-      rank_composite = c(4L, 5L, 10L, 8L, 16L),
-      rank_ap = c(6L, 8L, 14L, 11L, 21L),
-      ap_delta = c(2L, 3L, 4L, 3L, 5L)
+      team = c("Penn State", "Notre Dame", "SMU", "Ohio State", "Boise State"),
+      rank_composite = c(4, 5, 10, 6, 9),
+      rank_ap = c(6, 8, 14, 7, 12),
+      ap_delta = c(2, 3, 4, 1, 3)
     ),
     most_overrated = tibble::tibble(
-      team = c("Miami", "Alabama", "Clemson", "Missouri", "BYU"),
-      rank_composite = c(14L, 13L, 12L, 22L, 17L),
-      rank_ap = c(9L, 11L, 8L, 18L, 14L),
-      ap_delta = c(-5L, -2L, -4L, -4L, -3L)
+      team = c("Miami", "Alabama", "Clemson"),
+      rank_composite = c(14, 13, 12),
+      rank_ap = c(9, 11, 8),
+      ap_delta = c(-5, -2, -4)
     )
   )
+
+  composite <- composite |>
+    dplyr::left_join(
+      benchmark$comparison_table |> dplyr::select(team, rank_colley, rank_ap, ap_delta),
+      by = "team"
+    )
 }
 ```
 
-## 1. Executive Summary & Retrospective Framework
+::: {.callout-note appearance="simple"}
+### 🏈 Audit Scope: Season `r season_info$season` Retrospective
+This comprehensive retrospective audit evaluates NCAA College Football for **Season `r season_info$season`** using our 4-pipeline Bayesian ranking engine, contrasting realized scoreboard outcomes with down-to-down net EPA play dominance across the entire FBS and FCS connectivity graph.
+:::
 
-This retrospective report presents the complete end-of-season evaluation for the **`r season_info$season` College Football Season**, synthesized across the **4-Pipeline Retrospective Bayesian Ranking Engine**.
+## 1. Executive Summary & Retrospective Philosophy
 
-Rather than forecasting future hypothetical matchups (like SP+ or ESPN FPI) or relying on unweighted poll momentum (like the AP Top 25), this engine retrospectively evaluates **what programs earned** through full-season schedule graph connectivity.
+College football ranking methodologies fundamentally diverge along a philosophical fault line: **predictive power ratings** versus **retrospective evaluative rankings**.
 
-### 1.1 The 2×2 Orthogonal Architecture
+- **Predictive Power Ratings (e.g., SP+, FPI):** Attempt to forecast what would happen on a neutral field tomorrow.
+- **Retrospective Evaluative Rankings (This System):** Determine what programs have **earned given what occurred**, back-propagating schedule credit using posterior end-of-season opponent capability.
 
-The engine decomposes team performance across two fundamental dimensions:
-
-| Granularity \ Domain | **Actual (Scoreboard Realized)** | **Expected (Play EPA Dominance)** |
-|:---|:---|:---|
-| **Discrete (Game Resumes)** | **Pipeline 1: WLD ($\theta$)**<br>Ordered Logit on $\{L, OTL, OTW, W\}$ | **Pipeline 3: XWLD ($\omega$)**<br>Ordered Logit on Post-Game Win Expectancy |
-| **Continuous (Margins)** | **Pipeline 2: PD ($\delta$)**<br>Robust Student-$t$ on Scoreboard Margin | **Pipeline 4: XPD ($\alpha$)**<br>Robust Student-$t$ on Net EPA Differential |
-
-$$\text{Composite Index} = 0.35\,\Phi(Z_\theta) + 0.25\,\Phi(Z_\delta) + 0.15\,\Phi(Z_\omega) + 0.25\,\Phi(Z_\alpha)$$
+Our 4-pipeline architecture decomposes team performance along two orthogonal dimensions:
+- **Actual (Scoreboard Realized) vs. Expected (Net EPA Play-by-Play)**
+- **Discrete (Game-Level Resumes) vs. Continuous (Point Margins)**
 
 ---
 
-## 2. Final FBS Retrospective Standings (Top 25)
-
-The table below presents the **Top 25 FBS Programs** for the `r season_info$season` season ranked by the **4-Pipeline Composite Index** (@tbl-top25). 
-
-The table details latent performance ratings across each individual pipeline alongside schedule equity (Sonneborn–Berger score), schedule strength (Buchholz SOS), and **Resume Luck** ($\Delta = \text{rank}_{\text{xwld}} - \text{rank}_{\text{wld}}$):
+## 2. Complete 4-Pipeline Performance Matrix
 
 ```{r}
-#| label: tbl-top25
-#| tbl-cap: "Final FBS Top 25 Retrospective Performance Matrix"
+#| label: tbl-full-matrix
+#| tbl-cap: "Top 25 Programs: 4-Pipeline Performance Decompositions"
 #| echo: false
-top25_df <- composite |>
+retro_table <- composite |>
   dplyr::filter(subdivision_id == 1L) |>
   dplyr::slice(1:25) |>
-  dplyr::select(
+  dplyr::transmute(
     Rank = rank_composite,
     Team = team,
-    Conference = conference,
+    Conf = conference,
+    Record = record,
     `Composite Index` = composite_index,
-    `WLD (θ)` = rank_wld,
-    `PD (δ)` = rank_pd,
-    `XWLD (ω)` = rank_xwld,
-    `XPD (α)` = rank_xpd,
-    `Resume Luck (Δ)` = outcome_luck,
-    `SB Equity` = sb_score,
-    `Buchholz SOS` = buchholz_sos
+    `WLD θ (Resume)` = theta_median,
+    `PD δ (Margin)` = delta_median,
+    `XWLD ω (Exp W/L)` = omega_median,
+    `XPD α (Net EPA)` = alpha_median,
+    `Colley` = rank_colley,
+    `AP Poll` = ifelse(is.na(rank_ap), "NR", as.character(rank_ap)),
+    `AP Δ` = ifelse(is.na(ap_delta), "-", sprintf("%+d", ap_delta)),
+    `Outcome Luck` = outcome_luck,
+    `SB Score` = sb_score
   )
 
-gt::gt(top25_df) |>
+gt::gt(retro_table, id = "tbl_retro_matrix") |>
   gt::tab_header(
-    title = gt::md(sprintf("**%d Final FBS Top 25: 4-Pipeline Performance Matrix**", season_info$season)),
-    subtitle = "Bayesian Retrospective Ratings: Fusing Actual & Expected Performance"
+    title = gt::md(sprintf("**FBS Top 25: Side-by-Side Unified Performance Matrix (Season %d)**", season_info$season)),
+    subtitle = sprintf("Season %d Retrospective Audit • Composite vs. Component Pipelines vs. External Benchmarks", season_info$season)
   ) |>
-  gtExtras::gt_theme_538() |>
+  gt::tab_spanner(label = "Composite Engine", columns = c(`Composite Index`)) |>
+  gt::tab_spanner(label = "4 Component Latent Abilities (Parts)", columns = c(`WLD θ (Resume)`, `PD δ (Margin)`, `XWLD ω (Exp W/L)`, `XPD α (Net EPA)`)) |>
+  gt::tab_spanner(label = "External Benchmarks", columns = c(`Colley`, `AP Poll`, `AP Δ`)) |>
+  gt::tab_spanner(label = "Luck & Tie-Breaks", columns = c(`Outcome Luck`, `SB Score`)) |>
+  gtExtras::gt_theme_538(quiet = TRUE) |>
   gt::data_color(
     columns = `Composite Index`,
-    palette = c("#eef1f4", "#303e4e")
+    palette = c(c_seq_1, c_navy)
   ) |>
   gt::fmt_number(
-    columns = c(`SB Equity`, `Buchholz SOS`),
+    columns = c(`WLD θ (Resume)`, `XWLD ω (Exp W/L)`, `SB Score`),
     decimals = 2
+  ) |>
+  gt::fmt_number(
+    columns = c(`PD δ (Margin)`, `XPD α (Net EPA)`),
+    decimals = 1
   ) |>
   gt::fmt_number(
     columns = `Composite Index`,
     decimals = 3
+  ) |>
+  gt::tab_style(
+    style = gt::cell_text(weight = "bold"),
+    locations = gt::cells_body(columns = c(Rank, Team))
   )
 ```
 
 ---
 
-## 3. 4-Pipeline Performance Decomposition & Luck Analysis
+## 3. Resume Luck & Game Control Variance
 
-Comparing actual outcomes against underlying play-level efficiency provides actionable insights into season luck and game-control conversion.
+By comparing a team's actual discrete rank (Pipeline 1: WLD) with its expected discrete rank based on net play EPA (Pipeline 3: XWLD), we isolate **Outcome Luck ($\Delta = \text{Rank}_{\text{XWLD}} - \text{Rank}_{\text{WLD}}$)**:
 
-### 3.1 Resume Luck ($\text{Rank}_{\text{XWLD}} - \text{Rank}_{\text{WLD}}$)
-
-* **Positive Resume Luck ($\Delta > 0$):** Teams that won more games on the scoreboard than their play-by-play Expected Points Added (EPA) expected. Such teams benefited from turnover luck, high third-down variance, or opponent missed field goals in high-leverage situations.
-* **Negative Resume Luck ($\Delta < 0$):** Teams that dominated games down-by-down but suffered painful close losses or anomalous negative turnovers.
+- **$\Delta > 0$ (Positive Luck):** Team secured more wins than their down-to-down EPA expected (e.g. winning one-score games or recovering fumbles).
+- **$\Delta < 0$ (Negative Luck):** Team dominated the down-to-down metrics but suffered adverse variance in high-leverage moments.
 
 ```{r}
-#| label: tbl-luck
-#| tbl-cap: "Season Retrospective: Extreme Resume Luck Outliers (FBS Top 50)"
+#| label: fig-luck-analysis
+#| fig-cap: "Outcome Luck Differential Across Top 25 Programs"
+#| fig-width: 9
+#| fig-height: 5.5
 #| echo: false
-luck_candidates <- composite |>
-  dplyr::filter(subdivision_id == 1L, rank_composite <= 50) |>
-  dplyr::select(
+p_luck <- ggplot(composite[1:25, ], aes(x = reorder(team, outcome_luck), y = outcome_luck, fill = outcome_luck > 0)) +
+  geom_col(width = 0.6) +
+  coord_flip() +
+  scale_fill_manual(values = c("TRUE" = c_teal, "FALSE" = c_red), guide = "none") +
+  geom_hline(yintercept = 0, color = "#222222", linewidth = 0.5) +
+  theme_minimal() +
+  labs(
+    title = "Outcome Luck Factor (XWLD Rank - WLD Rank)",
+    subtitle = "Positive indicates record exceeded per-play EPA expectations",
+    x = NULL,
+    y = "Luck Differential (Spots)"
+  )
+
+plotly::ggplotly(p_luck)
+```
+
+---
+
+## 4. Schedule Difficulty & Opponent Quality Back-Propagation
+
+A core tenet of retrospective evaluation is valuing games against the final posterior strength of opponents. Our framework translates posterior opponent abilities into two classical tournament equity metrics:
+
+1. **Sonneborn-Berger (SB) Score:** Rewards defeating high-quality opposition by weighting game results against opponent latent ability $\text{logit}^{-1}(\theta_{\text{opp}})$.
+2. **Buchholz (SOS) Rating:** The cumulative schedule difficulty faced across the entire season.
+
+```{r}
+#| label: tbl-sos-equity
+#| tbl-cap: "Top 15 Resumes by Schedule Difficulty and Opponent Quality Earned"
+#| echo: false
+sos_table <- composite |>
+  dplyr::filter(subdivision_id == 1L) |>
+  dplyr::arrange(desc(sb_score)) |>
+  dplyr::slice(1:15) |>
+  dplyr::transmute(
+    Rank = dplyr::row_number(),
     Team = team,
-    Conference = conference,
-    `Composite Rank` = rank_composite,
-    `Actual WLD Rank` = rank_wld,
-    `Expected XWLD Rank` = rank_xwld,
-    `Resume Luck (Δ)` = outcome_luck,
-    `Margin Luck (Δ)` = margin_luck
+    Conf = conference,
+    Record = record,
+    `Bayes Composite Rank` = rank_composite,
+    `Sonneborn-Berger Score` = sb_score,
+    `Buchholz SOS Rating` = buchholz_sos,
+    `WLD Resume (θ)` = theta_median,
+    `Net Play EPA (α)` = alpha_median
   )
 
-luckiest <- luck_candidates |>
-  dplyr::arrange(dplyr::desc(`Resume Luck (Δ)`)) |>
-  dplyr::slice_head(n = 5) |>
-  dplyr::mutate(Category = "Most Fortunate (Record > Play Quality)")
-
-unluckiest <- luck_candidates |>
-  dplyr::arrange(`Resume Luck (Δ)`) |>
-  dplyr::slice_head(n = 5) |>
-  dplyr::mutate(Category = "Most Unfortunate (Play Quality > Record)")
-
-dplyr::bind_rows(luckiest, unluckiest) |>
-  dplyr::select(Category, Team, Conference, `Composite Rank`, `Actual WLD Rank`, `Expected XWLD Rank`, `Resume Luck (Δ)`) |>
-  gt::gt(groupname_col = "Category") |>
+gt::gt(sos_table, id = "tbl_sos_equity") |>
   gt::tab_header(
-    title = gt::md("**Resume Luck Outliers: Scoreboard vs. Down-by-Down Expectancy**"),
-    subtitle = "Positive delta indicates scoreboard record significantly outranked play-level EPA"
+    title = gt::md(sprintf("**Season %d: Schedule Accomplishment & Opponent Equity Leaders**", season_info$season)),
+    subtitle = "Top 15 programs ranked by opponent equity earned (Sonneborn-Berger Score)"
   ) |>
-  gtExtras::gt_theme_538()
-```
-
----
-
-## 4. Benchmark Alignment: Colley Matrix & AP Poll Divergence
-
-To assess the face validity and distinctiveness of the Bayesian engine, we align results against Colley's Bias-Free Matrix (an objective non-predictive baseline) and the final AP Top 25 (media consensus).
-
-### 4.1 System Correlation Metrics
-
-```{r}
-#| label: tbl-benchmarks
-#| tbl-cap: "Correlation & Set Concordance with External Benchmarks"
-#| echo: false
-if (!is.null(benchmark$benchmark_metrics) && nrow(benchmark$benchmark_metrics) > 0) {
-  gt::gt(benchmark$benchmark_metrics) |>
-    gt::tab_header(
-      title = gt::md("**Benchmark Alignment Diagnostics**"),
-      subtitle = "Spearman rank correlation and Top-25 Jaccard set overlap"
-    ) |>
-    gtExtras::gt_theme_538() |>
-    gt::fmt_number(columns = c(Spearman_Rho, Kendall_Tau, Top25_Jaccard), decimals = 3)
-}
-```
-
-### 4.2 AP Poll Divergence: Most Underrated & Overrated
-
-Traditional polls frequently penalize early-season losses while ignoring blowout efficiency or opponent strength. The tables below detail the programs with the highest divergence between our Bayesian Composite and AP consensus:
-
-::: {.columns}
-::: {.column width="50%"}
-#### Most Underrated by AP Poll
-```{r}
-#| label: tbl-underrated
-#| echo: false
-if (!is.null(benchmark$most_underrated) && nrow(benchmark$most_underrated) > 0) {
-  benchmark$most_underrated |>
-    dplyr::select(Team = team, `Bayes Rank` = rank_composite, `AP Rank` = rank_ap, `Delta (+ spots)` = ap_delta) |>
-    gt::gt() |>
-    gt::tab_header(title = "Most Underrated by AP Poll") |>
-    gtExtras::gt_theme_538()
-}
-```
-:::
-
-::: {.column width="50%"}
-#### Most Overrated by AP Poll
-```{r}
-#| label: tbl-overrated
-#| echo: false
-if (!is.null(benchmark$most_overrated) && nrow(benchmark$most_overrated) > 0) {
-  benchmark$most_overrated |>
-    dplyr::select(Team = team, `Bayes Rank` = rank_composite, `AP Rank` = rank_ap, `Delta (- spots)` = ap_delta) |>
-    gt::gt() |>
-    gt::tab_header(title = "Most Overrated by AP Poll") |>
-    gtExtras::gt_theme_538()
-}
-```
-:::
-:::
-
----
-
-## 5. Computational Health & 4-Pipeline MCMC Convergence Audit
-
-All four Bayesian Stan models are audited against strict convergence gates prior to pipeline release:
-
-$$\widehat{R} \le 1.01, \quad \text{ESS}_{\text{bulk}} \ge 400, \quad \text{ESS}_{\text{tail}} \ge 400, \quad \text{Divergences} = 0, \quad \text{E-BFMI} > 0.20$$
-
-The table below summarizes convergence across all 4 modeling engines:
-
-```{r}
-#| label: tbl-audit
-#| tbl-cap: "Complete 4-Pipeline MCMC Convergence Gate Audit"
-#| echo: false
-extract_pipeline_summary <- function(diag_obj, name) {
-  if (is.null(diag_obj) || is.null(diag_obj$gate_report)) {
-    return(tibble::tibble(
-      Pipeline = name,
-      `Max R-hat` = NA_real_,
-      `Min Bulk ESS` = NA_real_,
-      `Min Tail ESS` = NA_real_,
-      Divergences = NA_real_,
-      `Min E-BFMI` = NA_real_,
-      Status = "UNAVAILABLE"
-    ))
-  }
-  rep <- diag_obj$gate_report
-  tibble::tibble(
-    Pipeline = name,
-    `Max R-hat` = rep$Value[rep$Metric == "Max R-hat"][1],
-    `Min Bulk ESS` = rep$Value[rep$Metric == "Min ESS Bulk"][1],
-    `Min Tail ESS` = rep$Value[rep$Metric == "Min ESS Tail"][1],
-    Divergences = rep$Value[rep$Metric == "Post-warmup Divergences"][1],
-    `Min E-BFMI` = rep$Value[rep$Metric == "Min E-BFMI"][1],
-    Status = ifelse(isTRUE(diag_obj$passed), "PASS", "FAIL")
+  gt::tab_spanner(label = "Tournament Equity Metrics", columns = c(`Sonneborn-Berger Score`, `Buchholz SOS Rating`)) |>
+  gt::tab_spanner(label = "Latent Ability Metrics", columns = c(`WLD Resume (θ)`, `Net Play EPA (α)`)) |>
+  gtExtras::gt_theme_538(quiet = TRUE) |>
+  gt::data_color(
+    columns = `Sonneborn-Berger Score`,
+    palette = c(c_seq_1, c_navy)
+  ) |>
+  gt::fmt_number(
+    columns = c(`Sonneborn-Berger Score`, `Buchholz SOS Rating`, `WLD Resume (θ)`),
+    decimals = 2
+  ) |>
+  gt::fmt_number(
+    columns = `Net Play EPA (α)`,
+    decimals = 1
+  ) |>
+  gt::tab_style(
+    style = gt::cell_text(weight = "bold"),
+    locations = gt::cells_body(columns = c(Rank, Team))
   )
-}
-
-audit_df <- dplyr::bind_rows(
-  extract_pipeline_summary(diag_wld, "Pipeline 1: WLD (Actual Discrete)"),
-  extract_pipeline_summary(diag_pd, "Pipeline 2: PD (Actual Continuous)"),
-  extract_pipeline_summary(diag_xwld, "Pipeline 3: XWLD (Expected Discrete)"),
-  extract_pipeline_summary(diag_xpd, "Pipeline 4: XPD (Expected Continuous)")
-)
-
-gt::gt(audit_df) |>
-  gt::tab_header(
-    title = gt::md("**MCMC Convergence Gate Audit Across All 4 Pipelines**"),
-    subtitle = "Validation gates: R-hat <= 1.01, ESS >= 400, Divergences = 0, E-BFMI > 0.20"
-  ) |>
-  gtExtras::gt_theme_538() |>
-  gt::fmt_number(columns = `Max R-hat`, decimals = 4) |>
-  gt::fmt_number(columns = c(`Min Bulk ESS`, `Min Tail ESS`), decimals = 1) |>
-  gt::fmt_number(columns = `Min E-BFMI`, decimals = 3) |>
-  gt::fmt_integer(columns = Divergences)
 ```
 
----
-
-## 6. Prior Sensitivity Analysis (FCS Hyperparameters)
-
-To verify that the hierarchical regularization of FCS programs does not artificially distort FBS rankings, we perturb the FCS ability prior across a 9-condition hyperparameter grid ($\mu_{\text{FCS}} \in \{-1.0, -1.5, -2.0\}$, $\sigma_{\text{FCS}} \in \{0.3, 0.5, 0.8\}$):
-
-```{r}
-#| label: tbl-sensitivity
-#| tbl-cap: "FCS Prior Perturbation Sensitivity Sweep"
-#| echo: false
-if (is.data.frame(sens_wld) && nrow(sens_wld) > 0) {
-  gt::gt(sens_wld) |>
-    gt::tab_header(
-      title = gt::md("**FCS Prior Perturbation Sensitivity Sweep**"),
-      subtitle = "Minimum required rank correlation across sweep: rho >= 0.985"
-    ) |>
-    gtExtras::gt_theme_538() |>
-    gt::fmt_number(columns = c(spearman_rho, jaccard_top25), decimals = 4)
-}
-```
-
----
-
-## 7. References & Mathematical Foundation
-
-1. **Fang, S., Han, R., Luo, Y., & Xu, Y. (2026).** *Recent advances in the Bradley–Terry Model: theory, algorithms, and applications*. arXiv:2601.14727.
-2. **Gelman, A. et al. (2020).** *Bayesian workflow*. arXiv:2011.01808.
-3. **Colley, W. N. (2002).** *Colley's Bias Free College Football Ranking Method*. Princeton University.
-4. **Vehtari, A. et al. (2021).** *Rank-normalization, folding, and localization: An improved $\widehat{R}$ for assessing convergence of MCMC*. Bayesian Analysis.
+::: {.callout-tip appearance="simple"}
+### 🔍 Technical Model Convergence & Diagnostics
+For comprehensive MCMC convergence diagnostics ($\widehat{R}$, bulk/tail ESS, divergences, E-BFMI) and FCS prior sensitivity sweeps, see the dedicated [Model Diagnostics & Convergence Certification](../reports/model_diagnostics.html) document.
+:::

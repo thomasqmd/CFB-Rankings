@@ -70,12 +70,31 @@ compute_colley_matrix <- function(wld_df, team_lookup) {
   return(colley_df)
 }
 
-#' Fetch AP Poll, Coaches Poll, and CFP Committee rankings
+#' Fetch AP Poll, Coaches Poll, and CFP Committee rankings with local disk caching
 #' @param season Target season integer
 #' @param week Optional target week integer
+#' @param cache_dir Directory to store cached poll data
+#' @param force_refresh Logical; if FALSE, checks disk cache before hitting external API
 #' @return Cleaned tibble of media/committee rankings
-fetch_external_polls <- function(season, week = NULL) {
-  message(sprintf("[Benchmark] Fetching external poll rankings for season %d...", season))
+fetch_external_polls <- function(season, week = NULL, cache_dir = "data/external_polls", force_refresh = FALSE) {
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_file <- file.path(
+    cache_dir, 
+    sprintf("polls_%d_%s.rds", season, ifelse(is.null(week), "latest", as.character(week)))
+  )
+  
+  # 1. Check local disk cache first to protect external API rate limits
+  if (!force_refresh && file.exists(cache_file)) {
+    cached <- tryCatch(readRDS(cache_file), error = function(e) NULL)
+    if (!is.null(cached) && is.data.frame(cached) && nrow(cached) > 0) {
+      message(sprintf("[Benchmark] Poll rankings for season %d (week %s) loaded from cache: %s", 
+                      season, ifelse(is.null(week), "latest", as.character(week)), cache_file))
+      return(cached)
+    }
+  }
+  
+  message(sprintf("[Benchmark] Querying external poll API for season %d (week %s)...", 
+                  season, ifelse(is.null(week), "latest", as.character(week))))
   
   polls_raw <- tryCatch({
     cfbfastR::cfbd_rankings(season = season, week = week)
@@ -103,6 +122,12 @@ fetch_external_polls <- function(season, week = NULL) {
       rank = as.integer(rank),
       points = as.numeric(points)
     )
+  
+  # 2. Persist to disk cache so subsequent targets runs make zero API requests
+  if (nrow(cleaned_polls) > 0) {
+    tryCatch(saveRDS(cleaned_polls, cache_file), error = function(e) NULL)
+    message(sprintf("[Benchmark] Cached %d poll records to %s", nrow(cleaned_polls), cache_file))
+  }
   
   return(cleaned_polls)
 }

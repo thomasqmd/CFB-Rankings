@@ -1,36 +1,38 @@
+/*-- scss:defaults --*/
 // ==============================================================================
 // Stylesheet: tol_palette.scss
 // Purpose: Paul Tol Colorblind-Safe Palettes for CFB Bayesian Analytics
 // ==============================================================================
 
 // Paul Tol "Bright" Palette
-$tol-bright-blue:    #4477AA;
-$tol-bright-cyan:    #66CCEE;
-$tol-bright-green:   #228833;
-$tol-bright-yellow:  #CCBB44;
-$tol-bright-red:     #EE6677;
-$tol-bright-purple:  #AA3377;
-$tol-bright-grey:    #BBBBBB;
+$tol-bright-blue:    #4477AA !default;
+$tol-bright-cyan:    #66CCEE !default;
+$tol-bright-green:   #228833 !default;
+$tol-bright-yellow:  #CCBB44 !default;
+$tol-bright-red:     #EE6677 !default;
+$tol-bright-purple:  #AA3377 !default;
+$tol-bright-grey:    #BBBBBB !default;
 
 // Paul Tol "Muted" Palette (Subdued, high-legibility)
-$tol-muted-rose:     #CC6677;
-$tol-muted-indigo:   #332288;
-$tol-muted-sand:     #DDCC77;
-$tol-muted-green:    #117733;
-$tol-muted-cyan:     #88CCEE;
-$tol-muted-wine:     #882255;
-$tol-muted-teal:     #44AA99;
-$tol-muted-olive:    #999933;
-$tol-muted-purple:   #AA4499;
-$tol-muted-grey:     #DDDDDD;
+$tol-muted-rose:     #CC6677 !default;
+$tol-muted-indigo:   #332288 !default;
+$tol-muted-sand:     #DDCC77 !default;
+$tol-muted-green:    #117733 !default;
+$tol-muted-cyan:     #88CCEE !default;
+$tol-muted-wine:     #882255 !default;
+$tol-muted-teal:     #44AA99 !default;
+$tol-muted-olive:    #999933 !default;
+$tol-muted-purple:   #AA4499 !default;
+$tol-muted-grey:     #DDDDDD !default;
 
 // Paul Tol "High-Contrast" Palette (Bichromatic and trichromatic extremes)
-$tol-hc-blue:        #004488;
-$tol-hc-yellow:      #DDAA33;
-$tol-hc-red:         #BB5566;
-$tol-hc-black:       #000000;
-$tol-hc-white:       #FFFFFF;
+$tol-hc-blue:        #004488 !default;
+$tol-hc-yellow:      #DDAA33 !default;
+$tol-hc-red:         #BB5566 !default;
+$tol-hc-black:       #000000 !default;
+$tol-hc-white:       #FFFFFF !default;
 
+/*-- scss:rules --*/
 :root {
   --color-primary: #{$tol-bright-blue};
   --color-secondary: #{$tol-bright-cyan};

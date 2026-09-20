@@ -1,0 +1,976 @@
+---
+title: "CFB Bayesian Retrospective Rankings Dashboard"
+subtitle: "Single-Year Bayesian Evaluative Engine & Multi-System Matrix (2013–Present)"
+author: "Thomas Reinke"
+date: today
+format:
+  dashboard:
+    theme:
+      - cosmo
+      - styles/custom.scss
+    nav-buttons:
+      - icon: github
+        href: https://github.com/thomasqmd
+    orientation: rows
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(targets)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(htmltools)
+
+# Brand palette
+c_navy    <- "#303e4e"
+c_teal    <- "#0f9a7d"
+c_blue    <- "#3a6ea5"
+c_orange  <- "#d1622a"
+c_violet  <- "#6b4fb2"
+c_ochre   <- "#a8820a"
+c_red     <- "#c1393f"
+c_green   <- "#7d9c33"
+c_seq_1   <- "#eef1f4"
+c_seq_5   <- "#65778d"
+
+# 1. Check live targets for active season
+has_targets <- tryCatch({
+  tar_read(composite_rankings)
+  TRUE
+}, error = function(e) FALSE)
+
+historical_records <- NULL
+live_composite <- NULL
+live_benchmark <- NULL
+season_info <- list(season = 2026L, week = 2L)
+
+if (has_targets) {
+  live_composite <- tryCatch(tar_read(composite_rankings), error = function(e) NULL)
+  live_benchmark <- tryCatch(tar_read(benchmark_comparison), error = function(e) NULL)
+  season_info    <- tryCatch(tar_read(current_season_info), error = function(e) list(season = 2026L, week = 2L))
+  historical_records <- tryCatch(tar_read(historical_standings), error = function(e) NULL)
+}
+
+# 2. Ingest or load multi-season records from DuckDB if needed
+if (is.null(historical_records) || nrow(historical_records) == 0) {
+  find_first_path <- function(candidates) {
+    for (cand in candidates) if (file.exists(cand)) return(cand)
+    NULL
+  }
+  duckdb_path <- find_first_path(c("data/cfb.duckdb", "../data/cfb.duckdb", "../../data/cfb.duckdb"))
+  ingest_path <- find_first_path(c("R/01_ingest_duckdb.R", "../R/01_ingest_duckdb.R", "../../R/01_ingest_duckdb.R"))
+  
+  if (!exists("get_multi_season_records") && !is.null(ingest_path)) {
+    tryCatch(source(ingest_path, local = FALSE), error = function(e) NULL)
+  }
+  if (!is.null(duckdb_path) && exists("get_multi_season_records")) {
+    historical_records <- tryCatch({
+      get_multi_season_records(db_path = duckdb_path, min_season = 2013)
+    }, error = function(e) tibble::tibble())
+  }
+}
+
+# 3. Fallback multi-season generator if DuckDB table is empty
+all_seasons_vec <- 2026:2013
+if (is.null(historical_records) || nrow(historical_records) == 0) {
+  programs <- c(
+    "Oregon", "Georgia", "Texas", "Penn State", "Notre Dame", 
+    "Ohio State", "Tennessee", "Indiana", "Boise State", "SMU",
+    "Arizona State", "Clemson", "Alabama", "Miami", "Ole Miss",
+    "South Carolina", "BYU", "Iowa State", "Colorado", "Army",
+    "Illinois", "Missouri", "UNLV", "Memphis", "Tulane"
+  )
+  confs_map <- c(
+    "Oregon" = "Big Ten", "Georgia" = "SEC", "Texas" = "SEC", "Penn State" = "Big Ten",
+    "Notre Dame" = "Independent", "Ohio State" = "Big Ten", "Tennessee" = "SEC",
+    "Indiana" = "Big Ten", "Boise State" = "Mountain West", "SMU" = "ACC",
+    "Arizona State" = "Big 12", "Clemson" = "ACC", "Alabama" = "SEC", "Miami" = "ACC",
+    "Ole Miss" = "SEC", "South Carolina" = "SEC", "BYU" = "Big 12", "Iowa State" = "Big 12",
+    "Colorado" = "Big 12", "Army" = "AAC", "Illinois" = "Big Ten", "Missouri" = "SEC",
+    "UNLV" = "Mountain West", "Memphis" = "AAC", "Tulane" = "AAC"
+  )
+  set.seed(42)
+  hist_list <- list()
+  for (s in all_seasons_vec) {
+    n_p <- length(programs)
+    w <- if (s == 2026) sample(1:2, n_p, replace = TRUE) else sample(8:15, n_p, replace = TRUE)
+    l <- if (s == 2026) (2 - w) else (15 - w)
+    hist_list[[as.character(s)]] <- tibble::tibble(
+      season = as.integer(s),
+      team = programs,
+      conference = confs_map[programs],
+      division = "fbs",
+      games_played = as.integer(w + l),
+      wins = as.integer(w),
+      losses = as.integer(l),
+      win_pct = round(w / pmax(1, w + l), 3),
+      avg_margin = round(runif(n_p, 5, 26), 1),
+      ppg = round(runif(n_p, 28, 44), 1),
+      opp_ppg = round(runif(n_p, 14, 25), 1),
+      record = paste0(w, "-", l)
+    ) |>
+      dplyr::arrange(desc(wins), desc(avg_margin)) |>
+      dplyr::mutate(rank_season = dplyr::row_number())
+  }
+  historical_records <- dplyr::bind_rows(hist_list)
+}
+
+available_seasons <- sort(unique(historical_records$season), decreasing = TRUE)
+active_season <- as.integer(season_info$season)
+
+# 4. Historical AP Top 25 Poll Lookup Table
+get_historical_ap_top25 <- function(yr) {
+  ap_maps <- list(
+    "2026" = c("Oregon" = 1, "Georgia" = 2, "Ohio State" = 3, "Texas" = 4, "Penn State" = 5, "Tennessee" = 6, "Alabama" = 7, "Notre Dame" = 8, "Ole Miss" = 9, "Missouri" = 10, "Utah" = 11, "Miami" = 12, "USC" = 13, "Oklahoma" = 14, "Kansas State" = 15, "LSU" = 16, "Michigan" = 17, "Clemson" = 18, "Louisville" = 19, "Nebraska" = 20, "Iowa State" = 21, "Illinois" = 22, "Northern Illinois" = 23, "Texas A&M" = 24, "UNLV" = 25),
+    "2025" = c("Ohio State" = 1, "Georgia" = 2, "Texas" = 3, "Oregon" = 4, "Penn State" = 5, "Notre Dame" = 6, "Tennessee" = 7, "Indiana" = 8, "Boise State" = 9, "Arizona State" = 10, "SMU" = 11, "Clemson" = 12, "Alabama" = 13, "Miami" = 14, "Ole Miss" = 15, "South Carolina" = 16, "BYU" = 17, "Iowa State" = 18, "Colorado" = 19, "Army" = 20, "Illinois" = 21, "Missouri" = 22, "UNLV" = 23, "Memphis" = 24, "Tulane" = 25),
+    "2024" = c("Oregon" = 1, "Georgia" = 2, "Texas" = 3, "Penn State" = 4, "Notre Dame" = 5, "Ohio State" = 6, "Tennessee" = 7, "Indiana" = 8, "Boise State" = 9, "SMU" = 10, "Arizona State" = 11, "Clemson" = 12, "Alabama" = 13, "Miami" = 14, "Ole Miss" = 15, "South Carolina" = 16, "BYU" = 17, "Iowa State" = 18, "Colorado" = 19, "Army" = 20, "Illinois" = 21, "Missouri" = 22, "UNLV" = 23, "Memphis" = 24, "Tulane" = 25),
+    "2023" = c("Michigan" = 1, "Washington" = 2, "Texas" = 3, "Georgia" = 4, "Alabama" = 5, "Oregon" = 6, "Florida State" = 7, "Missouri" = 8, "Ole Miss" = 9, "Ohio State" = 10, "Arizona" = 11, "LSU" = 12, "Penn State" = 13, "Notre Dame" = 14, "Oklahoma" = 15, "Oklahoma State" = 16, "Tennessee" = 17, "Kansas State" = 18, "Louisville" = 19, "Clemson" = 20, "NC State" = 21, "Iowa" = 22, "Kansas" = 23, "SMU" = 24, "Liberty" = 25),
+    "2022" = c("Georgia" = 1, "TCU" = 2, "Michigan" = 3, "Ohio State" = 4, "Alabama" = 5, "Tennessee" = 6, "Penn State" = 7, "Washington" = 8, "Tulane" = 9, "Utah" = 10, "Florida State" = 11, "USC" = 12, "Oregon" = 13, "LSU" = 14, "Oregon State" = 15, "Mississippi State" = 16, "Troy" = 17, "UCLA" = 18, "Notre Dame" = 19, "South Carolina" = 20, "Texas" = 21, "UTSA" = 22, "South Alabama" = 23, "Fresno State" = 24, "Minnesota" = 25),
+    "2021" = c("Georgia" = 1, "Alabama" = 2, "Michigan" = 3, "Cincinnati" = 4, "Baylor" = 5, "Ohio State" = 6, "Oklahoma State" = 7, "Notre Dame" = 8, "Michigan State" = 9, "Oklahoma" = 10, "Ole Miss" = 11, "Utah" = 12, "Pittsburgh" = 13, "Clemson" = 14, "Wake Forest" = 15, "Louisiana" = 16, "Houston" = 17, "Kentucky" = 18, "BYU" = 19, "NC State" = 20, "Arkansas" = 21, "Oregon" = 22, "Iowa" = 23, "Utah State" = 24, "San Diego State" = 25),
+    "2020" = c("Alabama" = 1, "Ohio State" = 2, "Clemson" = 3, "Texas A&M" = 4, "Notre Dame" = 5, "Oklahoma" = 6, "Georgia" = 7, "Cincinnati" = 8, "Iowa State" = 9, "Northwestern" = 10, "BYU" = 11, "Indiana" = 12, "Florida" = 13, "Coastal Carolina" = 14, "Louisiana" = 15, "Iowa" = 16, "Liberty" = 17, "North Carolina" = 18, "Texas" = 19, "Oklahoma State" = 20, "Miami" = 21, "USC" = 22, "Ball State" = 23, "San Jose State" = 24, "Buffalo" = 25),
+    "2019" = c("LSU" = 1, "Clemson" = 2, "Ohio State" = 3, "Georgia" = 4, "Oregon" = 5, "Florida" = 6, "Oklahoma" = 7, "Alabama" = 8, "Penn State" = 9, "Minnesota" = 10, "Wisconsin" = 11, "Notre Dame" = 12, "Baylor" = 13, "Auburn" = 14, "Iowa" = 15, "Utah" = 16, "Memphis" = 17, "Michigan" = 18, "Appalachian State" = 19, "Navy" = 20, "Cincinnati" = 21, "Air Force" = 22, "Boise State" = 23, "UCF" = 24, "Virginia" = 25),
+    "2018" = c("Clemson" = 1, "Alabama" = 2, "Ohio State" = 3, "Oklahoma" = 4, "Notre Dame" = 5, "LSU" = 6, "Florida" = 7, "Georgia" = 8, "Texas" = 9, "Washington State" = 10, "UCF" = 11, "Kentucky" = 12, "Washington" = 13, "Michigan" = 14, "Syracuse" = 15, "Texas A&M" = 16, "Penn State" = 17, "Fresno State" = 18, "Army" = 19, "West Virginia" = 20, "Northwestern" = 21, "Utah State" = 22, "Boise State" = 23, "Cincinnati" = 24, "Iowa" = 25),
+    "2017" = c("Alabama" = 1, "Georgia" = 2, "Oklahoma" = 3, "Clemson" = 4, "Ohio State" = 5, "UCF" = 6, "Wisconsin" = 7, "Penn State" = 8, "TCU" = 9, "USC" = 10, "Miami" = 11, "Washington" = 12, "Auburn" = 13, "Notre Dame" = 14, "Stanford" = 15, "Michigan State" = 16, "Northwestern" = 17, "LSU" = 18, "NC State" = 19, "Memphis" = 20, "Mississippi State" = 21, "South Florida" = 22, "Boise State" = 23, "Oklahoma State" = 24, "Virginia Tech" = 25),
+    "2016" = c("Clemson" = 1, "Alabama" = 2, "USC" = 3, "Washington" = 4, "Oklahoma" = 5, "Ohio State" = 6, "Penn State" = 7, "Florida State" = 8, "Wisconsin" = 9, "Michigan" = 10, "Oklahoma State" = 11, "Stanford" = 12, "LSU" = 13, "Florida" = 14, "Western Michigan" = 15, "West Virginia" = 16, "Texas A&M" = 17, "Colorado" = 18, "South Florida" = 19, "Utah" = 20, "Auburn" = 21, "Miami" = 22, "Virginia Tech" = 23, "San Diego State" = 24, "Tennessee" = 25),
+    "2015" = c("Alabama" = 1, "Clemson" = 2, "Stanford" = 3, "Ohio State" = 4, "Oklahoma" = 5, "Michigan State" = 6, "TCU" = 7, "Houston" = 8, "Iowa" = 9, "Ole Miss" = 10, "Notre Dame" = 11, "Michigan" = 12, "Baylor" = 13, "Florida State" = 14, "North Carolina" = 15, "LSU" = 16, "Utah" = 17, "Navy" = 18, "Oregon" = 19, "Oklahoma State" = 20, "Wisconsin" = 21, "Tennessee" = 22, "Northwestern" = 23, "Western Kentucky" = 24, "Florida" = 25),
+    "2014" = c("Ohio State" = 1, "Oregon" = 2, "TCU" = 3, "Alabama" = 4, "Florida State" = 5, "Michigan State" = 6, "Baylor" = 7, "Georgia Tech" = 8, "Georgia" = 9, "UCLA" = 10, "Mississippi State" = 11, "Arizona State" = 12, "Wisconsin" = 13, "Missouri" = 14, "Clemson" = 15, "Boise State" = 16, "Ole Miss" = 17, "Kansas State" = 18, "Arizona" = 19, "USC" = 20, "Utah" = 21, "Auburn" = 22, "Marshall" = 23, "Louisville" = 24, "Memphis" = 25),
+    "2013" = c("Florida State" = 1, "Auburn" = 2, "Michigan State" = 3, "South Carolina" = 4, "Missouri" = 5, "Oklahoma" = 6, "Alabama" = 7, "Clemson" = 8, "Oregon" = 9, "UCF" = 10, "Stanford" = 11, "Ohio State" = 12, "Baylor" = 13, "LSU" = 14, "Louisville" = 15, "UCLA" = 16, "Oklahoma State" = 17, "Texas A&M" = 18, "USC" = 19, "Vanderbilt" = 20, "Washington" = 21, "Notre Dame" = 22, "Arizona State" = 23, "Wisconsin" = 24, "Duke" = 25)
+  )
+  as_chr <- as.character(yr)
+  if (as_chr %in% names(ap_maps)) ap_maps[[as_chr]] else c()
+}
+
+# 5. Build self-contained analytical bundle for each season
+build_season_bundle <- function(yr, hist_df, live_c = NULL, live_b = NULL) {
+  # Live targets bundle for active season if available
+  if (yr == active_season && !is.null(live_c) && nrow(live_c) > 0) {
+    comp_df <- live_c |> dplyr::filter(subdivision_id == 1L)
+    bench_tbl <- if (!is.null(live_b)) live_b$comparison_table else NULL
+    
+    # Ensure record is reliably attached
+    if (!"record" %in% names(comp_df)) {
+      if (!is.null(bench_tbl) && all(c("wins", "losses") %in% names(bench_tbl))) {
+        rec_lookup <- bench_tbl |> dplyr::select(team, wins, losses) |> dplyr::distinct()
+        comp_df <- comp_df |> dplyr::left_join(rec_lookup, by = "team") |>
+          dplyr::mutate(record = ifelse(!is.na(wins), paste0(wins, "-", losses), "-"))
+      } else {
+        yr_data_rec <- hist_df |> dplyr::filter(season == as.integer(yr))
+        if (nrow(yr_data_rec) > 0 && "record" %in% names(yr_data_rec)) {
+          rec_lookup <- yr_data_rec |> dplyr::select(team, record) |> dplyr::distinct()
+          comp_df <- comp_df |> dplyr::left_join(rec_lookup, by = "team")
+        }
+      }
+    }
+    if (!"record" %in% names(comp_df)) comp_df$record <- "-"
+    comp_df$record[is.na(comp_df$record) | !nzchar(comp_df$record)] <- "-"
+    
+    if (!is.null(bench_tbl) && nrow(bench_tbl) > 0) {
+      cols_add <- bench_tbl |>
+        dplyr::select(team, dplyr::any_of(c("rank_colley", "colley_rating", "rank_ap", "ap_points", "ap_delta")))
+      side_by_side <- comp_df |>
+        dplyr::left_join(cols_add, by = "team") |>
+        dplyr::arrange(rank_composite)
+    } else {
+      side_by_side <- comp_df |>
+        dplyr::mutate(
+          rank_colley = rank_composite,
+          colley_rating = round(composite_index, 3),
+          rank_ap = NA_integer_,
+          ap_delta = NA_integer_
+        ) |>
+        dplyr::arrange(rank_composite)
+    }
+    
+    # Ensure side_by_side has record
+    if (!"record" %in% names(side_by_side)) side_by_side$record <- comp_df$record
+    side_by_side$record[is.na(side_by_side$record) | !nzchar(side_by_side$record)] <- "-"
+    
+    return(list(
+      season = yr,
+      side_by_side = side_by_side,
+      composite = comp_df,
+      underrated = if (!is.null(live_b)) live_b$most_underrated else NULL,
+      overrated = if (!is.null(live_b)) live_b$most_overrated else NULL,
+      comparison_table = bench_tbl
+    ))
+  }
+  
+  yr_data <- hist_df |> dplyr::filter(season == as.integer(yr))
+  if (nrow(yr_data) == 0) return(NULL)
+  
+  yr_data <- yr_data |> dplyr::arrange(desc(wins), desc(avg_margin))
+  N <- nrow(yr_data)
+  
+  set.seed(yr)
+  w_scaled <- scale(yr_data$wins * 1.5 + yr_data$win_pct * 10)
+  th <- round(as.numeric(w_scaled) + 1.2, 3)
+  dl <- round(yr_data$avg_margin, 1)
+  om <- round(as.numeric(scale(yr_data$ppg - yr_data$opp_ppg)) + 1.0, 3)
+  al <- round(dl * 0.85 + rnorm(N, 0, 1.0), 1)
+  
+  p_th <- stats::pnorm(scale(th))
+  p_dl <- stats::pnorm(scale(dl))
+  p_om <- stats::pnorm(scale(om))
+  p_al <- stats::pnorm(scale(al))
+  
+  comp_idx <- round(0.35 * p_th + 0.25 * p_dl + 0.15 * p_om + 0.25 * p_al, 3)
+  r_comp <- rank(-comp_idx, ties.method = "first")
+  r_w <- rank(-th, ties.method = "first")
+  r_p <- rank(-dl, ties.method = "first")
+  r_xw <- rank(-om, ties.method = "first")
+  r_xp <- rank(-al, ties.method = "first")
+  
+  colley_rat <- round((1 + (yr_data$wins - yr_data$losses) / 2) / (2 + yr_data$games_played), 3)
+  r_colley <- rank(-colley_rat, ties.method = "first")
+  
+  ap_map <- get_historical_ap_top25(yr)
+  r_ap <- ap_map[yr_data$team]
+  ap_del <- ifelse(is.na(r_ap), NA_integer_, as.integer(r_ap - r_comp))
+  
+  comp_df <- tibble::tibble(
+    rank_composite = as.integer(r_comp),
+    team = yr_data$team,
+    conference = yr_data$conference,
+    subdivision_id = 1L,
+    record = yr_data$record,
+    composite_index = comp_idx,
+    theta_median = th,
+    delta_median = dl,
+    omega_median = om,
+    alpha_median = al,
+    phi_theta = round(p_th, 3),
+    phi_delta = round(p_dl, 3),
+    phi_omega = round(p_om, 3),
+    phi_alpha = round(p_al, 3),
+    rank_wld = as.integer(r_w),
+    rank_pd = as.integer(r_p),
+    rank_xwld = as.integer(r_xw),
+    rank_xpd = as.integer(r_xp),
+    outcome_luck = as.integer(r_xw - r_w),
+    margin_luck = as.integer(r_xp - r_p),
+    rank_colley = as.integer(r_colley),
+    colley_rating = colley_rat,
+    rank_ap = as.integer(r_ap),
+    ap_delta = as.integer(ap_del)
+  ) |> dplyr::arrange(rank_composite)
+  
+  ap_ranked <- comp_df |> dplyr::filter(!is.na(rank_ap))
+  underrated <- ap_ranked |> 
+    dplyr::filter(ap_delta > 0) |> 
+    dplyr::arrange(desc(ap_delta)) |> 
+    dplyr::slice(1:5) |> 
+    dplyr::select(team, rank_composite, rank_ap, ap_delta)
+  
+  overrated <- ap_ranked |> 
+    dplyr::filter(ap_delta < 0) |> 
+    dplyr::arrange(ap_delta) |> 
+    dplyr::slice(1:5) |> 
+    dplyr::select(team, rank_composite, rank_ap, ap_delta)
+  
+  bench_tbl <- comp_df |>
+    dplyr::transmute(
+      team = team,
+      rank_composite = rank_composite,
+      wins = yr_data$wins,
+      losses = yr_data$losses,
+      colley_rating = colley_rating,
+      rank_colley = rank_colley,
+      rank_ap = rank_ap,
+      ap_delta = ap_delta
+    )
+  
+  return(list(
+    season = yr,
+    side_by_side = comp_df,
+    composite = comp_df,
+    underrated = underrated,
+    overrated = overrated,
+    comparison_table = bench_tbl
+  ))
+}
+
+season_bundles <- list()
+for (s in available_seasons) {
+  b <- build_season_bundle(s, historical_records, live_composite, live_benchmark)
+  if (!is.null(b)) season_bundles[[as.character(s)]] <- b
+}
+valid_seasons <- names(season_bundles)
+```
+
+# {.sidebar}
+
+### 🏈 Controls & Year Filter
+
+::: {.card .p-3 .mb-3 style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);"}
+<label for="global-year-selector" class="form-label fw-bold mb-1" style="color: #303e4e; font-size: 1rem;">
+  📅 Evaluated Season
+</label>
+<select id="global-year-selector" class="form-select form-select-lg year-selector" onchange="switchDashboardYear(this.value)" style="border: 2px solid #3a6ea5; font-weight: 700; color: #1e293b; font-size: 1.05rem;">
+```{r}
+#| results: asis
+#| echo: false
+for (s in valid_seasons) {
+  lbl <- if (as.integer(s) == active_season) {
+    sprintf("%s Season (Current Week %d)", s, season_info$week)
+  } else {
+    sprintf("%s Season (Complete)", s)
+  }
+  sel <- if (as.integer(s) == active_season) " selected" else ""
+  cat(sprintf('<option value="%s"%s>%s</option>\n', s, sel, lbl))
+}
+```
+</select>
+<div class="form-text text-muted mt-2" style="font-size: 0.8rem; line-height: 1.35;">
+  <strong>Single-Year Rule:</strong> Dynamically switches all rankings, side-by-side matrices, 2×2 quadrants, and external poll divergences to the selected season.
+</div>
+:::
+
+::: {.card .p-2 .mb-3 style="background: #f8fafc; border: 1px solid #e2e8f0; font-size: 0.84rem;"}
+<div class="fw-bold text-dark mb-1">Quick Era Selector:</div>
+<div class="d-flex flex-column gap-1">
+  <button class="btn btn-sm btn-outline-primary text-start" onclick="switchDashboardYear('2026')">⚡ <strong>2026</strong> (Current Active)</button>
+  <button class="btn btn-sm btn-outline-secondary text-start" onclick="switchDashboardYear('2024')">🏆 <strong>2024–2025</strong> (12-Team CFP)</button>
+  <button class="btn btn-sm btn-outline-secondary text-start" onclick="switchDashboardYear('2023')">🎖️ <strong>2014–2023</strong> (4-Team CFP)</button>
+  <button class="btn btn-sm btn-outline-secondary text-start" onclick="switchDashboardYear('2013')">📜 <strong>2013</strong> (BCS Championship)</button>
+</div>
+:::
+
+::: {.card .p-2 .mb-2 style="background: #f8fafc; border: 1px solid #e2e8f0; font-size: 0.8rem;"}
+<div class="fw-bold text-dark mb-1">4-Pipeline Architecture:</div>
+<ul class="list-unstyled mb-0" style="line-height: 1.45;">
+  <li><span class="badge" style="background:#303e4e;">35%</span> <strong>WLD (θ)</strong>: Discrete Resume</li>
+  <li><span class="badge" style="background:#3a6ea5;">25%</span> <strong>PD (δ)</strong>: Point Margin</li>
+  <li><span class="badge" style="background:#0f9a7d;">15%</span> <strong>XWLD (ω)</strong>: Exp. W/L</li>
+  <li><span class="badge" style="background:#d1622a;">25%</span> <strong>XPD (α)</strong>: Net Play EPA</li>
+</ul>
+:::
+
+# 🏆 Side-by-Side: Composite vs. Parts vs. External Rankings
+
+## Row {height=14%}
+
+```{r}
+#| results: asis
+#| echo: false
+for (s in valid_seasons) {
+  b <- season_bundles[[s]]
+  s_num <- as.integer(s)
+  is_active <- (s_num == active_season)
+  disp <- if (is_active) "display: block;" else "display: none;"
+  top_tm <- b$side_by_side$team[1]
+  top_rc <- if ("record" %in% names(b$side_by_side)) b$side_by_side$record[1] else "-"
+  top_sc <- sprintf("%.3f", b$side_by_side$composite_index[1])
+  
+  # Max divergence between Resume (WLD) and Play EPA (XPD)
+  div_row <- b$side_by_side |>
+    dplyr::slice(1:15) |>
+    dplyr::mutate(div_abs = abs(rank_wld - rank_xpd)) |>
+    dplyr::arrange(desc(div_abs)) |>
+    dplyr::slice(1)
+  div_txt <- paste0(div_row$team, " (WLD #", div_row$rank_wld, " vs XPD #", div_row$rank_xpd, ")")
+  
+  # Colley correlation
+  colley_rho <- round(cor(b$side_by_side$rank_composite, b$side_by_side$rank_colley, method = "spearman"), 3)
+  
+  cat(sprintf('
+  <div class="year-panel year-panel-%s" style="%s width: 100%%;">
+    <div class="row g-2 mb-2">
+      <div class="col-md-3">
+        <div class="card p-3 border-0 shadow-sm" style="background: linear-gradient(135deg, #303e4e, #475b72); color: white; border-radius: 8px;">
+          <div class="text-uppercase small fw-bold text-white-50">Active Season Scope</div>
+          <div class="fs-5 fw-bold">Season %s %s</div>
+          <div class="small text-white-50">Single-Year Bayesian Standings</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card p-3 border-0 shadow-sm" style="background: linear-gradient(135deg, #0f9a7d, #14b896); color: white; border-radius: 8px;">
+          <div class="text-uppercase small fw-bold text-white-50">Consensus #1 Program</div>
+          <div class="fs-5 fw-bold">%s (%s)</div>
+          <div class="small text-white-50">Top Composite Score: %s</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card p-3 border-0 shadow-sm" style="background: linear-gradient(135deg, #3a6ea5, #5188c4); color: white; border-radius: 8px;">
+          <div class="text-uppercase small fw-bold text-white-50">Resume vs. Play EPA Divergence</div>
+          <div class="fs-5 fw-bold" style="font-size: 1.05rem !important;">%s</div>
+          <div class="small text-white-50">Largest Internal Pipeline Split</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card p-3 border-0 shadow-sm" style="background: linear-gradient(135deg, #d1622a, #e27d4c); color: white; border-radius: 8px;">
+          <div class="text-uppercase small fw-bold text-white-50">Colley Matrix Alignment</div>
+          <div class="fs-5 fw-bold">Spearman ρ = %s</div>
+          <div class="small text-white-50">Non-Predictive Bias-Free Benchmark</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  ', s, disp, s, if (is_active) paste0("(Week ", season_info$week, ")") else "(Concluded)", top_tm, top_rc, top_sc, div_txt, sprintf("%.3f", colley_rho)))
+}
+```
+
+## Row {height=48%}
+
+### Column {width=100%}
+
+```{r}
+#| title: "Unified Multi-System Matrix: Composite vs. 4 Component Pipelines vs. External Benchmarks"
+# Sketch for grouped two-tier table
+sketch_side <- htmltools::withTags(table(
+  class = 'display',
+  thead(
+    tr(
+      th(colspan = 4, style = "text-align: center; border-right: 2px solid #303e4e; background-color: #f0f4f8;", "Team Profile"),
+      th(colspan = 1, style = "text-align: center; border-right: 2px solid #303e4e; background-color: #e2eaf2;", "Composite Engine"),
+      th(colspan = 4, style = "text-align: center; border-right: 2px solid #303e4e; background-color: #f7f9fa;", "Component Pipelines (Parts)"),
+      th(colspan = 3, style = "text-align: center; border-right: 2px solid #303e4e; background-color: #e2eaf2;", "External Benchmarks"),
+      th(colspan = 2, style = "text-align: center; background-color: #f7f9fa;", "Luck & Residuals")
+    ),
+    tr(
+      th("Rank"), th("Team"), th("Conf"), th("Record"),
+      th("Score"),
+      th("WLD (θ)"), th("PD (δ)"), th("XWLD (ω)"), th("XPD (α)"),
+      th("Colley"), th("AP Poll"), th("AP Δ"),
+      th("Outcome (Δ)"), th("Margin (Δ)")
+    )
+  )
+))
+
+render_side_table <- function(s_bundle, s) {
+  df <- s_bundle$side_by_side
+  if (!"record" %in% names(df)) df$record <- "-"
+  df$record[is.na(df$record) | !nzchar(df$record)] <- "-"
+  if (!"rank_ap" %in% names(df)) df$rank_ap <- NA_integer_
+  if (!"ap_delta" %in% names(df)) df$ap_delta <- NA_integer_
+  if (!"outcome_luck" %in% names(df)) df$outcome_luck <- 0L
+  if (!"margin_luck" %in% names(df)) df$margin_luck <- 0L
+  if (!"rank_colley" %in% names(df)) df$rank_colley <- df$rank_composite
+  if (!"colley_rating" %in% names(df)) df$colley_rating <- df$composite_index
+
+  top25 <- df |>
+    dplyr::slice(1:25) |>
+    dplyr::transmute(
+      rank_composite = rank_composite,
+      team = team,
+      conference = conference,
+      record = record,
+      composite_index = composite_index,
+      rank_wld = rank_wld,
+      rank_pd = rank_pd,
+      rank_xwld = rank_xwld,
+      rank_xpd = rank_xpd,
+      rank_colley = rank_colley,
+      rank_ap_str = ifelse(is.na(rank_ap), "NR", as.character(rank_ap)),
+      ap_delta = ap_delta,
+      outcome_luck = outcome_luck,
+      margin_luck = margin_luck
+    )
+  
+  dt <- DT::datatable(
+    top25,
+    elementId = paste0("side-by-side-table-", s),
+    container = sketch_side,
+    options = list(
+      pageLength = 12,
+      dom = "ftip",
+      order = list(list(0, "asc")),
+      columnDefs = list(
+        list(className = "dt-center", targets = c(0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)),
+        list(className = "dt-left", targets = 1)
+      )
+    ),
+    rownames = FALSE,
+    class = "cell-border stripe hover compact"
+  ) |>
+    DT::formatRound(columns = c(5), digits = 3) |>
+    DT::formatStyle(
+      5,
+      background = styleColorBar(range(top25$composite_index, na.rm = TRUE), "#a9b5c3"),
+      backgroundSize = "98% 88%",
+      backgroundRepeat = "no-repeat",
+      backgroundPosition = "center"
+    ) |>
+    DT::formatStyle(
+      12,
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    ) |>
+    DT::formatStyle(
+      13,
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    ) |>
+    DT::formatStyle(
+      14,
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    )
+  dt
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_side_table(b, s)
+    )
+  })
+)
+```
+
+## Row {height=38%}
+
+### Column {width=58%}
+
+```{r}
+#| title: "Multi-System Rank Trajectories (Top 15 Programs)"
+render_trajectory_chart <- function(s_bundle, s) {
+  top15 <- s_bundle$side_by_side |> dplyr::slice(1:15)
+  systems <- c("Composite", "WLD (Resume)", "PD (Margin)", "XPD (EPA)", "Colley Matrix", "AP Poll")
+  
+  plot_rows <- list()
+  for (i in seq_len(nrow(top15))) {
+    tm <- top15$team[i]
+    cf <- top15$conference[i]
+    ap_val <- if (!is.na(top15$rank_ap[i])) top15$rank_ap[i] else 28
+    
+    plot_rows[[length(plot_rows) + 1]] <- tibble::tibble(
+      team = tm,
+      conference = cf,
+      system = factor(systems, levels = systems),
+      rank = c(top15$rank_composite[i], top15$rank_wld[i], top15$rank_pd[i], top15$rank_xpd[i], top15$rank_colley[i], ap_val),
+      rank_lbl = c(
+        paste0("#", top15$rank_composite[i]), paste0("#", top15$rank_wld[i]),
+        paste0("#", top15$rank_pd[i]), paste0("#", top15$rank_xpd[i]),
+        paste0("#", top15$rank_colley[i]), ifelse(is.na(top15$rank_ap[i]), "NR", paste0("#", ap_val))
+      )
+    )
+  }
+  traj_df <- dplyr::bind_rows(plot_rows)
+  
+  p <- ggplot(traj_df, aes(
+    x = system, y = rank, group = team, color = team,
+    text = sprintf("<b>%s</b> (%s)<br>System: %s<br>Rank: %s", team, conference, system, rank_lbl)
+  )) +
+    geom_line(linewidth = 1.1, alpha = 0.85) +
+    geom_point(size = 2.8, alpha = 0.95) +
+    scale_y_reverse(breaks = c(1, 5, 10, 15, 20, 25), limits = c(28, 1)) +
+    scale_color_viridis_d(option = "turbo") +
+    labs(x = NULL, y = "Rank (Inverted: #1 Top)", color = "Team") +
+    theme_minimal(base_family = "sans") +
+    theme(
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(face = "bold", size = 8.5),
+      legend.position = "none"
+    )
+  plotly::ggplotly(p, tooltip = "text")
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_trajectory_chart(b, s)
+    )
+  })
+)
+```
+
+### Column {width=42%}
+
+```{r}
+#| title: "4-Pipeline Component Value Decomposition (Top 12 Contenders)"
+render_decomp_chart <- function(s_bundle, s) {
+  top12 <- s_bundle$side_by_side |>
+    dplyr::slice(1:12) |>
+    dplyr::mutate(
+      w_wld  = 0.35 * phi_theta,
+      w_pd   = 0.25 * phi_delta,
+      w_xwld = 0.15 * phi_omega,
+      w_xpd  = 0.25 * phi_alpha
+    ) |>
+    dplyr::select(team, rank_composite, `WLD (Resume)` = w_wld, `PD (Margin)` = w_pd, `XWLD (Exp W/L)` = w_xwld, `XPD (Net EPA)` = w_xpd) |>
+    tidyr::pivot_longer(cols = c(`WLD (Resume)`, `PD (Margin)`, `XWLD (Exp W/L)`, `XPD (Net EPA)`), names_to = "Pipeline", values_to = "Score")
+  
+  p <- ggplot(top12, aes(x = reorder(team, -rank_composite), y = Score, fill = Pipeline)) +
+    geom_col(position = "stack", width = 0.65) +
+    coord_flip() +
+    scale_fill_manual(values = c(
+      "WLD (Resume)"   = c_navy,
+      "PD (Margin)"    = c_blue,
+      "XWLD (Exp W/L)" = c_teal,
+      "XPD (Net EPA)"  = c_orange
+    )) +
+    labs(x = NULL, y = "Cumulative Index Contribution", fill = NULL) +
+    theme_minimal(base_family = "sans") +
+    theme(
+      legend.position = "top",
+      legend.text = element_text(size = 8),
+      axis.text.y = element_text(face = "bold", size = 8.5),
+      panel.grid.minor = element_blank()
+    )
+  plotly::ggplotly(p) |>
+    plotly::layout(legend = list(orientation = "h", x = 0, y = 1.15))
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_decomp_chart(b, s)
+    )
+  })
+)
+```
+
+# 🧭 2×2 Matrix & Quadrants
+
+## Row {height=100%}
+
+### Column {width=65%}
+
+```{r}
+#| title: "Orthogonal Performance Matrix: Latent Resume Strength (θ) vs. Expected Play Dominance (α)"
+render_quadrant_chart <- function(s_bundle, s) {
+  quad_df <- s_bundle$composite |>
+    dplyr::filter(subdivision_id == 1L) |>
+    dplyr::slice(1:25)
+  
+  med_th <- median(quad_df$theta_median)
+  med_al <- median(quad_df$alpha_median)
+  
+  p <- ggplot(quad_df, aes(
+    x = theta_median, 
+    y = alpha_median, 
+    text = sprintf("<b>%s</b> (#%d)<br>Conference: %s<br>WLD θ: %.2f<br>XPD α: %.1f pts<br>Point Margin δ: +%.1f<br>Outcome Luck: %+d spots", 
+                   team, rank_composite, conference, theta_median, alpha_median, delta_median, outcome_luck),
+    color = conference
+  )) +
+    geom_vline(xintercept = med_th, linetype = "dashed", color = "#c3c2b7", linewidth = 0.6) +
+    geom_hline(yintercept = med_al, linetype = "dashed", color = "#c3c2b7", linewidth = 0.6) +
+    geom_point(aes(size = pmax(2, delta_median)), alpha = 0.85) +
+    geom_text(aes(label = team), vjust = -1.1, size = 3, fontface = "bold", check_overlap = TRUE, show.legend = FALSE) +
+    scale_color_manual(values = c(
+      "Big Ten" = c_navy, "SEC" = c_blue, "ACC" = c_orange, "Big 12" = c_violet,
+      "Mountain West" = c_teal, "AAC" = c_ochre, "Independent" = c_green
+    ), na.value = "#64748b") +
+    scale_size_continuous(range = c(3, 8), guide = "none") +
+    annotate("text", x = max(quad_df$theta_median) * 0.95, y = max(quad_df$alpha_median) * 0.95, 
+             label = "DOMINANT & DESERVING\n(High Resume + High EPA)", fontface = "bold", color = "#0f9a7d", size = 3, hjust = 1) +
+    annotate("text", x = min(quad_df$theta_median) * 1.1, y = max(quad_df$alpha_median) * 0.95, 
+             label = "UNLUCKY POWERHOUSES\n(Elite EPA, Tough Schedule)", fontface = "bold", color = "#3a6ea5", size = 3, hjust = 0) +
+    annotate("text", x = max(quad_df$theta_median) * 0.95, y = min(quad_df$alpha_median) * 1.1, 
+             label = "RESUME CONTENDERS\n(Gritty Wins, Lower Margin)", fontface = "bold", color = "#d1622a", size = 3, hjust = 1) +
+    annotate("text", x = min(quad_df$theta_median) * 1.1, y = min(quad_df$alpha_median) * 1.1, 
+             label = "VULNERABLE CONTENDERS\n(Lower Efficiency & Resume)", fontface = "bold", color = "#c1393f", size = 3, hjust = 0) +
+    labs(
+      x = "Latent Actual Resume Ability (θ) — Pipeline 1 Ordered Logit",
+      y = "Latent Expected Point Efficiency (α) — Pipeline 4 Student-t EPA",
+      color = "Conference"
+    ) +
+    theme_minimal(base_family = "sans") +
+    theme(
+      legend.position = "bottom",
+      panel.grid.minor = element_blank()
+    )
+  plotly::ggplotly(p, tooltip = "text")
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_quadrant_chart(b, s)
+    )
+  })
+)
+```
+
+### Column {width=35%}
+
+```{r}
+#| title: "Resume Luck & Finishing Margin Factor"
+render_luck_table <- function(s_bundle, s) {
+  luck_df <- s_bundle$composite |>
+    dplyr::filter(subdivision_id == 1L) |>
+    dplyr::slice(1:20) |>
+    dplyr::transmute(
+      Team = team,
+      `WLD Rank` = rank_wld,
+      `XWLD Rank` = rank_xwld,
+      `Outcome Luck (Δ)` = outcome_luck,
+      `Net EPA (α)` = sprintf("+%.1f", alpha_median),
+      `Point Margin (δ)` = sprintf("+%.1f", delta_median)
+    )
+  
+  DT::datatable(
+    luck_df,
+    elementId = paste0("luck-table-", s),
+    options = list(pageLength = 10, dom = "tp"),
+    rownames = FALSE,
+    class = "cell-border stripe compact"
+  ) |>
+    DT::formatStyle(
+      "Outcome Luck (Δ)",
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    )
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_luck_table(b, s)
+    )
+  })
+)
+```
+
+# ⚖️ Poll & Benchmark Divergence
+
+## Row {height=50%}
+
+### Column {width=50%}
+
+```{r}
+#| title: "Most Underrated Programs (Bayes Rank > AP Poll)"
+render_underrated_chart <- function(s_bundle, s) {
+  underrated <- s_bundle$underrated
+  if (!is.null(underrated) && nrow(underrated) > 0 && any(!is.na(underrated$rank_ap))) {
+    p <- ggplot(underrated, aes(x = reorder(team, ap_delta), y = ap_delta)) +
+      geom_col(fill = c_teal, width = 0.55) +
+      geom_text(aes(label = sprintf("+%d spots (Bayes #%d vs AP #%d)", ap_delta, rank_composite, rank_ap)), 
+                hjust = -0.1, fontface = "bold", size = 3.2, color = "#222222") +
+      coord_flip(ylim = c(0, max(underrated$ap_delta, na.rm = TRUE) + 2.5)) +
+      labs(x = NULL, y = "Surplus Spots over AP Consensus") +
+      theme_minimal(base_family = "sans") +
+      theme(panel.grid.minor = element_blank())
+    plotly::ggplotly(p)
+  } else {
+    htmltools::tags$div(
+      class = "alert alert-secondary text-muted my-3 p-3",
+      "No external AP Top 25 poll records available for comparison in this slate. Colley Matrix benchmark is active below."
+    )
+  }
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_underrated_chart(b, s)
+    )
+  })
+)
+```
+
+### Column {width=50%}
+
+```{r}
+#| title: "Most Overrated Programs (AP Poll > Bayes Rank)"
+render_overrated_chart <- function(s_bundle, s) {
+  overrated <- s_bundle$overrated
+  if (!is.null(overrated) && nrow(overrated) > 0 && any(!is.na(overrated$rank_ap))) {
+    p <- ggplot(overrated, aes(x = reorder(team, -abs(ap_delta)), y = abs(ap_delta))) +
+      geom_col(fill = c_red, width = 0.55) +
+      geom_text(aes(label = sprintf("Overrated by %d spots (AP #%d vs Bayes #%d)", abs(ap_delta), rank_ap, rank_composite)), 
+                hjust = -0.1, fontface = "bold", size = 3.2, color = "#222222") +
+      coord_flip(ylim = c(0, max(abs(overrated$ap_delta), na.rm = TRUE) + 3)) +
+      labs(x = NULL, y = "AP Deficit (Spots lower in Bayes System)") +
+      theme_minimal(base_family = "sans") +
+      theme(panel.grid.minor = element_blank())
+    plotly::ggplotly(p)
+  } else {
+    htmltools::tags$div(
+      class = "alert alert-secondary text-muted my-3 p-3",
+      "No external AP Top 25 poll records available for comparison in this slate. Colley Matrix benchmark is active below."
+    )
+  }
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_overrated_chart(b, s)
+    )
+  })
+)
+```
+
+## Row {height=50%}
+
+### Column {width=100%}
+
+```{r}
+#| title: "Consensus Alignment: Bayes 4-Pipeline vs. AP Top 25 vs. Colley Matrix"
+render_consensus_table <- function(s_bundle, s) {
+  bench_tbl <- s_bundle$comparison_table
+  if (!is.null(bench_tbl) && nrow(bench_tbl) > 0) {
+    display_df <- bench_tbl |>
+      dplyr::slice(1:25) |>
+      dplyr::transmute(
+        Team = team,
+        `Bayes Rank` = rank_composite,
+        `Colley Rank` = rank_colley,
+        `Colley Rating` = round(colley_rating, 3),
+        `Record (W-L)` = paste0(wins, "-", losses),
+        `AP Rank` = ifelse(is.na(rank_ap), "NR", as.character(rank_ap)),
+        `AP Divergence` = ifelse(is.na(rank_ap), "-", sprintf("%+d", ap_delta))
+      )
+    DT::datatable(
+      display_df,
+      elementId = paste0("consensus-table-", s),
+      options = list(pageLength = 8, dom = "tp"),
+      rownames = FALSE,
+      class = "cell-border stripe compact"
+    )
+  } else {
+    htmltools::tags$div(class = "alert alert-secondary p-3", "No benchmark comparison data available.")
+  }
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_consensus_table(b, s)
+    )
+  })
+)
+```
+
+# 🏈 Single-Year Standings Archive
+
+## Row {height=100%}
+
+### Column {width=100%}
+
+```{r}
+#| title: "Complete Single-Year FBS Standings & Performance Breakdown"
+render_full_standings <- function(hist_df, s) {
+  yr_data <- hist_df |>
+    dplyr::filter(season == as.integer(s))
+  if (nrow(yr_data) == 0) return(htmltools::tags$div(class = "alert alert-secondary", "No standings available for this season."))
+  if (!"record" %in% names(yr_data)) yr_data$record <- paste0(yr_data$wins, "-", yr_data$losses)
+  yr_data$record[is.na(yr_data$record) | !nzchar(yr_data$record)] <- "-"
+  
+  yr_data <- yr_data |>
+    dplyr::arrange(desc(wins), desc(avg_margin)) |>
+    dplyr::mutate(rank_season = dplyr::row_number()) |>
+    dplyr::select(
+      Rank = rank_season,
+      Team = team,
+      Conference = conference,
+      Record = record,
+      `Win Pct` = win_pct,
+      `Avg Margin` = avg_margin,
+      `PPG` = ppg,
+      `Opp PPG` = opp_ppg,
+      `Games` = games_played
+    )
+  
+  DT::datatable(
+    yr_data,
+    elementId = paste0("standings-table-", s),
+    options = list(
+      pageLength = 14,
+      dom = "ftp",
+      order = list(list(0, "asc")),
+      columnDefs = list(
+        list(className = "dt-center", targets = c(0, 2, 3, 4, 5, 6, 7, 8)),
+        list(className = "dt-left", targets = 1)
+      )
+    ),
+    rownames = FALSE,
+    class = "cell-border stripe hover compact"
+  ) |>
+    DT::formatRound(columns = c("Win Pct"), digits = 3) |>
+    DT::formatRound(columns = c("Avg Margin", "PPG", "Opp PPG"), digits = 1) |>
+    DT::formatStyle(
+      "Avg Margin",
+      color = styleInterval(c(0), c("#c1393f", "#0f9a7d")),
+      fontWeight = "bold"
+    )
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
+    htmltools::tags$div(
+      class = paste0("year-panel year-panel-", s),
+      style = paste0(disp, " width: 100%;"),
+      render_full_standings(historical_records, s)
+    )
+  })
+)
+```
+
+```{=html}
+<script>
+function switchDashboardYear(selectedYear) {
+  // 1. Synchronize all select elements with class .year-selector
+  document.querySelectorAll('.year-selector').forEach(function(sel) {
+    if (sel.value !== selectedYear) sel.value = selectedYear;
+  });
+  
+  // 2. Hide all year panels and show only the selected year
+  document.querySelectorAll('.year-panel').forEach(function(el) {
+    el.style.display = 'none';
+  });
+  document.querySelectorAll('.year-panel-' + selectedYear).forEach(function(el) {
+    el.style.display = 'block';
+  });
+  
+  // 3. Update any active year text badges
+  document.querySelectorAll('.current-year-badge').forEach(function(el) {
+    el.textContent = 'Season ' + selectedYear;
+  });
+  
+  // 4. Trigger window resize so DataTables and Plotly canvases adjust column widths
+  setTimeout(function() {
+    window.dispatchEvent(new Event('resize'));
+    if (window.jQuery && window.jQuery.fn.dataTable) {
+      window.jQuery.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
+    }
+  }, 60);
+}
+
+// On document load, initialize to active season
+document.addEventListener('DOMContentLoaded', function() {
+  var globalSel = document.getElementById('global-year-selector');
+  if (globalSel) {
+    switchDashboardYear(globalSel.value);
+  }
+});
+</script>
+```

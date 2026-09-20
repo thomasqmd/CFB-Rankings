@@ -3,5 +3,6 @@ project:
   type: default
   brand: _brand.yml
   render:
+    - "docs/dashboard.qmd"
     - "docs/reports/*.qmd"
-    - "docs/presentation/*.qmd"
+    - "plan.md"
