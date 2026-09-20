@@ -588,6 +588,121 @@ get_multi_season_records <- function(db_path = "data/cfb.duckdb", min_season = 2
       record = paste0(wins, "-", losses)
     ) |>
     dplyr::ungroup()
-  
+
   return(out)
+}
+
+#' Extract a per-team, per-game schedule log across all seasons in DuckDB, including
+#' actual results and an EPA-derived "expected" result/margin for each game
+#' @param db_path Path to DuckDB
+#' @param min_season Earliest season to retrieve (defaults to 2013)
+#' @param filter_garbage_time Logical; excludes 2nd-half plays once a game is out of hand
+#' @param garbage_threshold Absolute point margin threshold used for the garbage-time filter
+#' @return Tibble with one row per team per game: opponent, location, actual result/score,
+#'   and expected result/margin derived from cumulative net EPA
+get_team_game_log <- function(db_path = "data/cfb.duckdb", min_season = 2013,
+                               filter_garbage_time = TRUE, garbage_threshold = 28) {
+  if (!file.exists(db_path)) return(tibble::tibble())
+
+  con <- tryCatch(get_duckdb_connection(db_path, read_only = TRUE), error = function(e) NULL)
+  if (is.null(con)) return(tibble::tibble())
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+
+  if (!DBI::dbExistsTable(con, "schedules")) return(tibble::tibble())
+  has_pbp <- DBI::dbExistsTable(con, "pbp")
+
+  if (has_pbp) {
+    garbage_clause <- if (filter_garbage_time) {
+      sprintf("AND NOT (p.period >= 3 AND ABS(p.home_score - p.away_score) > %d)", as.integer(garbage_threshold))
+    } else {
+      ""
+    }
+    epa_join <- sprintf("
+      LEFT JOIN (
+        SELECT
+          p.game_id,
+          SUM(CASE WHEN LOWER(TRIM(p.posteam)) = LOWER(TRIM(s2.home_team)) THEN p.epa ELSE 0 END) AS home_epa_total,
+          SUM(CASE WHEN LOWER(TRIM(p.posteam)) = LOWER(TRIM(s2.away_team)) THEN p.epa ELSE 0 END) AS away_epa_total,
+          COUNT(*) AS total_plays
+        FROM pbp p
+        JOIN schedules s2 ON p.game_id = s2.game_id
+        WHERE s2.season >= %d AND p.epa IS NOT NULL %s
+        GROUP BY p.game_id
+        HAVING COUNT(*) >= 40
+      ) ge ON s.game_id = ge.game_id
+    ", as.integer(min_season), garbage_clause)
+    epa_select <- "ge.home_epa_total, ge.away_epa_total,"
+  } else {
+    epa_join <- ""
+    epa_select <- "CAST(NULL AS DOUBLE) AS home_epa_total, CAST(NULL AS DOUBLE) AS away_epa_total,"
+  }
+
+  q <- sprintf("
+    WITH base AS (
+      SELECT
+        s.season, s.week, s.season_type, s.game_id, s.start_date, s.notes,
+        s.home_team, s.home_conference, s.away_team, s.away_conference,
+        s.neutral_site, s.home_points, s.away_points,
+        %s
+      FROM schedules s
+      %s
+      WHERE s.season >= %d AND s.home_points IS NOT NULL AND s.away_points IS NOT NULL
+    ),
+    games_home AS (
+      SELECT
+        season, week, season_type, game_id, start_date, notes,
+        home_team AS team, home_conference AS conference,
+        away_team AS opponent, away_conference AS opponent_conference,
+        CASE WHEN neutral_site THEN 'Neutral' ELSE 'Home' END AS location,
+        home_points AS team_points, away_points AS opp_points,
+        home_epa_total AS team_epa, away_epa_total AS opp_epa
+      FROM base
+    ),
+    games_away AS (
+      SELECT
+        season, week, season_type, game_id, start_date, notes,
+        away_team AS team, away_conference AS conference,
+        home_team AS opponent, home_conference AS opponent_conference,
+        CASE WHEN neutral_site THEN 'Neutral' ELSE 'Away' END AS location,
+        away_points AS team_points, home_points AS opp_points,
+        away_epa_total AS team_epa, home_epa_total AS opp_epa
+      FROM base
+    )
+    SELECT * FROM games_home
+    UNION ALL
+    SELECT * FROM games_away
+    ORDER BY season DESC, team, week
+  ", epa_select, epa_join, as.integer(min_season))
+
+  res <- tryCatch(DBI::dbGetQuery(con, q), error = function(e) data.frame())
+
+  if (nrow(res) == 0) return(tibble::tibble())
+
+  # CFBD numbers postseason (bowl/CFP) games starting again from week 1, which otherwise
+  # collides with the season's real Week 1 game and, since every postseason game shares
+  # week 1, ties all bowl/CFP games together too. Give postseason rows a distinct label
+  # and sort them after all regular-season weeks, using start_date to break the tie among
+  # them (e.g. CFP first round before quarterfinal before semifinal before championship).
+  tibble::as_tibble(res) |>
+    dplyr::mutate(
+      is_postseason = !is.na(season_type) & season_type == "postseason",
+      week_label = dplyr::case_when(
+        is_postseason & !is.na(notes) & nzchar(notes) ~ notes,
+        is_postseason ~ "Postseason",
+        TRUE ~ paste("Week", week)
+      ),
+      week_sort = ifelse(is_postseason, 9000L, week),
+      result = ifelse(team_points > opp_points, "W", "L"),
+      margin = as.integer(team_points - opp_points),
+      team_epa = round(team_epa, 2),
+      opp_epa = round(opp_epa, 2),
+      net_epa = round(team_epa - opp_epa, 2),
+      expected_result = dplyr::case_when(
+        is.na(net_epa) ~ NA_character_,
+        net_epa > 0 ~ "W",
+        net_epa < 0 ~ "L",
+        TRUE ~ "-"
+      )
+    ) |>
+    dplyr::arrange(season, team, week_sort, start_date)
 }

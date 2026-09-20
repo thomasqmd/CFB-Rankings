@@ -68,7 +68,16 @@ list(
       min_season = 2013
     )
   ),
-  
+
+  # 2c. Multi-season per-team, per-game schedule log (actual + EPA-expected results)
+  tar_target(
+    name = team_game_logs,
+    command = get_team_game_log(
+      db_path = duckdb_sync$db_path,
+      min_season = 2013
+    )
+  ),
+
   # 3. Transform PBP & Schedules into 4 Modeling Datasets
   tar_target(
     name = modeling_data,
@@ -228,7 +237,16 @@ list(
       week = current_season_info$week
     )
   ),
-  
+
+  # 13b. Final AP Top 25 for every concluded historical season (disk-cached per season)
+  tar_target(
+    name = historical_ap_polls,
+    command = fetch_all_historical_ap_finals(
+      seasons = active_seasons,
+      current_season = current_season_info$season
+    )
+  ),
+
   # 14. Benchmark Comparison & Divergence Diagnostics
   tar_target(
     name = benchmark_comparison,
@@ -246,21 +264,14 @@ list(
     quiet = FALSE
   ),
   
-  # 16. Quarto Weekly Briefing Report
-  tar_quarto(
-    name = render_weekly_briefing,
-    path = "docs/reports/weekly_briefing.qmd",
-    quiet = FALSE
-  ),
-  
-  # 17. Quarto Season Retrospective Report
+  # 16. Quarto Season Retrospective Report
   tar_quarto(
     name = render_season_retro,
     path = "docs/reports/season_retro.qmd",
     quiet = FALSE
   ),
   
-  # 18. Quarto Dedicated Model Diagnostics & Convergence Certification Document
+  # 17. Quarto Dedicated Model Diagnostics & Convergence Certification Document
   tar_quarto(
     name = render_model_diagnostics,
     path = "docs/reports/model_diagnostics.qmd",

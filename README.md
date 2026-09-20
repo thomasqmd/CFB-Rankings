@@ -118,8 +118,7 @@ CFB/
 │   │   ├── tol_palette.scss    # Paul Tol colorblind-safe SCSS variables
 │   │   └── custom.scss         # Quarto styles, cards, and typography
 │   ├── reports/
-│   │   ├── weekly_briefing.qmd # Weekly rankings release briefing
-│   │   └── season_retro.qmd    # Comprehensive end-of-season audit
+│   │   └── season_retro.qmd    # Comprehensive season audit (in-season and end-of-season)
 │   └── presentation/
 │       └── methodology.qmd     # Revealjs slide deck on mathematical foundations
 └── dashboard/                  # Interactive Shiny / bslib Web Application
@@ -193,9 +192,6 @@ shiny::runApp("dashboard")
 
 ### 5.2 Render Quarto Reports
 ```bash
-# Render weekly briefing HTML report
-quarto render docs/reports/weekly_briefing.qmd
-
 # Render season retrospective report
 quarto render docs/reports/season_retro.qmd
 

@@ -158,9 +158,8 @@ To protect against rate-limiting, redundant external calls, and downstream targe
     ├── 8. sb_ratings & composite_rankings (Sonneborn-Berger & 4-way fusion)
     ├── 9. colley_rankings & benchmark_comparison (AP, Coaches, CFP, Colley)
     ├── 10. render_dashboard (docs/dashboard.qmd -> 100% rankings-focused interactive explorer)
-    ├── 11. render_weekly_briefing (docs/reports/weekly_briefing.qmd -> week-scoped rankings briefing)
-    ├── 12. render_season_retro (docs/reports/season_retro.qmd -> full season retrospective rankings audit)
-    └── 13. render_model_diagnostics (docs/reports/model_diagnostics.qmd -> dedicated MCMC convergence & diagnostics audit)
+    ├── 11. render_season_retro (docs/reports/season_retro.qmd -> in-season and end-of-season rankings audit)
+    └── 12. render_model_diagnostics (docs/reports/model_diagnostics.qmd -> dedicated MCMC convergence & diagnostics audit)
 ```
 
 ### 7.1 Diagnostic Quality Gates
@@ -184,7 +183,6 @@ The delivery layer is powered by Quarto and themed with `_brand.yml`. A strict s
 - **Format:** Quarto Dashboard (`format: dashboard`), compiling to a self-contained HTML document (`docs/dashboard.html`) viewable directly in any web browser without an active R server.
 - **Global Year Selector (`# {.sidebar}`):**
   - Features a persistent, prominent Season Selector dropdown in the left sidebar (and synchronized page controls) allowing the user to select any season from 2026 down to 2013.
-  - Quick Era buttons allow one-click jumping between structural CFB eras (2026 Active, 2024–2025 12-Team CFP, 2014–2023 4-Team CFP, 2013 BCS Championship).
   - Changing the selector immediately updates the entire dashboard — updating all KPI banners, side-by-side matrices, 2×2 quadrants, poll divergence audits, and full standings to the chosen single year.
 - **Features (Dedicated Purely to Rankings & Single-Year Alignment):**
   - **Side-by-Side Unified Rankings Matrix:** Side-by-side comparison across Composite Engine (`rank_composite`, `composite_index`), the 4 Component Pipelines (WLD resume $\theta$, PD margin $\delta$, XWLD deserved W/L $\omega$, XPD net EPA $\alpha$), External Benchmarks (Colley Matrix, AP Top 25, AP $\Delta$), and Luck Factors. Includes an interactive multi-system parallel rank trajectory chart (bump plot) and 4-pipeline component value decomposition.
@@ -192,15 +190,11 @@ The delivery layer is powered by Quarto and themed with `_brand.yml`. A strict s
   - **Poll Divergence Benchmark:** Active single-year consensus comparison against AP Top 25 and Colley Matrix, isolating most underrated and overrated programs.
   - **Single-Year Standings Archive:** Complete 134-team FBS standings table (Rank 1-134, records, win %, margins, PPG, Opp PPG) strictly one single year at a time for every season from 2013 to 2026.
 
-### 8.2 Executive Weekly Briefing (`docs/reports/weekly_briefing.qmd`)
-- **Temporal Scope:** In-season weekly tracking (Week $W$, Season $S$).
-- **Role:** Pure rankings and playoff bubble audit for a specific in-season week. Features executive summary callouts, side-by-side unified performance matrix with `gt` spanners, orthogonal ability quadrant scatter, and AP poll divergence breakdown.
-
-### 8.3 Season Retrospective Audit (`docs/reports/season_retro.qmd`)
-- **Temporal Scope:** Full-season retrospective evaluation (Season $S$).
+### 8.2 Season Retrospective Audit (`docs/reports/season_retro.qmd`)
+- **Temporal Scope:** Full-season retrospective evaluation (Season $S$), rendered on every pipeline run — so it doubles as the in-season rankings and playoff bubble audit while $S$ is still underway, and stands as the final accomplishment audit once $S$ concludes.
 - **Role:** Pure retrospective accomplishment audit. Features full 4-pipeline performance matrix, outcome luck variance analysis, and schedule difficulty & opponent quality back-propagation (Sonneborn-Berger and Buchholz ratings).
 
-### 8.4 Dedicated Model Diagnostics & Convergence Certification (`docs/reports/model_diagnostics.qmd`)
+### 8.3 Dedicated Model Diagnostics & Convergence Certification (`docs/reports/model_diagnostics.qmd`)
 - **Temporal Scope:** Technical modeling and sampling audit.
 - **Role:** The isolated technical specification document for statistical modeling and computation. Features individual convergence gate audits for all 4 pipelines (WLD, PD, XWLD, XPD), combined health certification matrix ($\widehat{R}$, bulk/tail ESS, divergences, E-BFMI), and the 9-point FCS prior hyperparameter sensitivity grid sweep.
 

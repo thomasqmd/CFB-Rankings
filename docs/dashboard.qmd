@@ -1,6 +1,6 @@
 ---
 title: "CFB Bayesian Retrospective Rankings Dashboard"
-subtitle: "Single-Year Bayesian Evaluative Engine & Multi-System Matrix (2013–Present)"
+subtitle: "Single-Year Evaluative Rankings, 2013–Present"
 author: "Thomas Reinke"
 date: today
 format:
@@ -13,6 +13,187 @@ format:
         href: https://github.com/thomasqmd
     orientation: rows
 ---
+
+```{=html}
+<script>
+// Defined at the top of the document (before any page content/widgets exist yet) so that
+// window.updateScheduleFilter is guaranteed to already be available by the time any
+// DataTable's own `callback` (see render_schedule_table()) fires later in the page. This
+// is also why switchDashboardYear() is only ever invoked via the DOMContentLoaded listener
+// below: that still waits for the whole document, even though this script runs first.
+function switchDashboardYear(selectedYear) {
+  // 1. Synchronize all select elements with class .year-selector
+  document.querySelectorAll('.year-selector').forEach(function(sel) {
+    if (sel.value !== selectedYear) sel.value = selectedYear;
+  });
+
+  // 2. Hide all year panels and show only the selected year
+  //    (fill-container panels need 'flex' to stretch their nested widget; the plain
+  //    KPI banner panel is a static table and only needs 'block')
+  document.querySelectorAll('.year-panel').forEach(function(el) {
+    el.style.display = 'none';
+  });
+  document.querySelectorAll('.year-panel-' + selectedYear).forEach(function(el) {
+    el.style.display = el.classList.contains('html-fill-container') ? 'flex' : 'block';
+  });
+
+  // 3. Update any active year text badges
+  document.querySelectorAll('.current-year-badge').forEach(function(el) {
+    el.textContent = 'Season ' + selectedYear;
+  });
+
+  // 4. Trigger window resize so DataTables and Plotly canvases adjust column widths, and
+  //    re-apply this season's Team Schedule filter (its own DT already applied it once via
+  //    the `callback` in render_schedule_table(), but re-apply here too in case the user
+  //    is switching back to an already-initialized season).
+  setTimeout(function() {
+    window.dispatchEvent(new Event('resize'));
+    if (window.jQuery && window.jQuery.fn.dataTable) {
+      window.jQuery.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
+    }
+    updateScheduleFilter(selectedYear);
+  }, 60);
+}
+
+// On document load, initialize to active season
+document.addEventListener('DOMContentLoaded', function() {
+  var globalSel = document.getElementById('global-year-selector');
+  if (globalSel) {
+    switchDashboardYear(globalSel.value);
+  }
+
+  // Quarto dashboard pages are Bootstrap tab-panes (data-bs-toggle="tab"). Every DataTable
+  // on a page other than the one shown by default gets initialized while its tab-pane is
+  // still hidden (0-width), which leaves DataTables' internal column-width state broken
+  // until something forces a redraw. Do that (and re-apply the current filter) the moment
+  // a tab is actually shown, so switching to e.g. Team Schedule doesn't need an unrelated
+  // action (like the year selector, which already happened to force a redraw) first.
+  document.querySelectorAll('a[data-bs-toggle="tab"], button[data-bs-toggle="tab"]').forEach(function(tabLink) {
+    tabLink.addEventListener('shown.bs.tab', function() {
+      setTimeout(function() {
+        window.dispatchEvent(new Event('resize'));
+        if (window.jQuery && window.jQuery.fn.dataTable) {
+          window.jQuery.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
+        }
+        var yearSel = document.getElementById('global-year-selector');
+        if (yearSel) updateScheduleFilter(yearSel.value);
+      }, 30);
+    });
+  });
+});
+
+// --- Team Schedule page: conference -> team cascading filter ---
+//
+// Rewritten to avoid two fragile dependencies from the previous version:
+//   1. Inline onchange="..." attributes -> delegated document-level 'change' listeners
+//      instead, registered once at parse time (before the selects even exist in the DOM),
+//      so there is no dependency on per-element handler wiring surviving however Quarto/
+//      the browser processes the generated markup.
+//   2. DataTables' column().search(regex).draw() -> a plain clear()+rows.add(subset)+draw()
+//      against a full dataset cached the first time each table is touched. This sidesteps
+//      DataTables' search/regex layer entirely, which is the one part of this we can't
+//      directly observe failing (no console errors were thrown, yet nothing changed).
+//
+// A visible status line under the controls (#schedule-status-<season>) reports what's
+// currently applied, so this is verifiable on the page itself without opening devtools.
+
+window.__scheduleFullData = window.__scheduleFullData || {};
+
+// Populated directly from each table's own DT `callback` (see render_schedule_table()),
+// which hands us the authoritative DataTables API instance the moment it's actually ready
+// - no need to guess a selector for the real <table> DataTables initializes (id="schedule-
+// table-<season>" is on the htmlwidgets wrapper <div>, not that table, which is created as
+// a child of it by the widget's own render script; searching for it after the fact was
+// unreliable). Falls back to a direct selector lookup only if the callback hasn't run yet.
+window.__scheduleTables = window.__scheduleTables || {};
+
+function getScheduleTable(season) {
+  if (window.__scheduleTables[season]) return window.__scheduleTables[season];
+  if (!(window.jQuery && window.jQuery.fn.dataTable)) return null;
+  var tableEl = document.querySelector('#schedule-table-' + season + ' table');
+  if (!tableEl) return null;
+  try {
+    var table = window.jQuery(tableEl).DataTable();
+    window.__scheduleTables[season] = table;
+    return table;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getScheduleFullData(season, table) {
+  if (!window.__scheduleFullData[season]) {
+    window.__scheduleFullData[season] = table.rows().data().toArray();
+  }
+  return window.__scheduleFullData[season];
+}
+
+function setScheduleStatus(season, text) {
+  var el = document.getElementById('schedule-status-' + season);
+  if (el) el.textContent = text;
+}
+
+// Narrows the team <select> to the chosen conference's teams, then re-applies the table filter
+function updateTeamOptions(season) {
+  var confSel = document.getElementById('conf-select-' + season);
+  var teamSel = document.getElementById('team-select-' + season);
+  if (!confSel || !teamSel) return;
+  var conf = confSel.value;
+  var selectedStillVisible = (teamSel.value === 'All');
+  teamSel.querySelectorAll('option[data-conf]').forEach(function(opt) {
+    var visible = (conf === 'All') || (opt.getAttribute('data-conf') === conf);
+    opt.hidden = !visible;
+    if (visible && opt.value === teamSel.value) selectedStillVisible = true;
+  });
+  if (!selectedStillVisible) teamSel.value = 'All';
+  updateScheduleFilter(season);
+}
+
+// Applies the conference/team selection by rebuilding the table's row set from a cached
+// copy of its full (unfiltered) data (Team = column 0, Conference = column 1, per
+// render_schedule_table's output). Called from the season/conference/team selectors, and
+// once up front by that table's own DT `callback` as soon as it's ready.
+function updateScheduleFilter(season) {
+  var table = getScheduleTable(season);
+  if (!table) { setScheduleStatus(season, 'Table not ready yet - try again in a moment.'); return; }
+
+  var fullData = getScheduleFullData(season, table);
+  var confSel = document.getElementById('conf-select-' + season);
+  var teamSel = document.getElementById('team-select-' + season);
+  var conf = confSel ? confSel.value : 'All';
+  var team = teamSel ? teamSel.value : 'All';
+
+  var filtered;
+  var statusLabel;
+  if (team !== 'All') {
+    filtered = fullData.filter(function(row) { return row[0] === team; });
+    statusLabel = 'Showing ' + team;
+  } else if (conf !== 'All') {
+    filtered = fullData.filter(function(row) { return row[1] === conf; });
+    statusLabel = 'Showing ' + conf;
+  } else {
+    filtered = fullData;
+    statusLabel = 'Showing all teams';
+  }
+
+  table.clear();
+  table.rows.add(filtered);
+  table.draw();
+  setScheduleStatus(season, statusLabel + ' (' + filtered.length + ' games)');
+}
+
+// Delegated listeners: registered once, immediately, independent of when the actual
+// <select> elements are inserted into the DOM later in the page.
+document.addEventListener('change', function(e) {
+  var el = e.target;
+  if (!el || !el.id) return;
+  var confMatch = el.id.match(/^conf-select-(.+)$/);
+  if (confMatch) { updateTeamOptions(confMatch[1]); return; }
+  var teamMatch = el.id.match(/^team-select-(.+)$/);
+  if (teamMatch) { updateScheduleFilter(teamMatch[1]); return; }
+});
+</script>
+```
 
 ```{r}
 #| label: setup
@@ -46,33 +227,47 @@ has_targets <- tryCatch({
 historical_records <- NULL
 live_composite <- NULL
 live_benchmark <- NULL
+historical_ap_polls <- NULL
+team_game_logs <- NULL
 season_info <- list(season = 2026L, week = 2L)
+
+find_first_path <- function(candidates) {
+  for (cand in candidates) if (file.exists(cand)) return(cand)
+  NULL
+}
 
 if (has_targets) {
   live_composite <- tryCatch(tar_read(composite_rankings), error = function(e) NULL)
   live_benchmark <- tryCatch(tar_read(benchmark_comparison), error = function(e) NULL)
   season_info    <- tryCatch(tar_read(current_season_info), error = function(e) list(season = 2026L, week = 2L))
   historical_records <- tryCatch(tar_read(historical_standings), error = function(e) NULL)
+  historical_ap_polls <- tryCatch(tar_read(historical_ap_polls), error = function(e) NULL)
+  team_game_logs <- tryCatch(tar_read(team_game_logs), error = function(e) NULL)
 }
 
 # 2. Ingest or load multi-season records from DuckDB if needed
+duckdb_path <- find_first_path(c("data/cfb.duckdb", "../data/cfb.duckdb", "../../data/cfb.duckdb"))
+ingest_path <- find_first_path(c("R/01_ingest_duckdb.R", "../R/01_ingest_duckdb.R", "../../R/01_ingest_duckdb.R"))
+if (!exists("get_multi_season_records") && !is.null(ingest_path)) {
+  tryCatch(source(ingest_path, local = FALSE), error = function(e) NULL)
+}
+
 if (is.null(historical_records) || nrow(historical_records) == 0) {
-  find_first_path <- function(candidates) {
-    for (cand in candidates) if (file.exists(cand)) return(cand)
-    NULL
-  }
-  duckdb_path <- find_first_path(c("data/cfb.duckdb", "../data/cfb.duckdb", "../../data/cfb.duckdb"))
-  ingest_path <- find_first_path(c("R/01_ingest_duckdb.R", "../R/01_ingest_duckdb.R", "../../R/01_ingest_duckdb.R"))
-  
-  if (!exists("get_multi_season_records") && !is.null(ingest_path)) {
-    tryCatch(source(ingest_path, local = FALSE), error = function(e) NULL)
-  }
   if (!is.null(duckdb_path) && exists("get_multi_season_records")) {
     historical_records <- tryCatch({
       get_multi_season_records(db_path = duckdb_path, min_season = 2013)
     }, error = function(e) tibble::tibble())
   }
 }
+
+if (is.null(team_game_logs) || nrow(team_game_logs) == 0) {
+  if (!is.null(duckdb_path) && exists("get_team_game_log")) {
+    team_game_logs <- tryCatch({
+      get_team_game_log(db_path = duckdb_path, min_season = 2013)
+    }, error = function(e) tibble::tibble())
+  }
+}
+if (is.null(team_game_logs)) team_game_logs <- tibble::tibble()
 
 # 3. Fallback multi-season generator if DuckDB table is empty
 all_seasons_vec <- 2026:2013
@@ -122,26 +317,26 @@ if (is.null(historical_records) || nrow(historical_records) == 0) {
 available_seasons <- sort(unique(historical_records$season), decreasing = TRUE)
 active_season <- as.integer(season_info$season)
 
-# 4. Historical AP Top 25 Poll Lookup Table
+# 4. Historical AP Top 25 Poll Lookup (real final polls, sourced via cfbfastR/CFBD, disk-cached)
+poll_cache_dir <- find_first_path(c("data/external_polls", "../data/external_polls", "../../data/external_polls"))
+benchmark_path <- find_first_path(c("R/06_benchmark.R", "../R/06_benchmark.R", "../../R/06_benchmark.R"))
+if (!exists("fetch_historical_ap_final") && !is.null(benchmark_path)) {
+  tryCatch(source(benchmark_path, local = FALSE), error = function(e) NULL)
+}
+
 get_historical_ap_top25 <- function(yr) {
-  ap_maps <- list(
-    "2026" = c("Oregon" = 1, "Georgia" = 2, "Ohio State" = 3, "Texas" = 4, "Penn State" = 5, "Tennessee" = 6, "Alabama" = 7, "Notre Dame" = 8, "Ole Miss" = 9, "Missouri" = 10, "Utah" = 11, "Miami" = 12, "USC" = 13, "Oklahoma" = 14, "Kansas State" = 15, "LSU" = 16, "Michigan" = 17, "Clemson" = 18, "Louisville" = 19, "Nebraska" = 20, "Iowa State" = 21, "Illinois" = 22, "Northern Illinois" = 23, "Texas A&M" = 24, "UNLV" = 25),
-    "2025" = c("Ohio State" = 1, "Georgia" = 2, "Texas" = 3, "Oregon" = 4, "Penn State" = 5, "Notre Dame" = 6, "Tennessee" = 7, "Indiana" = 8, "Boise State" = 9, "Arizona State" = 10, "SMU" = 11, "Clemson" = 12, "Alabama" = 13, "Miami" = 14, "Ole Miss" = 15, "South Carolina" = 16, "BYU" = 17, "Iowa State" = 18, "Colorado" = 19, "Army" = 20, "Illinois" = 21, "Missouri" = 22, "UNLV" = 23, "Memphis" = 24, "Tulane" = 25),
-    "2024" = c("Oregon" = 1, "Georgia" = 2, "Texas" = 3, "Penn State" = 4, "Notre Dame" = 5, "Ohio State" = 6, "Tennessee" = 7, "Indiana" = 8, "Boise State" = 9, "SMU" = 10, "Arizona State" = 11, "Clemson" = 12, "Alabama" = 13, "Miami" = 14, "Ole Miss" = 15, "South Carolina" = 16, "BYU" = 17, "Iowa State" = 18, "Colorado" = 19, "Army" = 20, "Illinois" = 21, "Missouri" = 22, "UNLV" = 23, "Memphis" = 24, "Tulane" = 25),
-    "2023" = c("Michigan" = 1, "Washington" = 2, "Texas" = 3, "Georgia" = 4, "Alabama" = 5, "Oregon" = 6, "Florida State" = 7, "Missouri" = 8, "Ole Miss" = 9, "Ohio State" = 10, "Arizona" = 11, "LSU" = 12, "Penn State" = 13, "Notre Dame" = 14, "Oklahoma" = 15, "Oklahoma State" = 16, "Tennessee" = 17, "Kansas State" = 18, "Louisville" = 19, "Clemson" = 20, "NC State" = 21, "Iowa" = 22, "Kansas" = 23, "SMU" = 24, "Liberty" = 25),
-    "2022" = c("Georgia" = 1, "TCU" = 2, "Michigan" = 3, "Ohio State" = 4, "Alabama" = 5, "Tennessee" = 6, "Penn State" = 7, "Washington" = 8, "Tulane" = 9, "Utah" = 10, "Florida State" = 11, "USC" = 12, "Oregon" = 13, "LSU" = 14, "Oregon State" = 15, "Mississippi State" = 16, "Troy" = 17, "UCLA" = 18, "Notre Dame" = 19, "South Carolina" = 20, "Texas" = 21, "UTSA" = 22, "South Alabama" = 23, "Fresno State" = 24, "Minnesota" = 25),
-    "2021" = c("Georgia" = 1, "Alabama" = 2, "Michigan" = 3, "Cincinnati" = 4, "Baylor" = 5, "Ohio State" = 6, "Oklahoma State" = 7, "Notre Dame" = 8, "Michigan State" = 9, "Oklahoma" = 10, "Ole Miss" = 11, "Utah" = 12, "Pittsburgh" = 13, "Clemson" = 14, "Wake Forest" = 15, "Louisiana" = 16, "Houston" = 17, "Kentucky" = 18, "BYU" = 19, "NC State" = 20, "Arkansas" = 21, "Oregon" = 22, "Iowa" = 23, "Utah State" = 24, "San Diego State" = 25),
-    "2020" = c("Alabama" = 1, "Ohio State" = 2, "Clemson" = 3, "Texas A&M" = 4, "Notre Dame" = 5, "Oklahoma" = 6, "Georgia" = 7, "Cincinnati" = 8, "Iowa State" = 9, "Northwestern" = 10, "BYU" = 11, "Indiana" = 12, "Florida" = 13, "Coastal Carolina" = 14, "Louisiana" = 15, "Iowa" = 16, "Liberty" = 17, "North Carolina" = 18, "Texas" = 19, "Oklahoma State" = 20, "Miami" = 21, "USC" = 22, "Ball State" = 23, "San Jose State" = 24, "Buffalo" = 25),
-    "2019" = c("LSU" = 1, "Clemson" = 2, "Ohio State" = 3, "Georgia" = 4, "Oregon" = 5, "Florida" = 6, "Oklahoma" = 7, "Alabama" = 8, "Penn State" = 9, "Minnesota" = 10, "Wisconsin" = 11, "Notre Dame" = 12, "Baylor" = 13, "Auburn" = 14, "Iowa" = 15, "Utah" = 16, "Memphis" = 17, "Michigan" = 18, "Appalachian State" = 19, "Navy" = 20, "Cincinnati" = 21, "Air Force" = 22, "Boise State" = 23, "UCF" = 24, "Virginia" = 25),
-    "2018" = c("Clemson" = 1, "Alabama" = 2, "Ohio State" = 3, "Oklahoma" = 4, "Notre Dame" = 5, "LSU" = 6, "Florida" = 7, "Georgia" = 8, "Texas" = 9, "Washington State" = 10, "UCF" = 11, "Kentucky" = 12, "Washington" = 13, "Michigan" = 14, "Syracuse" = 15, "Texas A&M" = 16, "Penn State" = 17, "Fresno State" = 18, "Army" = 19, "West Virginia" = 20, "Northwestern" = 21, "Utah State" = 22, "Boise State" = 23, "Cincinnati" = 24, "Iowa" = 25),
-    "2017" = c("Alabama" = 1, "Georgia" = 2, "Oklahoma" = 3, "Clemson" = 4, "Ohio State" = 5, "UCF" = 6, "Wisconsin" = 7, "Penn State" = 8, "TCU" = 9, "USC" = 10, "Miami" = 11, "Washington" = 12, "Auburn" = 13, "Notre Dame" = 14, "Stanford" = 15, "Michigan State" = 16, "Northwestern" = 17, "LSU" = 18, "NC State" = 19, "Memphis" = 20, "Mississippi State" = 21, "South Florida" = 22, "Boise State" = 23, "Oklahoma State" = 24, "Virginia Tech" = 25),
-    "2016" = c("Clemson" = 1, "Alabama" = 2, "USC" = 3, "Washington" = 4, "Oklahoma" = 5, "Ohio State" = 6, "Penn State" = 7, "Florida State" = 8, "Wisconsin" = 9, "Michigan" = 10, "Oklahoma State" = 11, "Stanford" = 12, "LSU" = 13, "Florida" = 14, "Western Michigan" = 15, "West Virginia" = 16, "Texas A&M" = 17, "Colorado" = 18, "South Florida" = 19, "Utah" = 20, "Auburn" = 21, "Miami" = 22, "Virginia Tech" = 23, "San Diego State" = 24, "Tennessee" = 25),
-    "2015" = c("Alabama" = 1, "Clemson" = 2, "Stanford" = 3, "Ohio State" = 4, "Oklahoma" = 5, "Michigan State" = 6, "TCU" = 7, "Houston" = 8, "Iowa" = 9, "Ole Miss" = 10, "Notre Dame" = 11, "Michigan" = 12, "Baylor" = 13, "Florida State" = 14, "North Carolina" = 15, "LSU" = 16, "Utah" = 17, "Navy" = 18, "Oregon" = 19, "Oklahoma State" = 20, "Wisconsin" = 21, "Tennessee" = 22, "Northwestern" = 23, "Western Kentucky" = 24, "Florida" = 25),
-    "2014" = c("Ohio State" = 1, "Oregon" = 2, "TCU" = 3, "Alabama" = 4, "Florida State" = 5, "Michigan State" = 6, "Baylor" = 7, "Georgia Tech" = 8, "Georgia" = 9, "UCLA" = 10, "Mississippi State" = 11, "Arizona State" = 12, "Wisconsin" = 13, "Missouri" = 14, "Clemson" = 15, "Boise State" = 16, "Ole Miss" = 17, "Kansas State" = 18, "Arizona" = 19, "USC" = 20, "Utah" = 21, "Auburn" = 22, "Marshall" = 23, "Louisville" = 24, "Memphis" = 25),
-    "2013" = c("Florida State" = 1, "Auburn" = 2, "Michigan State" = 3, "South Carolina" = 4, "Missouri" = 5, "Oklahoma" = 6, "Alabama" = 7, "Clemson" = 8, "Oregon" = 9, "UCF" = 10, "Stanford" = 11, "Ohio State" = 12, "Baylor" = 13, "LSU" = 14, "Louisville" = 15, "UCLA" = 16, "Oklahoma State" = 17, "Texas A&M" = 18, "USC" = 19, "Vanderbilt" = 20, "Washington" = 21, "Notre Dame" = 22, "Arizona State" = 23, "Wisconsin" = 24, "Duke" = 25)
-  )
-  as_chr <- as.character(yr)
-  if (as_chr %in% names(ap_maps)) ap_maps[[as_chr]] else c()
+  # Prefer the pre-fetched targets pipeline output (historical_ap_polls target)
+  if (!is.null(historical_ap_polls) && nrow(historical_ap_polls) > 0) {
+    yr_poll <- historical_ap_polls |> dplyr::filter(season == as.integer(yr))
+    if (nrow(yr_poll) > 0) return(stats::setNames(yr_poll$rank_ap, yr_poll$team))
+  }
+  # Fall back to a direct disk-cached / live CFBD fetch (e.g. when targets store isn't available)
+  if (as.integer(yr) != active_season && exists("fetch_historical_ap_final")) {
+    cache_dir <- if (!is.null(poll_cache_dir)) poll_cache_dir else "data/external_polls"
+    yr_poll <- tryCatch(fetch_historical_ap_final(as.integer(yr), cache_dir = cache_dir), error = function(e) tibble::tibble())
+    if (nrow(yr_poll) > 0) return(stats::setNames(yr_poll$rank_ap, yr_poll$team))
+  }
+  c()
 }
 
 # 5. Build self-contained analytical bundle for each season
@@ -299,25 +494,40 @@ for (s in available_seasons) {
   if (!is.null(b)) season_bundles[[as.character(s)]] <- b
 }
 valid_seasons <- names(season_bundles)
+
+# Shared season-toggle wrapper: marks each panel as a bslib fill item/container so
+# nested plotly/DT widgets stretch to fill their card instead of clipping or scrolling.
+year_panel <- function(s, is_active, content) {
+  htmltools::div(
+    class = paste0("year-panel year-panel-", s, " html-fill-item html-fill-container"),
+    style = paste0(if (is_active) "display: flex;" else "display: none;", " flex-direction: column; height: 100%; width: 100%;"),
+    content
+  )
+}
 ```
 
 # {.sidebar}
 
-### 🏈 Controls & Year Filter
+### Controls & Year Filter
 
 ::: {.card .p-3 .mb-3 style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);"}
 <label for="global-year-selector" class="form-label fw-bold mb-1" style="color: #303e4e; font-size: 1rem;">
-  📅 Evaluated Season
+  Evaluated Season
 </label>
 <select id="global-year-selector" class="form-select form-select-lg year-selector" onchange="switchDashboardYear(this.value)" style="border: 2px solid #3a6ea5; font-weight: 700; color: #1e293b; font-size: 1.05rem;">
 ```{r}
 #| results: asis
 #| echo: false
+season_label <- function(yr) {
+  yr_int <- as.integer(yr)
+  sprintf("%d-%02d", yr_int, (yr_int + 1) %% 100)
+}
+
 for (s in valid_seasons) {
   lbl <- if (as.integer(s) == active_season) {
-    sprintf("%s Season (Current Week %d)", s, season_info$week)
+    sprintf("%s (Week %d)", season_label(s), season_info$week)
   } else {
-    sprintf("%s Season (Complete)", s)
+    season_label(s)
   }
   sel <- if (as.integer(s) == active_season) " selected" else ""
   cat(sprintf('<option value="%s"%s>%s</option>\n', s, sel, lbl))
@@ -325,17 +535,7 @@ for (s in valid_seasons) {
 ```
 </select>
 <div class="form-text text-muted mt-2" style="font-size: 0.8rem; line-height: 1.35;">
-  <strong>Single-Year Rule:</strong> Dynamically switches all rankings, side-by-side matrices, 2×2 quadrants, and external poll divergences to the selected season.
-</div>
-:::
-
-::: {.card .p-2 .mb-3 style="background: #f8fafc; border: 1px solid #e2e8f0; font-size: 0.84rem;"}
-<div class="fw-bold text-dark mb-1">Quick Era Selector:</div>
-<div class="d-flex flex-column gap-1">
-  <button class="btn btn-sm btn-outline-primary text-start" onclick="switchDashboardYear('2026')">⚡ <strong>2026</strong> (Current Active)</button>
-  <button class="btn btn-sm btn-outline-secondary text-start" onclick="switchDashboardYear('2024')">🏆 <strong>2024–2025</strong> (12-Team CFP)</button>
-  <button class="btn btn-sm btn-outline-secondary text-start" onclick="switchDashboardYear('2023')">🎖️ <strong>2014–2023</strong> (4-Team CFP)</button>
-  <button class="btn btn-sm btn-outline-secondary text-start" onclick="switchDashboardYear('2013')">📜 <strong>2013</strong> (BCS Championship)</button>
+  Switches all rankings and charts to the selected season.
 </div>
 :::
 
@@ -349,22 +549,31 @@ for (s in valid_seasons) {
 </ul>
 :::
 
-# 🏆 Side-by-Side: Composite vs. Parts vs. External Rankings
+# Rankings Matrix
 
-## Row {height=14%}
+## Row {height=13%}
 
 ```{r}
-#| results: asis
 #| echo: false
-for (s in valid_seasons) {
-  b <- season_bundles[[s]]
-  s_num <- as.integer(s)
-  is_active <- (s_num == active_season)
-  disp <- if (is_active) "display: block;" else "display: none;"
+kpi_card <- function(bg_from, bg_to, label, value, sub, value_style = NULL) {
+  htmltools::tags$td(
+    style = "width: 25%; padding: 0 0.25rem; vertical-align: top;",
+    htmltools::div(
+      class = "card p-2 border-0 shadow-sm",
+      style = sprintf("background: linear-gradient(135deg, %s, %s); color: white; border-radius: 8px; line-height: 1.25;", bg_from, bg_to),
+      htmltools::div(class = "text-uppercase small fw-bold text-white-50", style = "font-size: 0.68rem;", label),
+      htmltools::div(class = "fw-bold", style = paste("font-size: 1.05rem;", value_style), value),
+      htmltools::div(class = "small text-white-50", style = "font-size: 0.72rem;", sub)
+    )
+  )
+}
+
+render_kpi_banner <- function(s_bundle, s, is_active) {
+  b <- s_bundle
   top_tm <- b$side_by_side$team[1]
   top_rc <- if ("record" %in% names(b$side_by_side)) b$side_by_side$record[1] else "-"
   top_sc <- sprintf("%.3f", b$side_by_side$composite_index[1])
-  
+
   # Max divergence between Resume (WLD) and Play EPA (XPD)
   div_row <- b$side_by_side |>
     dplyr::slice(1:15) |>
@@ -372,53 +581,41 @@ for (s in valid_seasons) {
     dplyr::arrange(desc(div_abs)) |>
     dplyr::slice(1)
   div_txt <- paste0(div_row$team, " (WLD #", div_row$rank_wld, " vs XPD #", div_row$rank_xpd, ")")
-  
+
   # Colley correlation
-  colley_rho <- round(cor(b$side_by_side$rank_composite, b$side_by_side$rank_colley, method = "spearman"), 3)
-  
-  cat(sprintf('
-  <div class="year-panel year-panel-%s" style="%s width: 100%%;">
-    <div class="row g-2 mb-2">
-      <div class="col-md-3">
-        <div class="card p-3 border-0 shadow-sm" style="background: linear-gradient(135deg, #303e4e, #475b72); color: white; border-radius: 8px;">
-          <div class="text-uppercase small fw-bold text-white-50">Active Season Scope</div>
-          <div class="fs-5 fw-bold">Season %s %s</div>
-          <div class="small text-white-50">Single-Year Bayesian Standings</div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card p-3 border-0 shadow-sm" style="background: linear-gradient(135deg, #0f9a7d, #14b896); color: white; border-radius: 8px;">
-          <div class="text-uppercase small fw-bold text-white-50">Consensus #1 Program</div>
-          <div class="fs-5 fw-bold">%s (%s)</div>
-          <div class="small text-white-50">Top Composite Score: %s</div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card p-3 border-0 shadow-sm" style="background: linear-gradient(135deg, #3a6ea5, #5188c4); color: white; border-radius: 8px;">
-          <div class="text-uppercase small fw-bold text-white-50">Resume vs. Play EPA Divergence</div>
-          <div class="fs-5 fw-bold" style="font-size: 1.05rem !important;">%s</div>
-          <div class="small text-white-50">Largest Internal Pipeline Split</div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card p-3 border-0 shadow-sm" style="background: linear-gradient(135deg, #d1622a, #e27d4c); color: white; border-radius: 8px;">
-          <div class="text-uppercase small fw-bold text-white-50">Colley Matrix Alignment</div>
-          <div class="fs-5 fw-bold">Spearman ρ = %s</div>
-          <div class="small text-white-50">Non-Predictive Bias-Free Benchmark</div>
-        </div>
-      </div>
-    </div>
-  </div>
-  ', s, disp, s, if (is_active) paste0("(Week ", season_info$week, ")") else "(Concluded)", top_tm, top_rc, top_sc, div_txt, sprintf("%.3f", colley_rho)))
+  colley_rho <- sprintf("%.3f", round(cor(b$side_by_side$rank_composite, b$side_by_side$rank_colley, method = "spearman"), 3))
+  season_txt <- paste0("Season ", s, " ", if (is_active) paste0("(Week ", season_info$week, ")") else "(Concluded)")
+
+  htmltools::div(
+    class = paste0("year-panel year-panel-", s),
+    style = paste0(if (is_active) "display: block;" else "display: none;", " width: 100%;"),
+    htmltools::tags$table(
+      style = "width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 0.5rem;",
+      htmltools::tags$tbody(
+        htmltools::tags$tr(
+          kpi_card("#303e4e", "#475b72", "Active Season Scope", season_txt, "Bayesian Standings"),
+          kpi_card("#0f9a7d", "#14b896", "Consensus #1 Program", sprintf("%s (%s)", top_tm, top_rc), sprintf("Top Composite Score: %s", top_sc)),
+          kpi_card("#3a6ea5", "#5188c4", "Resume vs. Play EPA Divergence", div_txt, "Largest Pipeline Split"),
+          kpi_card("#d1622a", "#e27d4c", "Colley Matrix Alignment", sprintf("Spearman ρ = %s", colley_rho), "Bias-Free Benchmark")
+        )
+      )
+    )
+  )
 }
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    render_kpi_banner(season_bundles[[s]], s, as.integer(s) == active_season)
+  })
+)
 ```
 
-## Row {height=48%}
+## Row {height=87%}
 
 ### Column {width=100%}
 
 ```{r}
-#| title: "Unified Multi-System Matrix: Composite vs. 4 Component Pipelines vs. External Benchmarks"
+#| title: "Unified Rankings Matrix"
 # Sketch for grouped two-tier table
 sketch_side <- htmltools::withTags(table(
   class = 'display',
@@ -451,8 +648,7 @@ render_side_table <- function(s_bundle, s) {
   if (!"rank_colley" %in% names(df)) df$rank_colley <- df$rank_composite
   if (!"colley_rating" %in% names(df)) df$colley_rating <- df$composite_index
 
-  top25 <- df |>
-    dplyr::slice(1:25) |>
+  ranked <- df |>
     dplyr::transmute(
       rank_composite = rank_composite,
       team = team,
@@ -469,14 +665,15 @@ render_side_table <- function(s_bundle, s) {
       outcome_luck = outcome_luck,
       margin_luck = margin_luck
     )
-  
+
   dt <- DT::datatable(
-    top25,
+    ranked,
     elementId = paste0("side-by-side-table-", s),
     container = sketch_side,
     options = list(
-      pageLength = 12,
-      dom = "ftip",
+      pageLength = 25,
+      lengthMenu = list(c(25, 50, 100, -1), c("25", "50", "100", "All")),
+      dom = "lftip",
       order = list(list(0, "asc")),
       columnDefs = list(
         list(className = "dt-center", targets = c(0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)),
@@ -489,7 +686,7 @@ render_side_table <- function(s_bundle, s) {
     DT::formatRound(columns = c(5), digits = 3) |>
     DT::formatStyle(
       5,
-      background = styleColorBar(range(top25$composite_index, na.rm = TRUE), "#a9b5c3"),
+      background = styleColorBar(range(ranked$composite_index, na.rm = TRUE), "#a9b5c3"),
       backgroundSize = "98% 88%",
       backgroundRepeat = "no-repeat",
       backgroundPosition = "center"
@@ -515,22 +712,19 @@ render_side_table <- function(s_bundle, s) {
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
     b <- season_bundles[[s]]
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_side_table(b, s)
-    )
+    year_panel(s, as.integer(s) == active_season, render_side_table(b, s))
   })
 )
 ```
 
-## Row {height=38%}
+# Rank Trajectories
 
-### Column {width=58%}
+## Row {height=100%}
+
+### Column {width=100%}
 
 ```{r}
-#| title: "Multi-System Rank Trajectories (Top 15 Programs)"
+#| title: "Rank Trajectories (Top 15)"
 render_trajectory_chart <- function(s_bundle, s) {
   top15 <- s_bundle$side_by_side |> dplyr::slice(1:15)
   systems <- c("Composite", "WLD (Resume)", "PD (Margin)", "XPD (EPA)", "Colley Matrix", "AP Poll")
@@ -576,74 +770,19 @@ render_trajectory_chart <- function(s_bundle, s) {
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
     b <- season_bundles[[s]]
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_trajectory_chart(b, s)
-    )
+    year_panel(s, as.integer(s) == active_season, render_trajectory_chart(b, s))
   })
 )
 ```
 
-### Column {width=42%}
-
-```{r}
-#| title: "4-Pipeline Component Value Decomposition (Top 12 Contenders)"
-render_decomp_chart <- function(s_bundle, s) {
-  top12 <- s_bundle$side_by_side |>
-    dplyr::slice(1:12) |>
-    dplyr::mutate(
-      w_wld  = 0.35 * phi_theta,
-      w_pd   = 0.25 * phi_delta,
-      w_xwld = 0.15 * phi_omega,
-      w_xpd  = 0.25 * phi_alpha
-    ) |>
-    dplyr::select(team, rank_composite, `WLD (Resume)` = w_wld, `PD (Margin)` = w_pd, `XWLD (Exp W/L)` = w_xwld, `XPD (Net EPA)` = w_xpd) |>
-    tidyr::pivot_longer(cols = c(`WLD (Resume)`, `PD (Margin)`, `XWLD (Exp W/L)`, `XPD (Net EPA)`), names_to = "Pipeline", values_to = "Score")
-  
-  p <- ggplot(top12, aes(x = reorder(team, -rank_composite), y = Score, fill = Pipeline)) +
-    geom_col(position = "stack", width = 0.65) +
-    coord_flip() +
-    scale_fill_manual(values = c(
-      "WLD (Resume)"   = c_navy,
-      "PD (Margin)"    = c_blue,
-      "XWLD (Exp W/L)" = c_teal,
-      "XPD (Net EPA)"  = c_orange
-    )) +
-    labs(x = NULL, y = "Cumulative Index Contribution", fill = NULL) +
-    theme_minimal(base_family = "sans") +
-    theme(
-      legend.position = "top",
-      legend.text = element_text(size = 8),
-      axis.text.y = element_text(face = "bold", size = 8.5),
-      panel.grid.minor = element_blank()
-    )
-  plotly::ggplotly(p) |>
-    plotly::layout(legend = list(orientation = "h", x = 0, y = 1.15))
-}
-
-htmltools::tagList(
-  lapply(valid_seasons, function(s) {
-    b <- season_bundles[[s]]
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_decomp_chart(b, s)
-    )
-  })
-)
-```
-
-# 🧭 2×2 Matrix & Quadrants
+# 2x2 Matrix & Quadrants
 
 ## Row {height=100%}
 
 ### Column {width=65%}
 
 ```{r}
-#| title: "Orthogonal Performance Matrix: Latent Resume Strength (θ) vs. Expected Play Dominance (α)"
+#| title: "Resume Strength (θ) vs. Play Dominance (α)"
 render_quadrant_chart <- function(s_bundle, s) {
   quad_df <- s_bundle$composite |>
     dplyr::filter(subdivision_id == 1L) |>
@@ -677,8 +816,8 @@ render_quadrant_chart <- function(s_bundle, s) {
     annotate("text", x = min(quad_df$theta_median) * 1.1, y = min(quad_df$alpha_median) * 1.1, 
              label = "VULNERABLE CONTENDERS\n(Lower Efficiency & Resume)", fontface = "bold", color = "#c1393f", size = 3, hjust = 0) +
     labs(
-      x = "Latent Actual Resume Ability (θ) — Pipeline 1 Ordered Logit",
-      y = "Latent Expected Point Efficiency (α) — Pipeline 4 Student-t EPA",
+      x = "Resume Ability (θ)",
+      y = "Play Efficiency (α)",
       color = "Conference"
     ) +
     theme_minimal(base_family = "sans") +
@@ -692,12 +831,7 @@ render_quadrant_chart <- function(s_bundle, s) {
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
     b <- season_bundles[[s]]
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_quadrant_chart(b, s)
-    )
+    year_panel(s, as.integer(s) == active_season, render_quadrant_chart(b, s))
   })
 )
 ```
@@ -709,7 +843,6 @@ htmltools::tagList(
 render_luck_table <- function(s_bundle, s) {
   luck_df <- s_bundle$composite |>
     dplyr::filter(subdivision_id == 1L) |>
-    dplyr::slice(1:20) |>
     dplyr::transmute(
       Team = team,
       `WLD Rank` = rank_wld,
@@ -718,11 +851,15 @@ render_luck_table <- function(s_bundle, s) {
       `Net EPA (α)` = sprintf("+%.1f", alpha_median),
       `Point Margin (δ)` = sprintf("+%.1f", delta_median)
     )
-  
+
   DT::datatable(
     luck_df,
     elementId = paste0("luck-table-", s),
-    options = list(pageLength = 10, dom = "tp"),
+    options = list(
+      pageLength = 10,
+      lengthMenu = list(c(10, 25, 50, -1), c("10", "25", "50", "All")),
+      dom = "lftp"
+    ),
     rownames = FALSE,
     class = "cell-border stripe compact"
   ) |>
@@ -736,17 +873,12 @@ render_luck_table <- function(s_bundle, s) {
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
     b <- season_bundles[[s]]
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_luck_table(b, s)
-    )
+    year_panel(s, as.integer(s) == active_season, render_luck_table(b, s))
   })
 )
 ```
 
-# ⚖️ Poll & Benchmark Divergence
+# Poll & Benchmark Divergence
 
 ## Row {height=50%}
 
@@ -769,7 +901,7 @@ render_underrated_chart <- function(s_bundle, s) {
   } else {
     htmltools::tags$div(
       class = "alert alert-secondary text-muted my-3 p-3",
-      "No external AP Top 25 poll records available for comparison in this slate. Colley Matrix benchmark is active below."
+      "No AP poll data for this season. See the Colley Matrix benchmark below."
     )
   }
 }
@@ -777,12 +909,7 @@ render_underrated_chart <- function(s_bundle, s) {
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
     b <- season_bundles[[s]]
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_underrated_chart(b, s)
-    )
+    year_panel(s, as.integer(s) == active_season, render_underrated_chart(b, s))
   })
 )
 ```
@@ -806,7 +933,7 @@ render_overrated_chart <- function(s_bundle, s) {
   } else {
     htmltools::tags$div(
       class = "alert alert-secondary text-muted my-3 p-3",
-      "No external AP Top 25 poll records available for comparison in this slate. Colley Matrix benchmark is active below."
+      "No AP poll data for this season. See the Colley Matrix benchmark below."
     )
   }
 }
@@ -814,12 +941,7 @@ render_overrated_chart <- function(s_bundle, s) {
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
     b <- season_bundles[[s]]
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_overrated_chart(b, s)
-    )
+    year_panel(s, as.integer(s) == active_season, render_overrated_chart(b, s))
   })
 )
 ```
@@ -829,7 +951,7 @@ htmltools::tagList(
 ### Column {width=100%}
 
 ```{r}
-#| title: "Consensus Alignment: Bayes 4-Pipeline vs. AP Top 25 vs. Colley Matrix"
+#| title: "Consensus Alignment: Bayes vs. AP vs. Colley"
 render_consensus_table <- function(s_bundle, s) {
   bench_tbl <- s_bundle$comparison_table
   if (!is.null(bench_tbl) && nrow(bench_tbl) > 0) {
@@ -859,118 +981,161 @@ render_consensus_table <- function(s_bundle, s) {
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
     b <- season_bundles[[s]]
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_consensus_table(b, s)
-    )
+    year_panel(s, as.integer(s) == active_season, render_consensus_table(b, s))
   })
 )
 ```
 
-# 🏈 Single-Year Standings Archive
+# Team Schedule
 
-## Row {height=100%}
+## Row {height=15%}
+
+```{r}
+#| echo: false
+build_schedule_controls <- function(log_df, hist_df, s_bundle, s) {
+  s_num <- as.integer(s)
+  log_yr <- log_df |> dplyr::filter(season == s_num)
+
+  if (nrow(log_yr) > 0) {
+    team_conf <- log_yr |> dplyr::distinct(team, conference) |> dplyr::filter(!is.na(team), !is.na(conference))
+  } else {
+    hist_yr <- hist_df |> dplyr::filter(season == s_num)
+    team_conf <- hist_yr |> dplyr::distinct(team, conference) |> dplyr::filter(!is.na(team), !is.na(conference))
+  }
+  team_conf <- team_conf |> dplyr::arrange(conference, team)
+  confs <- sort(unique(team_conf$conference))
+
+  # Default the selectors to that season's AP #1 team, when the AP poll identifies one
+  ap1_team <- NA_character_
+  if (!is.null(s_bundle) && "rank_ap" %in% names(s_bundle$side_by_side)) {
+    ap1_row <- s_bundle$side_by_side |> dplyr::filter(rank_ap == 1)
+    if (nrow(ap1_row) > 0) ap1_team <- ap1_row$team[1]
+  }
+  ap1_conf <- if (!is.na(ap1_team) && ap1_team %in% team_conf$team) {
+    team_conf$conference[team_conf$team == ap1_team][1]
+  } else {
+    NA_character_
+  }
+  default_team <- if (!is.na(ap1_team) && ap1_team %in% team_conf$team) ap1_team else "All"
+  default_conf <- if (!is.na(ap1_conf)) ap1_conf else "All"
+
+  htmltools::div(
+    class = "card p-2 border-0 shadow-sm",
+    style = "background: #f0f4f8; display: flex; flex-direction: column; justify-content: center; gap: 0.4rem; height: 100%; box-sizing: border-box;",
+    htmltools::div(
+      style = "display: flex; flex-wrap: wrap; align-items: center; gap: 2rem; row-gap: 0.4rem;",
+      htmltools::div(
+        style = "display: flex; align-items: center; gap: 0.6rem; flex: 0 0 auto;",
+        htmltools::tags$label("Conference:", `for` = paste0("conf-select-", s), class = "fw-bold text-nowrap", style = "color: #303e4e; font-size: 0.9rem;"),
+        htmltools::tags$select(
+          id = paste0("conf-select-", s), class = "form-select form-select-sm",
+          style = "background-color: #ffffff; border: 2px solid #3a6ea5; color: #1e293b; font-weight: 600; width: 220px;",
+          onchange = sprintf("updateTeamOptions('%s')", s),
+          htmltools::tags$option(value = "All", selected = if (default_conf == "All") TRUE else NULL, "All Conferences"),
+          lapply(confs, function(cf) htmltools::tags$option(value = cf, selected = if (cf == default_conf) TRUE else NULL, cf))
+        )
+      ),
+      htmltools::div(
+        style = "display: flex; align-items: center; gap: 0.6rem; flex: 0 0 auto;",
+        htmltools::tags$label("Team:", `for` = paste0("team-select-", s), class = "fw-bold text-nowrap", style = "color: #303e4e; font-size: 0.9rem;"),
+        htmltools::tags$select(
+          id = paste0("team-select-", s), class = "form-select form-select-sm",
+          style = "background-color: #ffffff; border: 2px solid #3a6ea5; color: #1e293b; font-weight: 600; width: 220px;",
+          onchange = sprintf("updateScheduleFilter('%s')", s),
+          htmltools::tags$option(value = "All", selected = if (default_team == "All") TRUE else NULL, "All Teams"),
+          lapply(seq_len(nrow(team_conf)), function(i) {
+            htmltools::tags$option(
+              value = team_conf$team[i], `data-conf` = team_conf$conference[i],
+              selected = if (team_conf$team[i] == default_team) TRUE else NULL,
+              team_conf$team[i]
+            )
+          })
+        )
+      )
+    ),
+    htmltools::tags$span(
+      id = paste0("schedule-status-", s),
+      class = "text-muted small fst-italic text-nowrap",
+      "Loading..."
+    )
+  )
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    year_panel(s, as.integer(s) == active_season, build_schedule_controls(team_game_logs, historical_records, season_bundles[[s]], s))
+  })
+)
+```
+
+## Row {height=85%}
 
 ### Column {width=100%}
 
 ```{r}
-#| title: "Complete Single-Year FBS Standings & Performance Breakdown"
-render_full_standings <- function(hist_df, s) {
-  yr_data <- hist_df |>
-    dplyr::filter(season == as.integer(s))
-  if (nrow(yr_data) == 0) return(htmltools::tags$div(class = "alert alert-secondary", "No standings available for this season."))
-  if (!"record" %in% names(yr_data)) yr_data$record <- paste0(yr_data$wins, "-", yr_data$losses)
-  yr_data$record[is.na(yr_data$record) | !nzchar(yr_data$record)] <- "-"
-  
-  yr_data <- yr_data |>
-    dplyr::arrange(desc(wins), desc(avg_margin)) |>
-    dplyr::mutate(rank_season = dplyr::row_number()) |>
-    dplyr::select(
-      Rank = rank_season,
+#| title: "Team-by-Team Schedule: Actual vs. EPA-Expected Result"
+render_schedule_table <- function(log_df, s) {
+  yr_data <- log_df |> dplyr::filter(season == as.integer(s))
+  if (nrow(yr_data) == 0) {
+    return(htmltools::tags$div(class = "alert alert-secondary m-3", "No per-game schedule data available for this season."))
+  }
+
+  # Pre-sorted by (team, week_sort) in get_team_game_log(), so postseason/bowl rows
+  # already land after every regular-season week for the same team.
+  display_df <- yr_data |>
+    dplyr::transmute(
       Team = team,
       Conference = conference,
-      Record = record,
-      `Win Pct` = win_pct,
-      `Avg Margin` = avg_margin,
-      `PPG` = ppg,
-      `Opp PPG` = opp_ppg,
-      `Games` = games_played
+      Week = ifelse(is.na(week_label), paste("Week", week), week_label),
+      Opponent = opponent,
+      `Opp Conf` = opponent_conference,
+      Loc = location,
+      Result = result,
+      Score = paste0(team_points, "-", opp_points),
+      `Exp. Result` = ifelse(is.na(expected_result), "-", expected_result),
+      `Net EPA (Exp. Margin)` = ifelse(is.na(net_epa), "-", sprintf("%+.2f", net_epa))
     )
-  
+
   DT::datatable(
-    yr_data,
-    elementId = paste0("standings-table-", s),
+    display_df,
+    elementId = paste0("schedule-table-", s),
     options = list(
-      pageLength = 14,
-      dom = "ftp",
+      pageLength = 50,
+      lengthMenu = list(c(50, 100, 200, -1), c("50", "100", "200", "All")),
+      dom = "lftip",
       order = list(list(0, "asc")),
       columnDefs = list(
-        list(className = "dt-center", targets = c(0, 2, 3, 4, 5, 6, 7, 8)),
-        list(className = "dt-left", targets = 1)
+        list(orderable = FALSE, targets = 2),
+        list(className = "dt-center", targets = c(2, 5, 6, 7, 8, 9)),
+        list(className = "dt-left", targets = c(0, 1, 3, 4))
       )
     ),
+    # DT's callback runs once this specific table is actually ready, which is the only
+    # reliable way to apply the default-team filter on load: a fixed setTimeout can fire
+    # before a table this size (hundreds of rows, and every season's table exists in the
+    # DOM at once) has finished initializing, silently leaving it unfiltered.
+    callback = DT::JS(sprintf(
+      "window.__scheduleTables = window.__scheduleTables || {}; window.__scheduleTables['%s'] = table; if (window.updateScheduleFilter) { window.updateScheduleFilter('%s'); }",
+      s, s
+    )),
     rownames = FALSE,
     class = "cell-border stripe hover compact"
   ) |>
-    DT::formatRound(columns = c("Win Pct"), digits = 3) |>
-    DT::formatRound(columns = c("Avg Margin", "PPG", "Opp PPG"), digits = 1) |>
     DT::formatStyle(
-      "Avg Margin",
-      color = styleInterval(c(0), c("#c1393f", "#0f9a7d")),
+      "Result",
+      color = styleEqual(c("W", "L"), c("#0f9a7d", "#c1393f")),
+      fontWeight = "bold"
+    ) |>
+    DT::formatStyle(
+      "Exp. Result",
+      color = styleEqual(c("W", "L"), c("#0f9a7d", "#c1393f")),
       fontWeight = "bold"
     )
 }
 
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
-    disp <- if (as.integer(s) == active_season) "display: block;" else "display: none;"
-    htmltools::tags$div(
-      class = paste0("year-panel year-panel-", s),
-      style = paste0(disp, " width: 100%;"),
-      render_full_standings(historical_records, s)
-    )
+    year_panel(s, as.integer(s) == active_season, render_schedule_table(team_game_logs, s))
   })
 )
-```
-
-```{=html}
-<script>
-function switchDashboardYear(selectedYear) {
-  // 1. Synchronize all select elements with class .year-selector
-  document.querySelectorAll('.year-selector').forEach(function(sel) {
-    if (sel.value !== selectedYear) sel.value = selectedYear;
-  });
-  
-  // 2. Hide all year panels and show only the selected year
-  document.querySelectorAll('.year-panel').forEach(function(el) {
-    el.style.display = 'none';
-  });
-  document.querySelectorAll('.year-panel-' + selectedYear).forEach(function(el) {
-    el.style.display = 'block';
-  });
-  
-  // 3. Update any active year text badges
-  document.querySelectorAll('.current-year-badge').forEach(function(el) {
-    el.textContent = 'Season ' + selectedYear;
-  });
-  
-  // 4. Trigger window resize so DataTables and Plotly canvases adjust column widths
-  setTimeout(function() {
-    window.dispatchEvent(new Event('resize'));
-    if (window.jQuery && window.jQuery.fn.dataTable) {
-      window.jQuery.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
-    }
-  }, 60);
-}
-
-// On document load, initialize to active season
-document.addEventListener('DOMContentLoaded', function() {
-  var globalSel = document.getElementById('global-year-selector');
-  if (globalSel) {
-    switchDashboardYear(globalSel.value);
-  }
-});
-</script>
 ```

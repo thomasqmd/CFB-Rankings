@@ -1,6 +1,6 @@
 ---
 title: "CFB Bayesian Ranking Engine: Comprehensive Season Retrospective"
-subtitle: "4-Pipeline Performance Matrix, Sub-Division Shrinkage, and Diagnostic Audit"
+subtitle: "4-Pipeline Performance Matrix & Opponent Equity Audit"
 author: "Thomas Reinke"
 date: today
 format:
@@ -168,16 +168,16 @@ if (has_targets) {
 ```
 
 ::: {.callout-note appearance="simple"}
-### 🏈 Audit Scope: Season `r season_info$season` Retrospective
-This comprehensive retrospective audit evaluates NCAA College Football for **Season `r season_info$season`** using our 4-pipeline Bayesian ranking engine, contrasting realized scoreboard outcomes with down-to-down net EPA play dominance across the entire FBS and FCS connectivity graph.
+### Audit Scope: Season `r season_info$season` Retrospective
+Retrospective 4-pipeline Bayesian audit for **Season `r season_info$season`**, comparing realized scoreboard outcomes against net EPA play dominance across the FBS/FCS connectivity graph.
 :::
 
 ## 1. Executive Summary & Retrospective Philosophy
 
-College football ranking methodologies fundamentally diverge along a philosophical fault line: **predictive power ratings** versus **retrospective evaluative rankings**.
+This is a retrospective evaluative ranking, not a predictive power rating.
 
-- **Predictive Power Ratings (e.g., SP+, FPI):** Attempt to forecast what would happen on a neutral field tomorrow.
-- **Retrospective Evaluative Rankings (This System):** Determine what programs have **earned given what occurred**, back-propagating schedule credit using posterior end-of-season opponent capability.
+- **Predictive Power Ratings (e.g., SP+, FPI):** Forecast what would happen on a neutral field tomorrow.
+- **Retrospective Evaluative Rankings (This System):** Score what programs **earned given what occurred**, using posterior end-of-season opponent strength for schedule credit.
 
 Our 4-pipeline architecture decomposes team performance along two orthogonal dimensions:
 - **Actual (Scoreboard Realized) vs. Expected (Net EPA Play-by-Play)**
@@ -214,7 +214,7 @@ retro_table <- composite |>
 gt::gt(retro_table, id = "tbl_retro_matrix") |>
   gt::tab_header(
     title = gt::md(sprintf("**FBS Top 25: Side-by-Side Unified Performance Matrix (Season %d)**", season_info$season)),
-    subtitle = sprintf("Season %d Retrospective Audit • Composite vs. Component Pipelines vs. External Benchmarks", season_info$season)
+    subtitle = sprintf("Season %d • Composite vs. Component Pipelines vs. External Benchmarks", season_info$season)
   ) |>
   gt::tab_spanner(label = "Composite Engine", columns = c(`Composite Index`)) |>
   gt::tab_spanner(label = "4 Component Latent Abilities (Parts)", columns = c(`WLD θ (Resume)`, `PD δ (Margin)`, `XWLD ω (Exp W/L)`, `XPD α (Net EPA)`)) |>
@@ -247,7 +247,7 @@ gt::gt(retro_table, id = "tbl_retro_matrix") |>
 
 ## 3. Resume Luck & Game Control Variance
 
-By comparing a team's actual discrete rank (Pipeline 1: WLD) with its expected discrete rank based on net play EPA (Pipeline 3: XWLD), we isolate **Outcome Luck ($\Delta = \text{Rank}_{\text{XWLD}} - \text{Rank}_{\text{WLD}}$)**:
+**Outcome Luck ($\Delta = \text{Rank}_{\text{XWLD}} - \text{Rank}_{\text{WLD}}$)** compares a team's actual discrete rank (WLD) to its expected discrete rank based on net play EPA (XWLD):
 
 - **$\Delta > 0$ (Positive Luck):** Team secured more wins than their down-to-down EPA expected (e.g. winning one-score games or recovering fumbles).
 - **$\Delta < 0$ (Negative Luck):** Team dominated the down-to-down metrics but suffered adverse variance in high-leverage moments.
@@ -278,7 +278,7 @@ plotly::ggplotly(p_luck)
 
 ## 4. Schedule Difficulty & Opponent Quality Back-Propagation
 
-A core tenet of retrospective evaluation is valuing games against the final posterior strength of opponents. Our framework translates posterior opponent abilities into two classical tournament equity metrics:
+Games are valued against opponents' final posterior strength, translated into two classical tournament equity metrics:
 
 1. **Sonneborn-Berger (SB) Score:** Rewards defeating high-quality opposition by weighting game results against opponent latent ability $\text{logit}^{-1}(\theta_{\text{opp}})$.
 2. **Buchholz (SOS) Rating:** The cumulative schedule difficulty faced across the entire season.
@@ -330,6 +330,6 @@ gt::gt(sos_table, id = "tbl_sos_equity") |>
 ```
 
 ::: {.callout-tip appearance="simple"}
-### 🔍 Technical Model Convergence & Diagnostics
-For comprehensive MCMC convergence diagnostics ($\widehat{R}$, bulk/tail ESS, divergences, E-BFMI) and FCS prior sensitivity sweeps, see the dedicated [Model Diagnostics & Convergence Certification](../reports/model_diagnostics.html) document.
+### Technical Model Convergence & Diagnostics
+MCMC convergence diagnostics and FCS prior sensitivity sweeps are in the [Model Diagnostics & Convergence Certification](../reports/model_diagnostics.html) document.
 :::

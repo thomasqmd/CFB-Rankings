@@ -73,22 +73,22 @@ all_passed <- all(diag_wld$passed, diag_pd$passed, diag_xwld$passed, diag_xpd$pa
 ```
 
 ::: {.callout-note appearance="simple"}
-### 🔬 Model Verification Scope: Season `r season_info$season`
-This technical document serves as the formal **Bayesian MCMC convergence and diagnostic certification** for our 4-pipeline NCAA College Football ranking engine. All model convergence criteria and hyperparameter sensitivity sweeps are documented here, keeping public dashboard and briefing documents strictly dedicated to team rankings.
+### Model Verification Scope: Season `r season_info$season`
+Formal MCMC convergence and diagnostic certification for the 4-pipeline ranking engine. All diagnostics live here, keeping the dashboard and briefing documents dedicated to team rankings.
 :::
 
 ## 1. Executive Convergence Certification
 
-Before posterior ratings propagate to ranking tables, all four Hamiltonian Monte Carlo (CmdStan) sampling chains must satisfy strict non-asymptotic convergence gates based on modern Bayesian workflow standards (*Gelman et al., 2020; Vehtari et al., 2021*):
+All four CmdStan sampling chains must pass these convergence gates before posterior ratings propagate to rankings (*Gelman et al., 2020; Vehtari et al., 2021*):
 
-1. **Rank-Normalized $\widehat{R} \le 1.01$:** Verifies thorough between-chain mixing and variance stationarity across all latent ability parameters ($\theta, \delta, \omega, \alpha$).
-2. **Effective Sample Size ($\text{ESS}_{\text{bulk}} \ge 400$, $\text{ESS}_{\text{tail}} \ge 400$):** Guarantees accurate estimation of posterior medians and 90% credible intervals.
-3. **Zero Post-Warmup Divergences:** Confirms that the No-U-Turn Sampler (NUTS) encountered zero geometric funnel pathology in high-dimensional parameter space.
-4. **Energy Bayesian Fraction of Missing Information ($\text{E-BFMI} > 0.20$):** Verifies optimal momentum exploration without heavy momentum-energy lag.
+1. **Rank-Normalized $\widehat{R} \le 1.01$:** Between-chain mixing across all latent ability parameters ($\theta, \delta, \omega, \alpha$).
+2. **Effective Sample Size ($\text{ESS}_{\text{bulk}} \ge 400$, $\text{ESS}_{\text{tail}} \ge 400$):** Accurate posterior medians and 90% credible intervals.
+3. **Zero Post-Warmup Divergences:** No geometric funnel pathology in the NUTS sampler.
+4. **E-BFMI $> 0.20$:** Adequate momentum exploration.
 
 ::: {.callout-`r ifelse(all_passed, "tip", "important")` appearance="simple"}
 ### Certification Status: `r ifelse(all_passed, "CERTIFIED (ALL GATES PASSED)", "ALERT: CONVERGENCE BREACH DETECTED")`
-All 4 pipelines passed convergence audit gates for Season `r season_info$season`. Posterior distributions are mathematically certified for retrospective evaluation.
+All 4 pipelines passed convergence gates for Season `r season_info$season`; posteriors are certified for retrospective evaluation.
 :::
 
 ```{r}
@@ -155,7 +155,7 @@ Pipeline 2 models realized continuous point differential $\Delta \text{Pts}_k$ u
 
 $$\Delta \text{Pts}_k \sim \text{Student-}t\left(\nu_{\text{pd}}, \, \delta_{\text{home}[k]} - \delta_{\text{away}[k]} + \beta_{\text{home, pd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{pd}}^2\right)$$
 
-The heavy-tailed degree of freedom $\nu_{\text{pd}} \sim \text{Gamma}(2, 0.1)$ bounds blowout leverage and ensures extreme scorelines cannot destabilize ratings.
+The heavy-tailed degree of freedom $\nu_{\text{pd}} \sim \text{Gamma}(2, 0.1)$ bounds blowout leverage so extreme scorelines can't destabilize ratings.
 
 ```{r}
 #| label: tbl-diag-pd
@@ -181,7 +181,7 @@ Pipeline 3 maps Post-Game Win Expectancy (PGWE) from cumulative play-by-play EPA
 
 $$Y_k^{\text{exp}} \sim \text{OrderedLogit}(\omega_{\text{home}[k]} - \omega_{\text{away}[k]} + \gamma_{\text{home, xwld}} \cdot (1 - \text{neutral}_k), \, \mathbf{c}_{\text{xwld}})$$
 
-The divergence $\theta_i - \omega_i$ mathematically quantifies **Outcome Luck**.
+The divergence $\theta_i - \omega_i$ quantifies **Outcome Luck**.
 
 ```{r}
 #| label: tbl-diag-xwld
@@ -207,7 +207,7 @@ Pipeline 4 models game-level Expected Points Differential $\Delta \text{XP}_k$ a
 
 $$\Delta \text{XP}_k \sim \text{Student-}t\left(\nu_{\text{xpd}}, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home, xpd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{xpd}}^2\right)$$
 
-The divergence $\delta_i - \alpha_i$ isolates **Finishing / Red-Zone Margin Luck**.
+The divergence $\delta_i - \alpha_i$ isolates **Finishing / Red-Zone Luck**.
 
 ```{r}
 #| label: tbl-diag-xpd
@@ -229,11 +229,11 @@ gt::gt(diag_xpd$gate_report, id = "tbl_diag_xpd") |>
 
 ## 6. FCS Hierarchical Shrinkage & Prior Sensitivity Sweep
 
-To resolve graph disconnection between FBS and FCS teams without arbitrary manual penalties, our engine implements non-centered hierarchical Gaussian shrinkage:
+To connect FBS and FCS teams without manual penalties, we apply non-centered hierarchical Gaussian shrinkage:
 
 $$\theta_i \sim \mathcal{N}(\mu_{\text{sub}[i]}, \sigma_{\text{sub}[i]}^2), \quad \mu_{\text{FBS}} = 0, \quad \mu_{\text{FCS}} \sim \mathcal{N}(-1.5, 0.5^2)$$
 
-Following *Fang et al. (2026, arXiv:2601.14727)*, we verify that Top-25 FBS rankings are asymptotically invariant to FCS hyperparameter choice by executing a 9-point grid sweep across $\mu_{\text{FCS}} \in \{-1.0, -1.5, -2.0\}$ and $\sigma_{\text{FCS}} \in \{0.3, 0.5, 0.8\}$:
+Following *Fang et al. (2026, arXiv:2601.14727)*, a 9-point grid sweep over $\mu_{\text{FCS}} \in \{-1.0, -1.5, -2.0\}$ and $\sigma_{\text{FCS}} \in \{0.3, 0.5, 0.8\}$ checks that Top-25 FBS rankings are invariant to the FCS hyperparameter choice:
 
 ```{r}
 #| label: tbl-fcs-sensitivity
@@ -276,4 +276,4 @@ gt::gt(sens_display, id = "tbl_fcs_sensitivity") |>
   )
 ```
 
-The sweep confirms near-perfect rank conservation ($\rho \ge 0.995$, Jaccard $\ge 0.96$), demonstrating that FCS games provide appropriate schedule connectivity without contaminating FBS evaluative ratings.
+Rank conservation is near-perfect ($\rho \ge 0.995$, Jaccard $\ge 0.96$): FCS games add schedule connectivity without contaminating FBS ratings.

@@ -211,3 +211,80 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
     most_overrated = most_overrated
   ))
 }
+
+#' Fetch the final (postseason) AP Top 25 poll for one concluded season, with local disk caching
+#' @param season Target season integer (should be a concluded season)
+#' @param cache_dir Directory to store cached poll data
+#' @param force_refresh Logical; if FALSE, checks disk cache before hitting external API
+#' @return Tibble of team, rank_ap for that season's final AP Top 25 (empty tibble if unavailable)
+fetch_historical_ap_final <- function(season, cache_dir = "data/external_polls", force_refresh = FALSE) {
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_file <- file.path(cache_dir, sprintf("ap_final_%d.rds", season))
+
+  if (!force_refresh && file.exists(cache_file)) {
+    cached <- tryCatch(readRDS(cache_file), error = function(e) NULL)
+    if (!is.null(cached) && is.data.frame(cached)) {
+      message(sprintf("[Benchmark] Final AP Top 25 for season %d loaded from cache: %s", season, cache_file))
+      return(cached)
+    }
+  }
+
+  message(sprintf("[Benchmark] Querying final postseason AP Top 25 for season %d...", season))
+
+  fetch_poll <- function(season_type) {
+    tryCatch(
+      cfbfastR::cfbd_rankings(year = season, season_type = season_type),
+      error = function(e) {
+        message(sprintf("Notice: Could not fetch %s rankings for %d (API key required or network issue).", season_type, season))
+        tibble::tibble()
+      }
+    )
+  }
+
+  polls_raw <- fetch_poll("postseason")
+  ap_final <- if (nrow(polls_raw) > 0) polls_raw |> dplyr::filter(poll == "AP Top 25") else tibble::tibble()
+
+  # Fallback for eras/seasons where CFBD has no distinct final postseason poll:
+  # use the latest available in-season AP Top 25 week instead.
+  if (nrow(ap_final) == 0) {
+    polls_raw <- fetch_poll("both")
+    ap_full <- if (nrow(polls_raw) > 0) polls_raw |> dplyr::filter(poll == "AP Top 25") else tibble::tibble()
+    if (nrow(ap_full) > 0) {
+      latest_week <- max(ap_full$week, na.rm = TRUE)
+      ap_final <- ap_full |> dplyr::filter(week == latest_week)
+    }
+  }
+
+  if (nrow(ap_final) == 0) {
+    cleaned <- tibble::tibble(team = character(0), rank_ap = integer(0))
+  } else {
+    cleaned <- ap_final |>
+      dplyr::transmute(team = as.character(school), rank_ap = as.integer(rank)) |>
+      dplyr::distinct(team, .keep_all = TRUE) |>
+      dplyr::arrange(rank_ap)
+  }
+
+  tryCatch(saveRDS(cleaned, cache_file), error = function(e) NULL)
+  if (nrow(cleaned) > 0) {
+    message(sprintf("[Benchmark] Cached final AP Top 25 (%d teams) to %s", nrow(cleaned), cache_file))
+  }
+
+  cleaned
+}
+
+#' Fetch final AP Top 25 polls for every concluded season in a vector, with disk caching per season
+#' @param seasons Integer vector of seasons to fetch
+#' @param current_season The active/in-progress season to exclude (it has no final poll yet)
+#' @param cache_dir Directory to store cached poll data
+#' @return Tibble of season, team, rank_ap across all concluded seasons requested
+fetch_all_historical_ap_finals <- function(seasons, current_season, cache_dir = "data/external_polls") {
+  concluded_seasons <- sort(unique(seasons[seasons != current_season]))
+
+  results <- lapply(concluded_seasons, function(yr) {
+    poll <- fetch_historical_ap_final(yr, cache_dir = cache_dir)
+    if (nrow(poll) == 0) return(NULL)
+    poll |> dplyr::mutate(season = as.integer(yr), .before = 1)
+  })
+
+  dplyr::bind_rows(results)
+}
