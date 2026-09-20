@@ -13,21 +13,31 @@ _targets_r/
 data/*.duckdb
 data/*.duckdb.wal
 data/*.tmp
+data/inits/
 
-# Compiled binaries and models
+# Compiled binaries and Stan models
 *.o
 *.so
 *.rds
 stan/*.exe
 stan/*_model
+stan/*.hpp
 
-# Quarto rendering outputs and cache
+# Quarto & Knitr rendered outputs, cache, and freeze directory
 .quarto/
+_freeze/
 *_cache/
 *_files/
-docs/reports/*.html
-docs/reports/*.pdf
-docs/presentation/*.html
+*.html
+*.pdf
+*.docx
+*.pptx
+docs/**/*.html
+docs/**/*.pdf
+
+# Un-ignore exceptions: specify files to track even if rendered
+# Example:
+# !docs/reports/special_briefing.html
 
 # OS artifacts
 .DS_Store

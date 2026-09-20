@@ -68,55 +68,72 @@ Implementation Strategy (R Pipeline)
 
     Compute seasonal ratings via sparse matrix eigenvector decomposition rather than brute iteration.
 
-Two pipelines - 1 WLD 2 XPD
+Four pipelines - 1 WLD, 2 PD, 3 XWLD, 4 XPD
 
-Focus on FBS but must account for occasional FCS opponents, may want bayes not frequentist approach
+Focus on FBS but must account for occasional FCS opponents, bayesian hierarchical approach
 
-A Bayesian framework cleanly separates the two objectives while resolving the FCS–FBS connectivity deficit:
+A Bayesian framework cleanly separates the four evaluative objectives along the 2×2 Orthogonal Performance Matrix (Actual vs. Expected × Discrete vs. Continuous) while resolving the FCS–FBS connectivity deficit:
 
-    Pipeline 1 (WLD): Retroactive strength of record via an ordinal Bradley–Terry or cumulative logit model.
+    Pipeline 1 (WLD): Actual discrete strength of record via an ordinal Bradley–Terry or cumulative logit model.
 
-    Pipeline 2 (XPD): Pure latent performance efficiency via an additive Gaussian network on cumulative EPA differentials.
+    Pipeline 2 (PD): Actual point differential via a robust Student-t model on scoreboard point margins (downweights extreme blowouts).
 
-Both pipelines handle FCS opponents through hierarchical shrinkage rather than arbitrary downweighting factors.
+    Pipeline 3 (XWLD): Expected discrete outcomes via an ordered logit model on Post-Game Win Expectancy (PGWE) derived from play-level net EPA.
 
-1. Pipeline 1: WLD (Bayesian Win-Loss-OT Resume)
+    Pipeline 4 (XPD): Pure latent performance efficiency via a heavy-tailed Student-t model on cumulative EPA differentials.
 
-To model discrete game outcomes (W=3,OT Win=2,OT Loss=1,L=0), cast each game outcome Yk​∈{1,2,3,4} as an ordered categorical variable using an ordered logit formulation:
-Code snippet
+All pipelines handle FCS opponents through hierarchical shrinkage rather than arbitrary downweighting factors.
+
+1. Pipeline 1: WLD (Bayesian Win-Loss-OT Actual Resume)
+
+To model discrete game outcomes (W=3, OT Win=2, OT Loss=1, L=0), cast each game outcome Yk​∈{1,2,3,4} as an ordered categorical variable using an ordered logit formulation:
 
 Y_k \sim \text{OrderedLogit}(\eta_k, \mathbf{c})
 
-Code snippet
+\eta_k = \theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}} \cdot (1 - \text{neutral}_k)
 
-\eta_k = \theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}}
-
-    θi​: Latent retro-performance / resume strength of team i.
-
-    γhome​: Structural home-field advantage.
-
+    θi​: Latent retro-performance / actual resume strength of team i.
+    γhome​: Structural home-field advantage log-odds.
     c=(c1​,c2​,c3​): Cutpoints separating regulation loss, OT loss, OT win, and regulation win.
 
 To extract end-of-season Sonneborn–Berger characteristics, compute team i's rating as the expected points secured against its specific schedule under posterior team qualities:
-Code snippet
 
 \text{SB}_i = \sum_{j \in \text{Opp}(i)} w_{ij} \cdot \text{logit}^{-1}(\theta_j)
 
-2. Pipeline 2: XPD (Expected Point Differential Efficiency)
+2. Pipeline 2: PD (Actual Scoreboard Point Differential)
+
+Model actual score margin (ΔPts_k = Score_home[k] - Score_away[k]) using a Student-t likelihood to prevent 70-point blowouts from exerting unbounded leverage:
+
+\Delta \text{Pts}_k \sim \text{Student-}t\left(\nu_{\text{pd}}, \, \delta_{\text{home}[k]} - \delta_{\text{away}[k]} + \beta_{\text{home, pd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{pd}}^2\right)
+
+    δi​: Latent actual point differential rating of team i.
+    νpd​: Degrees of freedom (ν≈4–8) for heavy-tailed robustness.
+    βhome, pd​: Home-field advantage in actual points (~2.8 pts).
+
+3. Pipeline 3: XWLD (Expected Discrete Outcomes / Post-Game Win Expectancy)
+
+Convert play-by-play net EPA into Post-Game Win Expectancy (PGWE) and map into 4 discrete expected tiers (Y_exp ∈ {1, 2, 3, 4}):
+
+Y_k^{\text{exp}} \sim \text{OrderedLogit}(\eta_k^{\text{xwld}}, \mathbf{c}_{\text{xwld}})
+
+\eta_k^{\text{xwld}} = \omega_{\text{home}[k]} - \omega_{\text{away}[k]} + \gamma_{\text{home, xwld}} \cdot (1 - \text{neutral}_k)
+
+    ωi​: Latent expected outcome strength of team i.
+    θi - ωi: Resume Luck / Game Control variance.
+
+4. Pipeline 4: XPD (Expected Point Differential Efficiency)
 
 Compute game-level expected point differential (ΔXPk​) directly from cumulative play-level EPA using cfbfastR::load_cfb_pbp():
-Code snippet
 
 \Delta \text{XP}_k = \sum_{p \in \text{Plays}_k} \text{EPA}_{p, \text{home}} - \sum_{p \in \text{Plays}_k} \text{EPA}_{p, \text{away}}
 
-Model ΔXPk​ as a continuous response using a Student-t likelihood to protect against garbage-time scoring and extreme blowouts:
-Code snippet
+Model ΔXPk​ as a continuous response using a Student-t likelihood:
 
-\Delta \text{XP}_k \sim \text{Student-}t\left(\nu, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home}}, \, \sigma^2\right)
+\Delta \text{XP}_k \sim \text{Student-}t\left(\nu_{\text{xpd}}, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home, xpd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{xpd}}^2\right)
 
     αi​: Latent net efficiency (XPD rating) of team i.
-
-    ν: Degrees of freedom (ν≈4–7) for heavy-tailed robustness.
+    νxpd​: Degrees of freedom (ν≈4–7) for heavy-tailed robustness.
+    δi - αi: Finishing / Red-Zone margin luck.
 
 3. Hierarchical Handling of FCS Opponents
 

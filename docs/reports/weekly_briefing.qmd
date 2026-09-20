@@ -1,6 +1,6 @@
 ---
 title: "CFB Bayesian Retrospective Rankings: Weekly Briefing"
-subtitle: "Past Performance Strength-of-Record & Efficiency Decomposition"
+subtitle: "4-Pipeline Performance Decomposition (WLD, PD, XWLD, XPD)"
 date: today
 format:
   html:
@@ -36,10 +36,21 @@ if (has_targets) {
   composite <- tar_read(composite_rankings)
   benchmark <- tar_read(benchmark_comparison)
   diag_wld  <- tar_read(diagnostics_wld)
+  diag_pd   <- tar_read(diagnostics_pd)
+  diag_xwld <- tar_read(diagnostics_xwld)
+  diag_xpd  <- tar_read(diagnostics_xpd)
   season_info <- tar_read(current_season_info)
 } else {
   # Fallback demonstration data
   season_info <- list(season = 2024, week = 15)
+  n <- 25
+  th <- round(seq(2.4, 0.8, length.out = n), 2)
+  dl <- round(seq(21.0, 5.0, length.out = n) + rnorm(n, 0, 1.2), 1)
+  om <- round(seq(2.2, 0.7, length.out = n) + rnorm(n, 0, 0.15), 2)
+  al <- round(seq(16.5, 4.2, length.out = n), 1)
+  r_w <- rank(-th)
+  r_xw <- rank(-om)
+  
   composite <- tibble::tibble(
     rank_composite = 1:25,
     team = c("Oregon", "Georgia", "Texas", "Penn State", "Notre Dame", 
@@ -54,8 +65,15 @@ if (has_targets) {
                    "Big Ten", "SEC", "Mountain West", "AAC", "AAC"),
     sb_score = round(seq(18.5, 9.2, length.out = 25), 2),
     buchholz_sos = round(seq(8.4, 5.1, length.out = 25), 2),
-    theta_median = round(seq(2.4, 0.8, length.out = 25), 2),
-    alpha_median = round(seq(16.5, 4.2, length.out = 25), 1),
+    theta_median = th,
+    delta_median = dl,
+    omega_median = om,
+    alpha_median = al,
+    rank_wld = r_w,
+    rank_pd = rank(-dl),
+    rank_xwld = r_xw,
+    rank_xpd = rank(-al),
+    outcome_luck = r_xw - r_w,
     composite_index = round(seq(0.99, 0.72, length.out = 25), 3),
     subdivision_id = 1L
   )
@@ -64,26 +82,34 @@ if (has_targets) {
     most_overrated = tibble::tibble(team = c("Miami", "Alabama", "Clemson"), rank_composite = c(14, 13, 12), rank_ap = c(9, 11, 8), ap_delta = c(-5, -2, -4))
   )
   diag_wld <- list(passed = TRUE)
+  diag_pd <- list(passed = TRUE)
+  diag_xwld <- list(passed = TRUE)
+  diag_xpd <- list(passed = TRUE)
 }
 ```
 
 ## Executive Summary
 
-This briefing details the **Week `r season_info$week`, `r season_info$season`** results from the dual-pipeline Bayesian Retrospective CFB Ranking Engine. 
+This briefing details the **Week `r season_info$week`, `r season_info$season`** results from the complete 4-pipeline Bayesian Retrospective CFB Ranking Engine:
 
-Unlike predictive systems that forecast theoretical future spreads (e.g., SP+, FPI), this ranking measures **retrospective accomplishment**: what teams have mathematically earned given the end-of-season strength of their opponents.
+1. **Pipeline 1: WLD (Actual Discrete):** Ordered logit resume evaluation on $\{L, OTL, OTW, W\}$.
+2. **Pipeline 2: PD (Actual Continuous):** Robust Student-$t$ point margin on scoreboard results.
+3. **Pipeline 3: XWLD (Expected Discrete):** Post-game win expectancy / expected outcome categories.
+4. **Pipeline 4: XPD (Expected Continuous):** Robust Student-$t$ net EPA differential across offensive plays.
 
 ::: {.callout-note}
-### Model Health & Convergence Gate
+### Model Health & 4-Pipeline Convergence Gate
 - **Pipeline 1 (WLD Ordered Logit):** `r ifelse(diag_wld$passed, "PASSED (R-hat <= 1.01, 0 Divergences)", "ALERT: Check MCMC diagnostics")`
-- **Likelihood Architecture:** Cumulative Ordered Logit with hierarchical FCS sub-division shrinkage.
+- **Pipeline 2 (PD Student-t):** `r ifelse(diag_pd$passed, "PASSED (R-hat <= 1.01, 0 Divergences)", "ALERT: Check MCMC diagnostics")`
+- **Pipeline 3 (XWLD Ordered Logit):** `r ifelse(diag_xwld$passed, "PASSED (R-hat <= 1.01, 0 Divergences)", "ALERT: Check MCMC diagnostics")`
+- **Pipeline 4 (XPD Student-t):** `r ifelse(diag_xpd$passed, "PASSED (R-hat <= 1.01, 0 Divergences)", "ALERT: Check MCMC diagnostics")`
 :::
 
 ---
 
 ## Top 25 Retrospective Rankings
 
-The table below reports the Top 25 FBS programs ranked by the **Composite Index** ($\lambda = 0.65$ WLD Resume + $0.35$ Net EPA Efficiency), alongside their Sonneborn–Berger schedule equity score and Buchholz schedule strength.
+The table below reports the Top 25 FBS programs ranked by the **4-Pipeline Composite Index** (fusing Actual vs. Expected and Discrete vs. Continuous metrics), alongside their Sonneborn–Berger schedule equity and individual pipeline ranks:
 
 ```{r top25-table}
 top25 <- composite |>
@@ -93,16 +119,19 @@ top25 <- composite |>
     Rank = rank_composite,
     Team = team,
     Conference = conference,
+    `Composite Index` = composite_index,
+    `WLD (θ)` = rank_wld,
+    `PD (δ)` = rank_pd,
+    `XWLD (ω)` = rank_xwld,
+    `XPD (α)` = rank_xpd,
+    `Resume Luck (Δ)` = outcome_luck,
     `SB Score` = sb_score,
-    `Buchholz SOS` = buchholz_sos,
-    `Latent Resume (θ)` = theta_median,
-    `Net EPA (α)` = alpha_median,
-    `Composite Index` = composite_index
+    `Buchholz SOS` = buchholz_sos
   )
 
 gt::gt(top25) |>
   gt::tab_header(
-    title = gt::md("**FBS Top 25: Retrospective Achievement**"),
+    title = gt::md("**FBS Top 25: 4-Pipeline Performance Matrix**"),
     subtitle = sprintf("Season %d • Week %d", season_info$season, season_info$week)
   ) |>
   gtExtras::gt_theme_538() |>
@@ -111,7 +140,7 @@ gt::gt(top25) |>
     palette = c("#E8ECFB", "#4477AA")
   ) |>
   gt::fmt_number(
-    columns = c(`SB Score`, `Buchholz SOS`, `Latent Resume (θ)`, `Net EPA (α)`),
+    columns = c(`SB Score`, `Buchholz SOS`),
     decimals = 2
   ) |>
   gt::fmt_number(
@@ -138,25 +167,6 @@ if (!is.null(benchmark$most_underrated) && nrow(benchmark$most_underrated) > 0) 
       x = NULL,
       y = "Rank Differential (+ spots)"
     )
-
-  p2 <- ggplot(benchmark$most_overrated, aes(x = reorder(team, -ap_delta), y = ap_delta)) +
-    geom_col(fill = "#EE6677", width = 0.6) +
-    coord_flip() +
-    theme_minimal() +
-    labs(
-      title = "Most Overrated by AP Poll",
-      subtitle = "AP Rank > Bayes Rank",
-      x = NULL,
-      y = "Rank Differential (- spots)"
-    )
-
-  patchwork::wrap_plots(p1, p2)
+  print(p1)
 }
 ```
-
----
-
-## Methodology & References
-
-- **Bradley-Terry Modern Theory:** Fang, Han, Luo, & Xu (2026). *Recent advances in the Bradley–Terry Model: theory, algorithms, and applications*. arXiv:2601.14727.
-- **Hierarchical Shrinkage:** Gelman et al. (2020). *Bayesian workflow*. arXiv:2011.01808.

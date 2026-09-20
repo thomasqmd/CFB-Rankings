@@ -1,6 +1,8 @@
 # ==============================================================================
 # Application: dashboard/app.R
-# Purpose: Interactive College Football Bayesian Retrospective Analytics Dashboard
+# Purpose: Interactive College Football Bayesian 4-Pipeline Retrospective Dashboard
+#          (WLD: Actual Discrete, PD: Actual Continuous,
+#           XWLD: Expected Discrete, XPD: Expected Continuous)
 # ==============================================================================
 
 library(shiny)
@@ -30,11 +32,13 @@ load_dashboard_data <- function() {
       wld_df = targets::tar_read(modeling_data)$wld_df,
       benchmark = targets::tar_read(benchmark_comparison),
       diag_wld = targets::tar_read(diagnostics_wld),
+      diag_pd = targets::tar_read(diagnostics_pd),
+      diag_xwld = targets::tar_read(diagnostics_xwld),
       diag_xpd = targets::tar_read(diagnostics_xpd),
       sensitivity = targets::tar_read(prior_sensitivity_wld)
     )
   } else {
-    message("[Dashboard] Targets store not yet computed. Loading demonstration dataset.")
+    message("[Dashboard] Targets store not yet computed. Loading 4-pipeline demonstration dataset.")
     # Demonstration fallback data
     demo_teams <- c(
       "Oregon", "Georgia", "Texas", "Penn State", "Notre Dame", 
@@ -44,6 +48,24 @@ load_dashboard_data <- function() {
     )
     n <- length(demo_teams)
     
+    th_med <- seq(2.4, 0.8, length.out = n)
+    dl_med <- seq(21.0, 5.0, length.out = n) + rnorm(n, 0, 1.5)
+    om_med <- seq(2.2, 0.7, length.out = n) + rnorm(n, 0, 0.2)
+    al_med <- seq(16.5, 4.2, length.out = n)
+    
+    p_th <- stats::pnorm(scale(th_med))
+    p_dl <- stats::pnorm(scale(dl_med))
+    p_om <- stats::pnorm(scale(om_med))
+    p_al <- stats::pnorm(scale(al_med))
+    
+    # 4-pipeline composite index: wld=0.35, pd=0.25, xwld=0.15, xpd=0.25
+    comp_idx <- 0.35 * p_th + 0.25 * p_dl + 0.15 * p_om + 0.25 * p_al
+    
+    r_wld <- rank(-th_med)
+    r_pd <- rank(-dl_med)
+    r_xwld <- rank(-om_med)
+    r_xpd <- rank(-al_med)
+    
     comp <- tibble::tibble(
       team = demo_teams,
       conference = c("Big Ten", "SEC", "SEC", "Big Ten", "Independent",
@@ -51,14 +73,26 @@ load_dashboard_data <- function() {
                      "Big 12", "ACC", "SEC", "ACC", "SEC",
                      "SEC", "Big 12", "Big 12", "Big 12", "AAC"),
       subdivision_id = 1L,
-      theta_median = seq(2.4, 0.8, length.out = n),
-      alpha_median = seq(16.5, 4.2, length.out = n),
+      theta_median = th_med,
+      delta_median = dl_med,
+      omega_median = om_med,
+      alpha_median = al_med,
       sb_score = seq(18.5, 9.2, length.out = n),
       buchholz_sos = seq(8.4, 5.1, length.out = n),
-      phi_theta = stats::pnorm(scale(seq(2.4, 0.8, length.out = n))),
-      phi_alpha = stats::pnorm(scale(seq(16.5, 4.2, length.out = n))),
-      composite_index = 0.65 * phi_theta + 0.35 * phi_alpha,
-      rank_composite = 1:n
+      phi_theta = p_th,
+      phi_delta = p_dl,
+      phi_omega = p_om,
+      phi_alpha = p_al,
+      composite_index = comp_idx,
+      rank_composite = 1:n,
+      rank_wld = r_wld,
+      rank_pd = r_pd,
+      rank_xwld = r_xwld,
+      rank_xpd = r_xpd,
+      outcome_luck = r_xwld - r_wld,
+      margin_luck = r_xpd - r_pd,
+      finish_factor = r_pd - r_wld,
+      conversion_factor = r_xpd - r_xwld
     )
     
     games <- tibble::tibble(
@@ -98,25 +132,17 @@ load_dashboard_data <- function() {
       )
     )
     
-    diag_w <- list(
-      passed = TRUE,
-      gate_report = tibble::tibble(
-        Metric = c("Max R-hat", "Min ESS Bulk", "Min ESS Tail", "Post-warmup Divergences", "Min E-BFMI"),
-        Value = c(1.002, 1450, 1120, 0, 0.88),
-        Threshold = c("<= 1.01", ">= 400", ">= 400", "= 0", "> 0.20"),
-        Status = rep("PASS", 5)
+    make_mock_gate <- function() {
+      list(
+        passed = TRUE,
+        gate_report = tibble::tibble(
+          Metric = c("Max R-hat", "Min ESS Bulk", "Min ESS Tail", "Post-warmup Divergences", "Min E-BFMI"),
+          Value = c(1.002, 1450, 1120, 0, 0.88),
+          Threshold = c("<= 1.01", ">= 400", ">= 400", "= 0", "> 0.20"),
+          Status = rep("PASS", 5)
+        )
       )
-    )
-    
-    diag_x <- list(
-      passed = TRUE,
-      gate_report = tibble::tibble(
-        Metric = c("Max R-hat", "Min ESS Bulk", "Min ESS Tail", "Post-warmup Divergences", "Min E-BFMI"),
-        Value = c(1.004, 1620, 1340, 0, 0.82),
-        Threshold = c("<= 1.01", ">= 400", ">= 400", "= 0", "> 0.20"),
-        Status = rep("PASS", 5)
-      )
-    )
+    }
     
     sens <- tibble::tibble(
       mu_fcs = rep(c(-1.0, -1.5, -2.0), each = 3),
@@ -130,8 +156,10 @@ load_dashboard_data <- function() {
       composite = comp,
       wld_df = games,
       benchmark = bench,
-      diag_wld = diag_w,
-      diag_xpd = diag_x,
+      diag_wld = make_mock_gate(),
+      diag_pd = make_mock_gate(),
+      diag_xwld = make_mock_gate(),
+      diag_xpd = make_mock_gate(),
       sensitivity = sens
     )
   }
@@ -141,7 +169,7 @@ app_data <- load_dashboard_data()
 
 # User Interface
 ui <- page_navbar(
-  title = "CFB Bayesian Retrospective Analytics",
+  title = "CFB Bayesian 4-Pipeline Analytics",
   theme = bs_theme(
     version = 5,
     bootswatch = "cosmo",
@@ -182,6 +210,8 @@ server <- function(input, output, session) {
   games_data <- reactiveVal(app_data$wld_df)
   benchmark_data <- reactiveVal(app_data$benchmark)
   diag_wld_data <- reactiveVal(app_data$diag_wld)
+  diag_pd_data <- reactiveVal(app_data$diag_pd)
+  diag_xwld_data <- reactiveVal(app_data$diag_xwld)
   diag_xpd_data <- reactiveVal(app_data$diag_xpd)
   sensitivity_data <- reactiveVal(app_data$sensitivity)
   
@@ -216,6 +246,8 @@ server <- function(input, output, session) {
   mod_diagnostics_server(
     id = "diagnostics",
     diag_wld_data = diag_wld_data,
+    diag_pd_data = diag_pd_data,
+    diag_xwld_data = diag_xwld_data,
     diag_xpd_data = diag_xpd_data,
     sensitivity_data = sensitivity_data
   )

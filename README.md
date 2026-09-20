@@ -1,71 +1,90 @@
 # CFB Retrospective Bayesian Ranking Engine
 
-[![Targets Pipeline](https://img.shields.io/badge/Workflow-targets-blue.svg)](https://books.ropensci.org/targets/)
-[![Bayesian Backend](https://img.shields.io/badge/Bayesian-Stan%20%2F%20CmdStan-red.svg)](https://mc-stan.org/cmdstanr/)
-[![Analytical DB](https://img.shields.io/badge/Store-DuckDB-yellow.svg)](https://duckdb.org/)
-[![Interactive Dashboard](https://img.shields.io/badge/UI-Shiny%20%2F%20bslib-green.svg)](https://shiny.posit.co/)
-
-A dual-pipeline Bayesian ranking system for NCAA College Football (CFB) evaluating all FBS programs and cross-tier FCS competition.
-
-Unlike predictive systems (such as SP+, ESPN FPI, or standard KenPom) that estimate theoretical point spreads on neutral fields, this system operates strictly as a **retrospective evaluative ranking (Strength of Record / Quality of Past Achievement)**. It answers: *What did teams mathematically earn given what transpired?*, using full-schedule opponent performance as the back-propagating standard of proof.
+> A high-throughput, Bayesian retrospective ranking engine for NCAA Division I College Football (FBS & FCS), powered by a **4-pipeline performance matrix**, hierarchical FCS shrinkage, Sonneborn–Berger schedule equity, and DuckDB analytical storage.
 
 ---
 
-## 1. System Architecture & Mathematical Formulation
+## 1. System Overview & Methodology
 
-The engine couples two Bayesian hierarchical pipelines to separate pure outcome achievement from per-play dominance, resolving FCS–FBS graph disconnection through hierarchical shrinkage.
+The engine evaluates past accomplishment (**retrospective resume**) rather than predicting future point spreads. By constructing complete season directed multi-graphs $\mathcal{G} = (\mathcal{V}, \mathcal{E})$, it values wins, losses, and margins strictly through end-of-season opponent performance.
+
+### 1.1 The 2×2 Orthogonal Performance Matrix
+
+To avoid conflating luck, finishing ability, and per-play efficiency, the engine evaluates games across four orthogonal pipelines:
 
 ```
-                  ┌────────────────────────────────────────┐
-                  │    DuckDB Analytical Store (PBP/Sched) │
-                  └──────────────────┬─────────────────────┘
-                                     │
-                 ┌───────────────────┴───────────────────┐
-                 ▼                                       ▼
-    ┌───────────────────────────┐           ┌───────────────────────────┐
-    │  Pipeline 1: WLD Engine   │           │  Pipeline 2: XPD Engine   │
-    │   (Outcome Resume / SOR)  │           │   (Latent Play Dominance) │
-    ├───────────────────────────┤           ├───────────────────────────┤
-    │ Cumulative Ordered Logit  │           │ Heavy-Tailed Student-t    │
-    │ Outcomes: W=3, OTW=2,     │           │ Net EPA Aggregation       │
-    │           OTL=1, L=0      │           │ Garbage-Time Filtering    │
-    │ Latent Ability: θ_i       │           │ Latent Efficiency: α_i    │
-    └────────────┬──────────────┘           └────────────┬──────────────┘
-                 │                                       │
-                 ▼                                       ▼
-    ┌───────────────────────────┐           ┌───────────────────────────┐
-    │ Sonneborn-Berger & Buchholz│          │ Standardized EPA Residuals│
-    │ SB_i = Σ w_ki * plogis(θ) │           │ Φ((α_i - μ) / σ)          │
-    └────────────┬──────────────┘           └────────────┬──────────────┘
-                 │                                       │
-                 └───────────────────┬───────────────────┘
-                                     ▼
-                  ┌─────────────────────────────────────┐
-                  │    Hybrid Composite Index Score     │
-                  │   λ * Φ(Z_θ) + (1 - λ) * Φ(Z_α)     │
-                  │       (Default: λ = 0.65)           │
-                  └─────────────────────────────────────┘
+                                  [ cfbfastR / CFBD API ]
+                                             │
+                                             ▼
+                              ┌─────────────────────────────────────┐
+                              │ DuckDB Analytical Store (PBP/Sched) │
+                              └──────────────────┬──────────────────┘
+                                                 │
+                  ┌──────────────────────────────┴──────────────────────────────┐
+                  ▼                                                             ▼
+     ┌───────────────────────────┐                                 ┌───────────────────────────┐
+     │  Pipeline 1: WLD Engine   │                                 │  Pipeline 2: PD Engine    │
+     │   (Actual Discrete SOR)   │                                 │   (Actual Margin / Blowout)│
+     ├───────────────────────────┤                                 ├───────────────────────────┤
+     │ Cumulative Ordered Logit  │                                 │ Heavy-Tailed Student-t    │
+     │ Outcomes: W=3, OTW=2,     │                                 │ Scoreboard Point Margin   │
+     │           OTL=1, L=0      │                                 │ Residual Scale: τ_pd      │
+     │ Latent Resume: θ_i        │                                 │ Latent Margin: δ_i        │
+     └────────────┬──────────────┘                                 └────────────┬──────────────┘
+                  │                                                             │
+                  ├──────────────────────────────┬──────────────────────────────┘
+                  │                              │
+                  ▼                              ▼
+     ┌───────────────────────────┐ ┌───────────────────────────┐
+     │  Pipeline 3: XWLD Engine  │ │  Pipeline 4: XPD Engine   │
+     │  (Expected Discrete Wins) │ │ (Expected Continuous EPA) │
+     ├───────────────────────────┤ ├───────────────────────────┤
+     │ Ordered Logit on PGWE     │ │ Heavy-Tailed Student-t    │
+     │ Post-Game Win Expectancy  │ │ Net EPA Aggregation       │
+     │ Deserved Wins: ω_i        │ │ Latent Efficiency: α_i    │
+     └────────────┬──────────────┘ └────────────┬──────────────┘
+                  │                              │
+                  └──────────────┬───────────────┘
+                                 ▼
+              ┌─────────────────────────────────────┐
+              │    4-Pipeline Composite Rankings    │
+              │  w_wld*Φ(Z_θ) + w_pd*Φ(Z_δ) +       │
+              │  w_xwld*Φ(Z_ω) + w_xpd*Φ(Z_α)       │
+              │  Cross-Pipeline Luck Deltas:        │
+              │  - Outcome Luck: rank(ω) - rank(θ)  │
+              │  - Margin Luck:  rank(α) - rank(δ)  │
+              └─────────────────────────────────────┘
 ```
 
-### 1.1 Pipeline 1: WLD (Discrete Outcome Resume Engine)
-* **Outcome Mapping:** Discrete categories $Y_k \in \{1: \text{L}, 2: \text{OTL}, 3: \text{OTW}, 4: \text{W}\}$
-* **Likelihood:** Ordered Logit
-  $$Y_k \sim \text{OrderedLogit}(\theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}} \cdot (1 - \text{neutral}_k), \, \mathbf{c})$$
-* **Sonneborn-Berger Tie-Break:**
+| Pipeline | Domain | Outcome Type | Likelihood Model | Latent Parameter |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. WLD** | **Actual** | Discrete ($Y_k \in \{1, 2, 3, 4\}$) | Cumulative Ordered Logit | $\theta_i$ (Actual Resume) |
+| **2. PD** | **Actual** | Continuous ($\Delta \text{Pts} = Score_H - Score_A$) | Heavy-Tailed Student-$t$ | $\delta_i$ (Actual Point Margin) |
+| **3. XWLD** | **Expected** | Discrete ($Y^{\text{exp}}_k \in \{1, 2, 3, 4\}$ via PGWE) | Cumulative Ordered Logit | $\omega_i$ (Expected Outcomes) |
+| **4. XPD** | **Expected** | Continuous ($\Delta \text{XP} = \sum EPA_H - \sum EPA_A$) | Heavy-Tailed Student-$t$ | $\alpha_i$ (Net EPA Efficiency) |
+
+### 1.2 Mathematical Specifications
+
+* **Pipeline 1: WLD (Actual Discrete):**
+  $$Y_k \sim \text{OrderedLogit}(\theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}} \cdot (1 - \text{neutral}_k), \, \mathbf{c}_{\text{wld}})$$
+
+* **Pipeline 2: PD (Actual Continuous Margin):**
+  $$\Delta \text{Pts}_k \sim \text{Student-}t\left(\nu_{\text{pd}}, \, \delta_{\text{home}[k]} - \delta_{\text{away}[k]} + \beta_{\text{home, pd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{pd}}^2\right)$$
+
+* **Pipeline 3: XWLD (Expected Discrete Outcomes):**
+  $$Y^{\text{exp}}_k \sim \text{OrderedLogit}(\omega_{\text{home}[k]} - \omega_{\text{away}[k]} + \gamma_{\text{home, xwld}} \cdot (1 - \text{neutral}_k), \, \mathbf{c}_{\text{xwld}})$$
+
+* **Pipeline 4: XPD (Expected Continuous Net EPA):**
+  $$\Delta \text{XP}_k \sim \text{Student-}t\left(\nu_{\text{xpd}}, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home, xpd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{xpd}}^2\right)$$
+
+* **Sonneborn-Berger Schedule Equity:**
   $$\text{SB}_i = \sum_{k \in \text{Games}(i)} w_{k, i} \cdot \text{logit}^{-1}(\theta_{\text{opp}[k]})$$
+
 * **Buchholz Schedule Strength:**
   $$\text{BH}_i = \sum_{k \in \text{Games}(i)} \text{logit}^{-1}(\theta_{\text{opp}[k]})$$
 
-### 1.2 Pipeline 2: XPD (Expected Point Differential Efficiency)
-* **Play-Level EPA Differential:**
-  $$\text{XPD}_k = \sum_{p \in \text{Plays}(k)} \text{EPA}_{p, \text{home}} - \sum_{p \in \text{Plays}(k)} \text{EPA}_{p, \text{away}}$$
-* **Robust Student-t Likelihood:** Protects against blowout non-linearities and garbage-time variance:
-  $$\text{XPD}_k \sim \text{Student-}t\left(\nu, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home}} \cdot (1 - \text{neutral}_k), \, \tau^2\right)$$
-
-### 1.3 Hierarchical FCS Shrinkage
-To prevent disconnected transitive cycles between subdivisions:
-$$\theta_i \sim \mathcal{N}\left(\mu_{\text{sub}[i]}, \, \sigma^2_{\text{sub}[i]}\right)$$
-$$\mu_{\text{FBS}} = 0 \quad (\text{Identifiability Anchor}), \quad \mu_{\text{FCS}} \sim \mathcal{N}(-1.5, 0.5^2)$$
+* **Hierarchical FCS Shrinkage:**
+  $$\theta_i \sim \mathcal{N}\left(\mu_{\text{sub}[i]}, \, \sigma^2_{\text{sub}[i]}\right), \quad \mu_{\text{FBS}} = 0 \quad (\text{Anchor}), \quad \mu_{\text{FCS}} \sim \mathcal{N}(-1.5, 0.5^2)$$
 
 ---
 
@@ -84,14 +103,16 @@ CFB/
 │   └── external_polls/         # Cached AP/Coaches/CFP poll benchmarks
 ├── R/                          # Modular analytical engines
 │   ├── 01_ingest_duckdb.R      # Data ingestion & DuckDB incremental sync
-│   ├── 02_transform.R          # WLD & XPD feature engineering and Stan formatting
-│   ├── 03_models_stan.R        # CmdStan / Stan compilation and MCMC fitting
+│   ├── 02_transform.R          # 4-pipeline feature engineering and Stan formatting
+│   ├── 03_models_stan.R        # CmdStan / Stan compilation and 4-model MCMC fitting
 │   ├── 04_diagnostics.R        # Convergence assertions and prior sensitivity sweep
-│   ├── 05_sonneborn_berger.R   # SB, Buchholz SOS, and Composite Index calculation
+│   ├── 05_sonneborn_berger.R   # SB, Buchholz SOS, and 4-way Composite Index calculation
 │   └── 06_benchmark.R          # Colley Matrix baseline and AP Poll divergence
 ├── stan/                       # Pure Stan probabilistic models
-│   ├── wld_ordered_logit.stan  # Cumulative ordered logit model
-│   └── xpd_student_t.stan      # Robust Student-t net EPA model
+│   ├── wld_ordered_logit.stan  # Pipeline 1: Cumulative ordered logit model
+│   ├── pd_student_t.stan       # Pipeline 2: Robust Student-t point differential
+│   ├── xwld_ordered_logit.stan # Pipeline 3: Ordered logit expected outcomes
+│   └── xpd_student_t.stan      # Pipeline 4: Robust Student-t net EPA model
 ├── docs/                       # Publishing, reporting, and presentations
 │   ├── styles/
 │   │   ├── tol_palette.scss    # Paul Tol colorblind-safe SCSS variables
@@ -104,10 +125,10 @@ CFB/
 └── dashboard/                  # Interactive Shiny / bslib Web Application
     ├── app.R                   # Multi-tab dashboard entrypoint
     └── modules/
-        ├── mod_rankings.R      # Filterable rankings table with dynamic λ slider
-        ├── mod_team_card.R     # Deep-dive schedule resume inspection
+        ├── mod_rankings.R      # Filterable rankings table with 2x2 matrix weighting
+        ├── mod_team_card.R     # Deep-dive 4-pipeline resume and luck inspection
         ├── mod_benchmarks.R    # AP Poll and Colley Matrix quadrant scatter
-        └── mod_diagnostics.R   # MCMC health gates and prior sensitivity sweep
+        └── mod_diagnostics.R   # 4-pipeline MCMC health gates and sensitivity sweep
 ```
 
 ---
@@ -165,10 +186,10 @@ diagnostics <- tar_read(diagnostics_wld)
 ```r
 shiny::runApp("dashboard")
 ```
-* **Rankings Table:** Searchable, filterable Top 134 FBS (and FCS) rankings with a dynamic $\lambda$ slider.
-* **Team Resume Card:** Select any team to view its full schedule resume, opponent quality scores, and points earned.
+* **Rankings Table:** Filterable Top 134 FBS (and FCS) rankings with 2×2 matrix controls (Actual vs. Expected and Discrete vs. Margin).
+* **Team Resume Card:** Select any team to view its 4 performance pillars, luck metrics, and opponent quality scores.
 * **Benchmark Divergence:** Interactive scatter plot contrasting Bayes Retro against AP Top 25 consensus.
-* **MCMC Diagnostics:** Visual audit of $\widehat{R}$, ESS, divergences, and the prior perturbation sweep.
+* **MCMC Diagnostics:** 2×2 convergence audit grid ($\widehat{R}$, ESS, divergences) across all 4 pipelines.
 
 ### 5.2 Render Quarto Reports
 ```bash
@@ -186,8 +207,8 @@ quarto render docs/presentation/methodology.qmd
 
 ## 6. MCMC Convergence Gates & Quality Control
 
-Target pipeline assertions strictly enforce:
-* $\widehat{R} \le 1.01$ across all latent parameters ($\theta_i$, $\alpha_i$, $\mathbf{c}$, $\sigma_{\text{sub}}$).
+Target pipeline assertions strictly enforce across all 4 pipelines:
+* $\widehat{R} \le 1.01$ across all latent parameters ($\theta_i$, $\delta_i$, $\omega_i$, $\alpha_i$, $\mathbf{c}$, $\sigma_{\text{sub}}$).
 * $\text{ESS}_{\text{bulk}} \ge 400$ and $\text{ESS}_{\text{tail}} \ge 400$.
 * Exactly **$0$ post-warmup divergent transitions**.
 * Minimum Energy Bayesian Fraction of Missing Information ($\text{E-BFMI} > 0.20$).

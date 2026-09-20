@@ -1,6 +1,7 @@
 # ==============================================================================
 # Shiny Module: mod_rankings.R
-# Purpose: Interactive, filterable rankings table with dynamic lambda slider
+# Purpose: Interactive, filterable rankings table with 4-pipeline dynamic weights
+#          (WLD, PD, XWLD, XPD) and cross-pipeline divergence metrics
 # ==============================================================================
 
 library(shiny)
@@ -14,8 +15,8 @@ mod_rankings_ui <- function(id) {
   tagList(
     layout_sidebar(
       sidebar = sidebar(
-        title = "Ranking Controls",
-        width = 300,
+        title = "4-Pipeline Controls",
+        width = 320,
         selectInput(
           ns("subdivision_filter"),
           "Subdivision:",
@@ -23,21 +24,34 @@ mod_rankings_ui <- function(id) {
           selected = "fbs"
         ),
         uiOutput(ns("conference_filter_ui")),
+        hr(),
+        h6("2×2 Matrix Weighting"),
         sliderInput(
-          ns("lambda_weight"),
-          "Composite Outcome Weight (λ):",
+          ns("actual_weight"),
+          "Actual vs. Expected Weight:",
           min = 0.0,
           max = 1.0,
-          value = 0.65,
+          value = 0.60,
           step = 0.05
         ),
-        helpText("λ = 1.0: Pure WLD Resume", br(), "λ = 0.0: Pure EPA Efficiency", br(), "Default: 0.65")
+        helpText("1.0: Pure Scoreboard (WLD/PD)", br(), "0.0: Pure Play EPA (XWLD/XPD)"),
+        sliderInput(
+          ns("discrete_weight"),
+          "Discrete vs. Margin Weight:",
+          min = 0.0,
+          max = 1.0,
+          value = 0.50,
+          step = 0.05
+        ),
+        helpText("1.0: Pure W/L Record (WLD/XWLD)", br(), "0.0: Pure Point Margin (PD/XPD)"),
+        hr(),
+        uiOutput(ns("derived_weights_summary"))
       ),
       card(
         card_header(
           class = "d-flex justify-content-between align-items-center",
-          "College Football Retrospective Rankings Table",
-          span(class = "badge bg-primary", "Select a team to view detailed resume card")
+          "College Football 4-Pipeline Retrospective Rankings Table",
+          span(class = "badge bg-primary", "Click a row to open Team Resume Card")
         ),
         card_body(
           DTOutput(ns("rankings_table"))
@@ -62,16 +76,54 @@ mod_rankings_server <- function(id, composite_data, on_select_team = NULL) {
         selected = "all"
       )
     })
+
+    # Summary of derived weights
+    output$derived_weights_summary <- renderUI({
+      w_act <- input$actual_weight
+      w_exp <- 1 - w_act
+      w_disc <- input$discrete_weight
+      w_cont <- 1 - w_disc
+      
+      w1 <- round(w_act * w_disc * 100, 1) # WLD
+      w2 <- round(w_act * w_cont * 100, 1) # PD
+      w3 <- round(w_exp * w_disc * 100, 1) # XWLD
+      w4 <- round(w_exp * w_cont * 100, 1) # XPD
+      
+      tagList(
+        p(class = "text-muted small mb-1", strong("Current Pipeline Weights:")),
+        tags$ul(class = "small text-muted ps-3 mb-0",
+          tags$li(sprintf("Pipeline 1 (WLD): %s%%", w1)),
+          tags$li(sprintf("Pipeline 2 (PD): %s%%", w2)),
+          tags$li(sprintf("Pipeline 3 (XWLD): %s%%", w3)),
+          tags$li(sprintf("Pipeline 4 (XPD): %s%%", w4))
+        )
+      )
+    })
     
-    # Recalculate composite dynamically based on user lambda slider
+    # Recalculate composite dynamically based on user 2x2 matrix sliders
     recalculated_data <- reactive({
       req(composite_data())
       df <- composite_data()
-      lam <- input$lambda_weight
+      
+      w_act <- input$actual_weight
+      w_exp <- 1 - w_act
+      w_disc <- input$discrete_weight
+      w_cont <- 1 - w_disc
+      
+      w1 <- w_act * w_disc # WLD
+      w2 <- w_act * w_cont # PD
+      w3 <- w_exp * w_disc # XWLD
+      w4 <- w_exp * w_cont # XPD
+      
+      # Ensure presence of transformed variables with fallbacks
+      p_theta <- if ("phi_theta" %in% names(df)) df$phi_theta else stats::pnorm(scale(df$theta_median))
+      p_delta <- if ("phi_delta" %in% names(df)) df$phi_delta else p_theta
+      p_omega <- if ("phi_omega" %in% names(df)) df$phi_omega else p_theta
+      p_alpha <- if ("phi_alpha" %in% names(df)) df$phi_alpha else stats::pnorm(scale(df$alpha_median))
       
       df |>
         dplyr::mutate(
-          composite_dyn = lam * phi_theta + (1 - lam) * phi_alpha
+          composite_dyn = (w1 * p_theta) + (w2 * p_delta) + (w3 * p_omega) + (w4 * p_alpha)
         ) |>
         dplyr::group_by(subdivision_id) |>
         dplyr::mutate(
@@ -99,20 +151,26 @@ mod_rankings_server <- function(id, composite_data, on_select_team = NULL) {
     })
     
     output$rankings_table <- renderDT({
-      df <- filtered_data() |>
-        dplyr::select(
+      df <- filtered_data()
+      
+      # Select display columns
+      table_df <- df |>
+        dplyr::transmute(
           Rank = rank_display,
           Team = team,
           Conference = conference,
           `Composite Index` = composite_dyn,
+          `WLD (θ)` = rank_wld,
+          `PD (δ)` = rank_pd,
+          `XWLD (ω)` = rank_xwld,
+          `XPD (α)` = rank_xpd,
+          `Resume Luck (Δ)` = outcome_luck,
           `SB Score` = sb_score,
-          `Buchholz SOS` = buchholz_sos,
-          `Resume (θ)` = theta_median,
-          `Net EPA (α)` = alpha_median
+          `Buchholz SOS` = buchholz_sos
         )
       
       datatable(
-        df,
+        table_df,
         selection = "single",
         options = list(
           pageLength = 25,
@@ -122,7 +180,7 @@ mod_rankings_server <- function(id, composite_data, on_select_team = NULL) {
         rownames = FALSE
       ) |>
         formatRound(columns = c("Composite Index"), digits = 3) |>
-        formatRound(columns = c("SB Score", "Buchholz SOS", "Resume (θ)", "Net EPA (α)"), digits = 2)
+        formatRound(columns = c("SB Score", "Buchholz SOS"), digits = 2)
     })
     
     # Notify parent on row selection

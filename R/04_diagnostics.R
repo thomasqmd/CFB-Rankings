@@ -1,6 +1,7 @@
 # ==============================================================================
 # Module: R/04_diagnostics.R
 # Purpose: MCMC convergence diagnostics, diagnostic gating assertions, and prior sensitivity sweep
+#          across all 4 pipelines (WLD, PD, XWLD, XPD)
 # ==============================================================================
 
 library(posterior)
@@ -39,12 +40,12 @@ evaluate_mcmc_health <- function(fit, model_name = "Model", strict_halt = FALSE)
   # 2. Summarize posterior draws for R-hat and ESS
   draws <- posterior::as_draws(fit)
   
-  # Exclude log_lik and y_rep to focus diagnostics on core structural parameters
+  # Exclude log_lik and replicate draws to focus diagnostics on core structural parameters
   param_summary <- posterior::summarise_draws(
     draws,
     "mean", "median", "sd", "rhat", "ess_bulk", "ess_tail"
   ) |>
-    dplyr::filter(!stringr::str_detect(variable, "^log_lik|^y_rep|^xpd_rep"))
+    dplyr::filter(!stringr::str_detect(variable, "^log_lik|^y_rep|^pd_rep|^xwld_rep|^xpd_rep"))
   
   max_rhat <- max(param_summary$rhat, na.rm = TRUE)
   min_ess_bulk <- min(param_summary$ess_bulk, na.rm = TRUE)
@@ -106,16 +107,16 @@ evaluate_mcmc_health <- function(fit, model_name = "Model", strict_halt = FALSE)
 #' @param stan_data Baseline Stan data list
 #' @param stan_file Path to Stan file
 #' @param team_lookup Master team lookup table
-#' @param model_type Either "wld" or "xpd"
+#' @param model_type One of "wld", "pd", "xwld", "xpd"
 #' @return Tibble summarizing top-25 Jaccard similarity and Spearman rho across perturbations
 run_prior_sensitivity_sweep <- function(stan_data, 
                                        stan_file = "stan/wld_ordered_logit.stan",
                                        team_lookup,
-                                       model_type = c("wld", "xpd")) {
+                                       model_type = c("wld", "pd", "xwld", "xpd")) {
   model_type <- match.arg(model_type)
   message(sprintf("[Prior Sensitivity] Running hyperparameter sweep for %s pipeline...", toupper(model_type)))
   
-  # Grid specified in PLAN.md: mu_FCS in {-1.0, -1.5, -2.0}, sigma_FCS in {0.3, 0.5, 0.8}
+  # Grid: mu_FCS in {-1.0, -1.5, -2.0}, sigma_FCS in {0.3, 0.5, 0.8}
   mu_grid <- c(-1.0, -1.5, -2.0)
   sigma_grid <- c(0.3, 0.5, 0.8)
   grid <- expand.grid(mu_fcs = mu_grid, sigma_fcs = sigma_grid)
@@ -123,13 +124,21 @@ run_prior_sensitivity_sweep <- function(stan_data,
   # Baseline fit
   mod <- compile_stan_model(stan_file)
   
+  # Identify target parameter based on model type
+  param_name <- switch(
+    model_type,
+    "wld" = "theta",
+    "pd" = "delta",
+    "xwld" = "omega",
+    "xpd" = "alpha"
+  )
+  
   # Extract baseline ratings (using variational / fast sampling for sweep efficiency)
   get_team_ratings <- function(data_mod) {
     fit <- mod$variational(data = data_mod, seed = 123, iter = 4000, algorithm = "meanfield", show_messages = FALSE)
     draws <- posterior::as_draws_df(fit)
-    param_name <- if (model_type == "wld") "theta" else "alpha"
-    theta_cols <- grep(paste0("^", param_name, "\\["), names(draws), value = TRUE)
-    medians <- sapply(theta_cols, function(col) median(draws[[col]], na.rm = TRUE))
+    param_cols <- grep(paste0("^", param_name, "\\["), names(draws), value = TRUE)
+    medians <- sapply(param_cols, function(col) median(draws[[col]], na.rm = TRUE))
     return(medians)
   }
   
@@ -146,11 +155,13 @@ run_prior_sensitivity_sweep <- function(stan_data,
     
     # Clone data list and override hyperparameters
     perturbed_data <- stan_data
-    if (model_type == "wld") {
+    if (model_type %in% c("wld", "xwld")) {
       perturbed_data$prior_mu_fcs_mean <- p_mu
       perturbed_data$prior_mu_fcs_sd <- p_sigma
-    } else {
-      # For XPD, scale mu to point scale (-14, -21, -28) and sigma (2, 3, 5)
+    } else if (model_type == "pd") {
+      perturbed_data$prior_xi_fcs_mean <- p_mu * 16.0
+      perturbed_data$prior_xi_fcs_sd <- p_sigma * 6.0
+    } else if (model_type == "xpd") {
       perturbed_data$prior_xi_fcs_mean <- p_mu * 14.0
       perturbed_data$prior_xi_fcs_sd <- p_sigma * 6.0
     }
@@ -166,6 +177,7 @@ run_prior_sensitivity_sweep <- function(stan_data,
     alert_flag <- spearman_rho < 0.985
     
     sweep_results[[i]] <- tibble::tibble(
+      pipeline = toupper(model_type),
       mu_fcs = p_mu,
       sigma_fcs = p_sigma,
       spearman_rho = spearman_rho,
@@ -175,8 +187,8 @@ run_prior_sensitivity_sweep <- function(stan_data,
   }
   
   results_df <- dplyr::bind_rows(sweep_results)
-  message(sprintf("[Prior Sensitivity] Sweep completed. Min Spearman rho = %.4f, Min Top-25 Jaccard = %.3f",
-                  min(results_df$spearman_rho), min(results_df$jaccard_top25)))
+  message(sprintf("[Prior Sensitivity] %s sweep completed. Min Spearman rho = %.4f, Min Top-25 Jaccard = %.3f",
+                  toupper(model_type), min(results_df$spearman_rho), min(results_df$jaccard_top25)))
   
   return(results_df)
 }

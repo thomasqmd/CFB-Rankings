@@ -1,6 +1,7 @@
 # ==============================================================================
 # Module: R/05_sonneborn_berger.R
-# Purpose: Derive Sonneborn-Berger, Buchholz, and Hybrid Composite Resumes from Posterior Draws
+# Purpose: Derive Sonneborn-Berger, Buchholz, and 4-Pipeline Composite Resumes from Posterior Draws
+#          (WLD: theta, PD: delta, XWLD: omega, XPD: alpha)
 # ==============================================================================
 
 library(posterior)
@@ -10,7 +11,7 @@ library(stats)
 
 #' Extract team ability parameter draws from fitted Stan models
 #' @param fit Fitted CmdStanMCMC or stanfit object
-#' @param param_prefix "theta" (for WLD) or "alpha" (for XPD)
+#' @param param_prefix Parameter name: "theta" (WLD), "delta" (PD), "omega" (XWLD), or "alpha" (XPD)
 #' @param N_teams Number of teams
 #' @return Matrix of draws (rows = iterations, cols = teams)
 extract_team_draws <- function(fit, param_prefix = "theta", N_teams) {
@@ -142,50 +143,135 @@ compute_sonneborn_berger <- function(fit_wld, wld_df, team_lookup) {
   return(ratings)
 }
 
-#' Compute Hybrid Composite Rankings fusing WLD and XPD
-#' @param sb_ratings Tibble from compute_sonneborn_berger
-#' @param fit_xpd Fitted XPD Stan model
+#' Compute 4-Pipeline Composite Rankings fusing WLD, PD, XWLD, and XPD
+#' @param sb_ratings Tibble from compute_sonneborn_berger (contains theta, SB, Buchholz)
+#' @param fit_pd Fitted PD Stan model (or NULL)
+#' @param fit_xwld Fitted XWLD Stan model (or NULL)
+#' @param fit_xpd Fitted XPD Stan model (or NULL)
 #' @param team_lookup Master team lookup table
-#' @param lambda Weight on outcome resume (default: 0.65; efficiency = 0.35)
-#' @return Comprehensive ranked tibble for all FBS & FCS teams
-compute_composite_rankings <- function(sb_ratings, fit_xpd, team_lookup, lambda = 0.65) {
-  message("[Composite Index] Fusing WLD resume and XPD latent efficiency...")
+#' @param weights Named numeric vector of weights for c(wld, pd, xwld, xpd)
+#' @param lambda Optional legacy weighting parameter (if passed, sets wld/xpd balance)
+#' @return Comprehensive ranked tibble with all 4 pipelines and cross-pipeline divergence metrics
+compute_composite_rankings <- function(sb_ratings, 
+                                       fit_pd = NULL, 
+                                       fit_xwld = NULL, 
+                                       fit_xpd = NULL, 
+                                       team_lookup, 
+                                       weights = c(wld = 0.35, pd = 0.25, xwld = 0.15, xpd = 0.25),
+                                       lambda = NULL) {
+  message("[Composite Index] Fusing 4 pipelines: WLD, PD, XWLD, and XPD...")
   
   N_teams <- nrow(team_lookup)
-  alpha_draws <- extract_team_draws(fit_xpd, param_prefix = "alpha", N_teams = N_teams)
+  combined <- sb_ratings
   
-  alpha_median <- apply(alpha_draws, 2, median)
-  alpha_q05 <- apply(alpha_draws, 2, quantile, probs = 0.05)
-  alpha_q95 <- apply(alpha_draws, 2, quantile, probs = 0.95)
+  # 1. Pipeline 2: PD (Point Differential: delta)
+  if (!is.null(fit_pd)) {
+    delta_draws <- extract_team_draws(fit_pd, param_prefix = "delta", N_teams = N_teams)
+    combined <- combined |>
+      dplyr::mutate(
+        delta_median = apply(delta_draws, 2, median),
+        delta_q05 = apply(delta_draws, 2, quantile, probs = 0.05),
+        delta_q95 = apply(delta_draws, 2, quantile, probs = 0.95)
+      )
+  } else {
+    combined <- combined |>
+      dplyr::mutate(
+        delta_median = theta_median * 7.0, # Scaled fallback
+        delta_q05 = theta_q05 * 7.0,
+        delta_q95 = theta_q95 * 7.0
+      )
+  }
   
-  combined <- sb_ratings |>
-    dplyr::mutate(
-      alpha_median = alpha_median,
-      alpha_q05 = alpha_q05,
-      alpha_q95 = alpha_q95
+  # 2. Pipeline 3: XWLD (Expected Win/Loss/OT: omega)
+  if (!is.null(fit_xwld)) {
+    omega_draws <- extract_team_draws(fit_xwld, param_prefix = "omega", N_teams = N_teams)
+    combined <- combined |>
+      dplyr::mutate(
+        omega_median = apply(omega_draws, 2, median),
+        omega_q05 = apply(omega_draws, 2, quantile, probs = 0.05),
+        omega_q95 = apply(omega_draws, 2, quantile, probs = 0.95)
+      )
+  } else {
+    combined <- combined |>
+      dplyr::mutate(
+        omega_median = theta_median,
+        omega_q05 = theta_q05,
+        omega_q95 = theta_q95
+      )
+  }
+  
+  # 3. Pipeline 4: XPD (Expected Point Differential EPA: alpha)
+  if (!is.null(fit_xpd)) {
+    alpha_draws <- extract_team_draws(fit_xpd, param_prefix = "alpha", N_teams = N_teams)
+    combined <- combined |>
+      dplyr::mutate(
+        alpha_median = apply(alpha_draws, 2, median),
+        alpha_q05 = apply(alpha_draws, 2, quantile, probs = 0.05),
+        alpha_q95 = apply(alpha_draws, 2, quantile, probs = 0.95)
+      )
+  } else {
+    combined <- combined |>
+      dplyr::mutate(
+        alpha_median = delta_median,
+        alpha_q05 = delta_q05,
+        alpha_q95 = delta_q95
+      )
+  }
+  
+  # Handle legacy lambda parameter if explicitly passed
+  if (!is.null(lambda)) {
+    # lambda controls Actual (WLD + PD) vs Expected (XWLD + XPD)
+    actual_wt <- lambda
+    exp_wt <- 1 - lambda
+    weights <- c(
+      wld = actual_wt * 0.60,
+      pd = actual_wt * 0.40,
+      xwld = exp_wt * 0.40,
+      xpd = exp_wt * 0.60
     )
+  }
   
-  # Standardize scales across FBS teams
+  # Normalize weights to sum to 1.0
+  weights <- weights / sum(weights)
+  w_wld <- weights[["wld"]]
+  w_pd <- weights[["pd"]]
+  w_xwld <- weights[["xwld"]]
+  w_xpd <- weights[["xpd"]]
+  
+  # Standardize all 4 latent metrics across FBS programs
   fbs_sub <- combined |> dplyr::filter(subdivision_id == 1L)
   
-  theta_fbs_mean <- mean(fbs_sub$theta_median, na.rm = TRUE)
-  theta_fbs_sd <- sd(fbs_sub$theta_median, na.rm = TRUE)
+  theta_m <- mean(fbs_sub$theta_median, na.rm = TRUE)
+  theta_s <- sd(fbs_sub$theta_median, na.rm = TRUE)
   
-  alpha_fbs_mean <- mean(fbs_sub$alpha_median, na.rm = TRUE)
-  alpha_fbs_sd <- sd(fbs_sub$alpha_median, na.rm = TRUE)
+  delta_m <- mean(fbs_sub$delta_median, na.rm = TRUE)
+  delta_s <- sd(fbs_sub$delta_median, na.rm = TRUE)
+  
+  omega_m <- mean(fbs_sub$omega_median, na.rm = TRUE)
+  omega_s <- sd(fbs_sub$omega_median, na.rm = TRUE)
+  
+  alpha_m <- mean(fbs_sub$alpha_median, na.rm = TRUE)
+  alpha_s <- sd(fbs_sub$alpha_median, na.rm = TRUE)
   
   final_rankings <- combined |>
     dplyr::mutate(
       # Standard normal CDF transformation Phi((x - mu) / sd)
-      z_theta = (theta_median - theta_fbs_mean) / theta_fbs_sd,
-      z_alpha = (alpha_median - alpha_fbs_mean) / alpha_fbs_sd,
+      z_theta = (theta_median - theta_m) / theta_s,
+      z_delta = (delta_median - delta_m) / delta_s,
+      z_omega = (omega_median - omega_m) / omega_s,
+      z_alpha = (alpha_median - alpha_m) / alpha_s,
+      
       phi_theta = stats::pnorm(z_theta),
+      phi_delta = stats::pnorm(z_delta),
+      phi_omega = stats::pnorm(z_omega),
       phi_alpha = stats::pnorm(z_alpha),
       
-      # Hybrid Composite Index
-      composite_index = lambda * phi_theta + (1 - lambda) * phi_alpha
+      # 4-Pipeline Composite Index
+      composite_index = (w_wld * phi_theta) + 
+                        (w_pd * phi_delta) + 
+                        (w_xwld * phi_omega) + 
+                        (w_xpd * phi_alpha)
     ) |>
-    # Assign ranks
     dplyr::arrange(desc(composite_index)) |>
     dplyr::mutate(
       rank_composite_overall = dplyr::row_number()
@@ -193,10 +279,18 @@ compute_composite_rankings <- function(sb_ratings, fit_xpd, team_lookup, lambda 
     dplyr::group_by(subdivision_id) |>
     dplyr::mutate(
       rank_composite = dplyr::row_number(),
+      rank_wld = dplyr::min_rank(desc(theta_median)),
+      rank_pd = dplyr::min_rank(desc(delta_median)),
+      rank_xwld = dplyr::min_rank(desc(omega_median)),
+      rank_xpd = dplyr::min_rank(desc(alpha_median)),
       rank_sb = dplyr::min_rank(desc(sb_score)),
       rank_buchholz = dplyr::min_rank(desc(buchholz_sos)),
-      rank_wld = dplyr::min_rank(desc(theta_median)),
-      rank_xpd = dplyr::min_rank(desc(alpha_median))
+      
+      # Cross-Pipeline Divergence Metrics (Positive = Actual outperforming Expected)
+      outcome_luck = rank_xwld - rank_wld,        # Positive = Team won more games than expected from play efficiency
+      margin_luck = rank_xpd - rank_pd,          # Positive = Scoreboard margin outperformed expected EPA margin
+      finish_factor = rank_pd - rank_wld,        # Positive = Clutch record outperforms point differential
+      conversion_factor = rank_xpd - rank_xwld   # Positive = EPA translates strongly into expected wins
     ) |>
     dplyr::ungroup() |>
     dplyr::arrange(subdivision_id, rank_composite)

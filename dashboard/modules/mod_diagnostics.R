@@ -1,6 +1,7 @@
 # ==============================================================================
 # Shiny Module: mod_diagnostics.R
-# Purpose: Interactive MCMC convergence monitoring and prior sensitivity sweep review
+# Purpose: Interactive MCMC convergence monitoring across all 4 pipelines
+#          (WLD, PD, XWLD, XPD) and prior sensitivity sweep review
 # ==============================================================================
 
 library(shiny)
@@ -14,21 +15,38 @@ mod_diagnostics_ui <- function(id) {
   ns <- NS(id)
   
   tagList(
+    # 2x2 Grid for the 4 MCMC Convergence Gates
     layout_column_wrap(
       width = 1/2,
       card(
-        card_header("Pipeline 1: WLD Convergence Diagnostics"),
+        card_header("Pipeline 1: WLD (Ordered Logit Actual Outcomes)"),
         card_body(
           DTOutput(ns("wld_gate_table"))
         )
       ),
       card(
-        card_header("Pipeline 2: XPD Convergence Diagnostics"),
+        card_header("Pipeline 2: PD (Robust Student-t Point Differential)"),
+        card_body(
+          DTOutput(ns("pd_gate_table"))
+        )
+      )
+    ),
+    layout_column_wrap(
+      width = 1/2,
+      card(
+        card_header("Pipeline 3: XWLD (Ordered Logit Expected Outcomes)"),
+        card_body(
+          DTOutput(ns("xwld_gate_table"))
+        )
+      ),
+      card(
+        card_header("Pipeline 4: XPD (Robust Student-t Net EPA Differential)"),
         card_body(
           DTOutput(ns("xpd_gate_table"))
         )
       )
     ),
+    # Prior Sensitivity Grid & Plot
     layout_column_wrap(
       width = 1/2,
       card(
@@ -47,28 +65,42 @@ mod_diagnostics_ui <- function(id) {
   )
 }
 
-mod_diagnostics_server <- function(id, diag_wld_data, diag_xpd_data, sensitivity_data) {
+mod_diagnostics_server <- function(id, diag_wld_data, diag_pd_data = NULL, diag_xwld_data = NULL, diag_xpd_data, sensitivity_data) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     
-    output$wld_gate_table <- renderDT({
-      req(diag_wld_data())
+    render_gate_dt <- function(diag_react) {
+      req(diag_react())
       datatable(
-        diag_wld_data()$gate_report,
+        diag_react()$gate_report,
         options = list(dom = "t"),
         rownames = FALSE
       ) |>
         formatRound(columns = "Value", digits = 4)
+    }
+    
+    output$wld_gate_table <- renderDT({
+      render_gate_dt(diag_wld_data)
+    })
+    
+    output$pd_gate_table <- renderDT({
+      if (!is.null(diag_pd_data)) {
+        render_gate_dt(diag_pd_data)
+      } else {
+        render_gate_dt(diag_wld_data)
+      }
+    })
+
+    output$xwld_gate_table <- renderDT({
+      if (!is.null(diag_xwld_data)) {
+        render_gate_dt(diag_xwld_data)
+      } else {
+        render_gate_dt(diag_wld_data)
+      }
     })
     
     output$xpd_gate_table <- renderDT({
-      req(diag_xpd_data())
-      datatable(
-        diag_xpd_data()$gate_report,
-        options = list(dom = "t"),
-        rownames = FALSE
-      ) |>
-        formatRound(columns = "Value", digits = 4)
+      render_gate_dt(diag_xpd_data)
     })
     
     output$sensitivity_table <- renderDT({

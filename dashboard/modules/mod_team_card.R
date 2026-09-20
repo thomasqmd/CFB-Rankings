@@ -1,6 +1,6 @@
 # ==============================================================================
 # Shiny Module: mod_team_card.R
-# Purpose: Deep-dive resume card showing schedule breakdown and opponent quality
+# Purpose: Deep-dive resume card showing 4-pipeline breakdown, luck metrics, and schedule
 # ==============================================================================
 
 library(shiny)
@@ -21,7 +21,7 @@ mod_team_card_ui <- function(id) {
         uiOutput(ns("team_selector_ui"))
       ),
       tagList(
-        # Headline value cards
+        # Headline value cards: Composite & Schedule Strength
         layout_column_wrap(
           width = 1/4,
           value_box(
@@ -43,10 +43,39 @@ mod_team_card_ui <- function(id) {
             theme = "info"
           ),
           value_box(
-            title = "Net EPA Differential (α)",
-            value = textOutput(ns("team_epa")),
+            title = "Resume Luck (Δ)",
+            value = textOutput(ns("team_luck")),
+            showcase = bsicons::bs_icon("dice-5"),
+            theme = "secondary"
+          )
+        ),
+
+        # 4-Pipeline Performance Pillars
+        layout_column_wrap(
+          width = 1/4,
+          value_box(
+            title = "Pipeline 1: WLD (θ)",
+            value = textOutput(ns("team_wld")),
+            showcase = bsicons::bs_icon("award"),
+            theme = "light"
+          ),
+          value_box(
+            title = "Pipeline 2: PD (δ)",
+            value = textOutput(ns("team_pd")),
+            showcase = bsicons::bs_icon("calculator"),
+            theme = "light"
+          ),
+          value_box(
+            title = "Pipeline 3: XWLD (ω)",
+            value = textOutput(ns("team_xwld")),
+            showcase = bsicons::bs_icon("magic"),
+            theme = "light"
+          ),
+          value_box(
+            title = "Pipeline 4: XPD (α)",
+            value = textOutput(ns("team_xpd")),
             showcase = bsicons::bs_icon("speedometer2"),
-            theme = "warning"
+            theme = "light"
           )
         ),
         
@@ -113,10 +142,35 @@ mod_team_card_server <- function(id, composite_data, games_data, selected_team_r
       req(target_summary())
       sprintf("%.2f", target_summary()$buchholz_sos[1])
     })
-    
-    output$team_epa <- renderText({
+
+    output$team_luck <- renderText({
       req(target_summary())
-      sprintf("%+.1f pts", target_summary()$alpha_median[1])
+      luck <- target_summary()$outcome_luck[1]
+      if (is.null(luck) || is.na(luck)) "0" else sprintf("%+d ranks", luck)
+    })
+
+    output$team_wld <- renderText({
+      req(target_summary())
+      r <- target_summary()$rank_wld[1]
+      paste0("#", r, " (θ = ", round(target_summary()$theta_median[1], 2), ")")
+    })
+
+    output$team_pd <- renderText({
+      req(target_summary())
+      r <- target_summary()$rank_pd[1]
+      paste0("#", r, " (δ = ", round(target_summary()$delta_median[1], 1), " pts)")
+    })
+
+    output$team_xwld <- renderText({
+      req(target_summary())
+      r <- target_summary()$rank_xwld[1]
+      paste0("#", r, " (ω = ", round(target_summary()$omega_median[1], 2), ")")
+    })
+
+    output$team_xpd <- renderText({
+      req(target_summary())
+      r <- target_summary()$rank_xpd[1]
+      paste0("#", r, " (α = ", round(target_summary()$alpha_median[1], 1), " pts)")
     })
     
     # Team games

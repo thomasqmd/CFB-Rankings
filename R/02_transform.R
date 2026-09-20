@@ -1,6 +1,8 @@
 # ==============================================================================
 # Module: R/02_transform.R
-# Purpose: Transform raw schedule & PBP data into structured WLD & XPD modeling frames
+# Purpose: Transform raw schedule & PBP data into structured 4-pipeline modeling frames
+#          (WLD: Actual Discrete, PD: Actual Continuous, 
+#           XWLD: Expected Discrete, XPD: Expected Continuous)
 # ==============================================================================
 
 library(DBI)
@@ -37,7 +39,7 @@ build_team_lookup <- function(sched_df) {
   return(teams)
 }
 
-#' Extract and engineer discrete Win/Loss/OT (WLD) game outcomes
+#' Extract and engineer Pipeline 1: discrete Win/Loss/OT (WLD) game outcomes
 #' @param con Active DuckDB connection
 #' @param season Target season integer
 #' @param team_lookup Master team lookup table
@@ -84,7 +86,44 @@ build_wld_dataset <- function(con, season, team_lookup) {
   return(wld_games)
 }
 
-#' Extract and aggregate play-by-play Expected Points Added (EPA) into game-level XPD
+#' Extract and engineer Pipeline 2: actual Point Differential (PD) continuous outcomes
+#' @param con Active DuckDB connection
+#' @param season Target season integer
+#' @param team_lookup Master team lookup table
+#' @return Cleaned tibble of actual point differentials
+build_pd_dataset <- function(con, season, team_lookup) {
+  query <- sprintf("
+    SELECT game_id, season, week, neutral_site, home_team, away_team, 
+           home_points, away_points, notes
+    FROM schedules
+    WHERE season = %d AND home_points IS NOT NULL AND away_points IS NOT NULL
+  ", season)
+  
+  raw_games <- DBI::dbGetQuery(con, query)
+  
+  if (nrow(raw_games) == 0) {
+    stop(sprintf("No completed games found for season %d in DuckDB.", season))
+  }
+  
+  pd_games <- raw_games |>
+    dplyr::mutate(
+      point_diff = as.numeric(home_points - away_points),
+      neutral_site = as.integer(coalesce(neutral_site, FALSE))
+    ) |>
+    dplyr::inner_join(
+      team_lookup |> dplyr::select(home_team = team, home_id = team_id), 
+      by = "home_team"
+    ) |>
+    dplyr::inner_join(
+      team_lookup |> dplyr::select(away_team = team, away_id = team_id), 
+      by = "away_team"
+    ) |>
+    dplyr::arrange(week, game_id)
+  
+  return(pd_games)
+}
+
+#' Extract and aggregate play-by-play Expected Points Added (EPA) into Pipeline 4 (XPD)
 #' @param con Active DuckDB connection
 #' @param season Target season integer
 #' @param team_lookup Master team lookup table
@@ -140,22 +179,53 @@ build_xpd_dataset <- function(con, season, team_lookup, filter_garbage_time = TR
   return(game_xpd)
 }
 
-#' Coordinate transformation and package inputs for Stan models
+#' Derive Pipeline 3: Expected Win/Loss/OT (XWLD) from play-level Net EPA
+#' Maps net EPA into Post-Game Win Expectancy (PGWE) and discrete expected outcome categories
+#' @param xpd_df Game-level XPD tibble
+#' @param team_lookup Master team lookup table
+#' @return Cleaned tibble of expected discrete game outcomes
+build_xwld_dataset <- function(xpd_df, team_lookup) {
+  if (nrow(xpd_df) == 0) {
+    return(tibble::tibble())
+  }
+  
+  # Calculate post-game win expectancy (PGWE) from net EPA:
+  # Logistic scaling: 0 EPA = 0.50 PGWE, ~14 EPA net difference ~= 0.89 PGWE
+  xwld_df <- xpd_df |>
+    dplyr::mutate(
+      pgwe = 1 / (1 + exp(-0.15 * as.numeric(home_net_epa))),
+      # Outcome coding: 1=ExpRegLoss (<0.25), 2=ExpOTLoss (0.25-0.50), 3=ExpOTWin (0.50-0.75), 4=ExpRegWin (>=0.75)
+      outcome = dplyr::case_when(
+        pgwe >= 0.75 ~ 4L,
+        pgwe >= 0.50 ~ 3L,
+        pgwe >= 0.25 ~ 2L,
+        TRUE         ~ 1L
+      )
+    ) |>
+    dplyr::arrange(game_id)
+  
+  return(xwld_df)
+}
+
+#' Coordinate transformation and package inputs for all 4 Stan models
 #' @param season Target season integer
 #' @param db_path File path to DuckDB
 #' @param filter_garbage_time Logical to filter garbage time in XPD
-#' @return Comprehensive list containing data frames, team lookup, and Stan data lists
-transform_wld_xpd <- function(season, db_path = "data/cfb.duckdb", filter_garbage_time = TRUE) {
+#' @return Comprehensive list containing data frames, team lookup, and 4 Stan data lists
+transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_garbage_time = TRUE) {
   con <- get_duckdb_connection(db_path, read_only = TRUE)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
   
   sched_df <- DBI::dbGetQuery(con, sprintf("SELECT * FROM schedules WHERE season = %d", season))
   team_lookup <- build_team_lookup(sched_df)
   
+  # Build 4 modeling datasets
   wld_df <- build_wld_dataset(con, season, team_lookup)
+  pd_df <- build_pd_dataset(con, season, team_lookup)
   xpd_df <- build_xpd_dataset(con, season, team_lookup, filter_garbage_time = filter_garbage_time)
+  xwld_df <- build_xwld_dataset(xpd_df, team_lookup)
   
-  # Construct Stan data objects with prior parameters
+  # 1. Stan data for Pipeline 1: WLD (Ordered Logit Actual Outcomes)
   stan_data_wld <- list(
     N_games = nrow(wld_df),
     N_teams = nrow(team_lookup),
@@ -171,6 +241,39 @@ transform_wld_xpd <- function(season, db_path = "data/cfb.duckdb", filter_garbag
     prior_gamma_sd = 0.1
   )
   
+  # 2. Stan data for Pipeline 2: PD (Robust Student-t Actual Point Differential)
+  stan_data_pd <- list(
+    N_games = nrow(pd_df),
+    N_teams = nrow(team_lookup),
+    home_team = pd_df$home_id,
+    away_team = pd_df$away_id,
+    neutral_site = pd_df$neutral_site,
+    pd = as.numeric(pd_df$point_diff),
+    team_subdivision = team_lookup$subdivision_id,
+    prior_xi_fcs_mean = -24.0,
+    prior_xi_fcs_sd = 3.0,
+    prior_omega_rate = 0.1,
+    prior_beta_home_mean = 2.8,
+    prior_beta_home_sd = 1.0
+  )
+  
+  # 3. Stan data for Pipeline 3: XWLD (Ordered Logit Expected Outcomes)
+  stan_data_xwld <- list(
+    N_games = nrow(xwld_df),
+    N_teams = nrow(team_lookup),
+    home_team = xwld_df$home_id,
+    away_team = xwld_df$away_id,
+    neutral_site = xwld_df$neutral_site,
+    outcome = xwld_df$outcome,
+    team_subdivision = team_lookup$subdivision_id,
+    prior_mu_fcs_mean = -1.5,
+    prior_mu_fcs_sd = 0.5,
+    prior_sigma_rate = 1.0,
+    prior_gamma_mean = 0.2,
+    prior_gamma_sd = 0.1
+  )
+  
+  # 4. Stan data for Pipeline 4: XPD (Robust Student-t Net EPA Differential)
   stan_data_xpd <- list(
     N_games = nrow(xpd_df),
     N_teams = nrow(team_lookup),
@@ -190,8 +293,15 @@ transform_wld_xpd <- function(season, db_path = "data/cfb.duckdb", filter_garbag
     season = season,
     team_lookup = team_lookup,
     wld_df = wld_df,
+    pd_df = pd_df,
+    xwld_df = xwld_df,
     xpd_df = xpd_df,
     stan_data_wld = stan_data_wld,
+    stan_data_pd = stan_data_pd,
+    stan_data_xwld = stan_data_xwld,
     stan_data_xpd = stan_data_xpd
   ))
 }
+
+#' Backward compatibility alias for targets pipeline
+transform_wld_xpd <- transform_all_pipelines

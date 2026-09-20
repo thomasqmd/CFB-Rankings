@@ -1,6 +1,6 @@
 ---
 title: "CFB Bayesian Ranking Engine: Comprehensive Season Retrospective"
-subtitle: "End-of-Season Schedule Equity, Sub-Division Shrinkage, and Diagnostic Audit"
+subtitle: "4-Pipeline Performance Matrix, Sub-Division Shrinkage, and Diagnostic Audit"
 date: today
 format:
   html:
@@ -33,6 +33,8 @@ has_targets <- tryCatch({
 if (has_targets) {
   composite <- tar_read(composite_rankings)
   diag_wld  <- tar_read(diagnostics_wld)
+  diag_pd   <- tar_read(diagnostics_pd)
+  diag_xwld <- tar_read(diagnostics_xwld)
   diag_xpd  <- tar_read(diagnostics_xpd)
   sens_wld  <- tar_read(prior_sensitivity_wld)
   benchmark <- tar_read(benchmark_comparison)
@@ -43,36 +45,53 @@ if (has_targets) {
     conference = c("Big Ten", "SEC", "SEC", "Independent", "Big Ten"),
     composite_index = c(0.992, 0.985, 0.971, 0.963, 0.955),
     rank_composite = 1:5,
+    rank_wld = 1:5,
+    rank_pd = c(1, 3, 2, 4, 5),
+    rank_xwld = c(2, 1, 3, 5, 4),
+    rank_xpd = c(1, 2, 4, 3, 5),
     subdivision_id = 1L
   )
-  diag_wld <- list(gate_report = tibble::tibble(Metric = "Max R-hat", Value = 1.003, Status = "PASS"))
-  diag_xpd <- list(gate_report = tibble::tibble(Metric = "Max R-hat", Value = 1.005, Status = "PASS"))
-  sens_wld <- tibble::tibble(mu_fcs = c(-1.0, -1.5, -2.0), sigma_fcs = c(0.3, 0.5, 0.8), spearman_rho = c(0.998, 1.0, 0.994), alert_flag = FALSE)
+  make_gate <- function() tibble::tibble(Metric = c("Max R-hat", "Min ESS", "Divergences"), Value = c(1.002, 1400, 0), Status = c("PASS", "PASS", "PASS"))
+  diag_wld <- list(gate_report = make_gate())
+  diag_pd <- list(gate_report = make_gate())
+  diag_xwld <- list(gate_report = make_gate())
+  diag_xpd <- list(gate_report = make_gate())
+  sens_wld <- tibble::tibble(pipeline = "WLD", mu_fcs = c(-1.0, -1.5, -2.0), sigma_fcs = c(0.3, 0.5, 0.8), spearman_rho = c(0.998, 1.0, 0.994), alert_flag = FALSE)
 }
 ```
 
 ## 1. Architectural Retrospective & Methodology
 
-The Retrospective Bayesian Engine operates on complete season graphs $\mathcal{G} = (\mathcal{V}, \mathcal{E})$ to evaluate past resumes without small-sample distortion.
+The Retrospective Bayesian Engine operates on complete season graphs $\mathcal{G} = (\mathcal{V}, \mathcal{E})$ to evaluate past resumes across four orthogonal pipelines:
 
-### 1.1 Dual-Pipeline Structure
-1. **Pipeline 1: WLD Ordered Logit**
+### 1.1 The 4-Pipeline Performance Matrix
+
+1. **Pipeline 1: WLD Ordered Logit (Actual Discrete)**
    Models discrete regulation and overtime outcomes:
-   $$Y_k \sim \text{OrderedLogit}(\theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}}, \, \mathbf{c})$$
+   $$Y_k \sim \text{OrderedLogit}(\theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}} \cdot (1 - \text{neutral}_k), \, \mathbf{c}_{\text{wld}})$$
    where $Y_k \in \{1: \text{L}, 2: \text{OTL}, 3: \text{OTW}, 4: \text{W}\}$.
 
-2. **Pipeline 2: XPD Robust Student-t**
-   Models play-level cumulative EPA differential:
-   $$\text{XPD}_k \sim \text{Student-}t(\nu, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home}}, \, \tau^2)$$
+2. **Pipeline 2: PD Robust Student-t (Actual Continuous)**
+   Models raw point margin on the scoreboard with heavy tails to downweight blowouts:
+   $$\Delta \text{Pts}_k \sim \text{Student-}t(\nu_{\text{pd}}, \, \delta_{\text{home}[k]} - \delta_{\text{away}[k]} + \beta_{\text{home, pd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{pd}}^2)$$
 
-3. **Hierarchical FCS Shrinkage**
+3. **Pipeline 3: XWLD Ordered Logit (Expected Discrete)**
+   Models expected outcomes from post-game win expectancy (PGWE):
+   $$Y^{\text{exp}}_k \sim \text{OrderedLogit}(\omega_{\text{home}[k]} - \omega_{\text{away}[k]} + \gamma_{\text{home, xwld}} \cdot (1 - \text{neutral}_k), \, \mathbf{c}_{\text{xwld}})$$
+
+4. **Pipeline 4: XPD Robust Student-t (Expected Continuous)**
+   Models play-level cumulative net EPA differential:
+   $$\Delta \text{XP}_k \sim \text{Student-}t(\nu_{\text{xpd}}, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home, xpd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{xpd}}^2)$$
+
+5. **Hierarchical FCS Regularization**
+   Shrinks FCS opponents without manual penalties:
    $$\theta_i \sim \mathcal{N}(\mu_{\text{sub}[i]}, \sigma^2_{\text{sub}[i]}), \quad \mu_{\text{FBS}} = 0, \quad \mu_{\text{FCS}} \sim \mathcal{N}(-1.5, 0.5^2)$$
 
 ---
 
 ## 2. Computational Health & MCMC Convergence Audit
 
-All diagnostic assertions must strictly satisfy pre-registered thresholds ($\widehat{R} \le 1.01$, $\text{ESS} \ge 400$, $0$ Divergences):
+All diagnostic assertions across all 4 pipelines must strictly satisfy pre-registered thresholds ($\widehat{R} \le 1.01$, $\text{ESS} \ge 400$, $0$ Divergences):
 
 ```{r diagnostics-table}
 if (!is.null(diag_wld$gate_report)) {
