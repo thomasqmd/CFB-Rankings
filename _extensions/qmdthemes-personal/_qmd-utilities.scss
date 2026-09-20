@@ -1,0 +1,233 @@
+// THE SHARED VOCABULARY.
+//
+// This is the merge the whole phase turns on. Across the ten source
+// stylesheets these classes exist in some files and not others, at different
+// sizes, in different colours, and -- because four of the files are copies of
+// one another that drifted -- with no way to tell which version was the
+// intended one. `.term` is the primary colour in three files and the secondary
+// in a fourth. `.small-font` is 70% in the four deck themes and 0.8em in the
+// report theme. `.defn` exists in two files and `.term` in four, for the same
+// concept.
+//
+// One definition each, both formats, and the same concept renders alike in
+// LaTeX because \defn in brand-preamble.tex is generated from $qmd-primary too.
+//
+// Where the sources disagreed, the resolution and its reason are recorded at
+// the class.
+
+/*-- scss:rules --*/
+
+// ---------------------------------------------------------------------------
+// The size scale
+// ---------------------------------------------------------------------------
+// Four steps, monotone, each a legible ratio from the last. The deck themes
+// agreed on .smallish/.smaller/.smallest and this keeps their values; the
+// outlier is Wealth/theme.scss, which set `.small-font, .smaller` to a shared
+// 0.8em and `.smallest` to 0.65em, collapsing two steps into one. Following it
+// would have left the scale with a gap and a duplicate.
+
+.smallish { font-size: 0.9em; }
+.smaller { font-size: 0.8em; }
+.small-font { font-size: 0.7em; }
+.smallest { font-size: 0.6em; }
+
+// A title that has to fit a long string. Kept separate from the scale because
+// it also resets the margins a heading carries.
+.smallertitle {
+  font-size: 0.6em;
+  margin: 8px 1px;
+}
+
+// Display maths does not inherit the surrounding font size in MathJax or
+// KaTeX, so shrinking an equation needs its own hook.
+.smaller-equation .math.display {
+  font-size: 0.8em;
+}
+
+// ---------------------------------------------------------------------------
+// Inline semantics
+// ---------------------------------------------------------------------------
+
+// A term being DEFINED at this point in the text. Both spellings are kept:
+// `.defn` is what the airrosti deck and presentation-theme use, `.term` what
+// the website, tol and Wealth themes use, and there is no version of this
+// package where breaking half the existing documents is worth the tidiness.
+//
+// $qmd-primary, matching \defn in brand-preamble.tex, so the same concept looks
+// the same in a deck, a report and a pdf.
+.term,
+.defn {
+  font-style: italic;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  color: $qmd-primary;
+}
+
+// A term being REFERRED to, having been defined elsewhere. New here, and the
+// counterpart to \linkeddefn / \backlink in the LaTeX preamble.
+.termref {
+  font-style: italic;
+  color: $qmd-accent-ink;
+}
+
+.emph {
+  font-style: italic;
+  font-weight: bold;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+// Secondary commentary on the line above. Note the colour: the sources set
+// .subsubtext to R's gray70, which is 2.1:1 against a white page and fails
+// WCAG AA outright. $qmd-ink-muted is the same intent at 4.6:1.
+.subtext {
+  font-size: 0.85em;
+  color: $qmd-primary;
+}
+
+.subsubtext {
+  font-size: 0.7em;
+  color: $qmd-ink-muted;
+}
+
+// A worked example. presentation-theme.scss set this in firebrick, which is a
+// warning colour doing a non-warning job; neither theme ships a status palette,
+// so this takes the accent.
+.example {
+  font-size: 0.85em;
+  color: $qmd-accent-ink;
+}
+
+// A citation is metadata about the claim, not part of it, so it recedes.
+// The sources coloured it variously primary, darkened primary and series blue,
+// all of which made it compete with the sentence it was attached to.
+.citation {
+  color: $qmd-ink-secondary;
+}
+
+// A source line under a figure or table.
+.source {
+  display: block;
+  font-size: 0.5em;
+  text-align: right;
+  color: $qmd-ink-muted;
+}
+
+// ---------------------------------------------------------------------------
+// Blocks
+// ---------------------------------------------------------------------------
+
+// A definition or aside, set off from the flow.
+//
+// The union of two versions: the deck themes give it a tinted box, and
+// Wealth/theme.scss adds a left accent rule. Both survive -- the rule is what
+// makes it legible as a block in a greyscale printout, where a 6% tint
+// disappears.
+.def {
+  width: 90%;
+  margin: 1rem auto;
+  padding: 0.75em 1em;
+  border-radius: 6px;
+  border-left: 4px solid $qmd-accent-rule;
+  background-color: qmd-tint($qmd-primary, 6%);
+}
+
+// A panel that sits ON the page background rather than in the flow -- used to
+// lift a figure off a tinted slide.
+.insert {
+  background-color: $qmd-background;
+  border-radius: 10px;
+  padding: 0;
+}
+
+.quote-attribution {
+  display: block;
+  text-align: right;
+  font-size: 0.85em;
+  font-style: normal;
+  color: $qmd-ink-muted;
+  margin-top: 0.5em;
+}
+
+// ---------------------------------------------------------------------------
+// Layout
+// ---------------------------------------------------------------------------
+
+.center { text-align: center; }
+
+// One block of copy FLOWED down two columns and continued on the second, as
+// opposed to Quarto's `{.columns}`, which is a pair of boxes to put things in.
+// The case that needs it is a references list, whose entries are generated by
+// citeproc and so cannot be divided between two boxes by hand.
+//
+// `break-inside: avoid` on the children keeps a single entry from being split
+// across the gutter, which is what the column gap is there to make legible.
+.two-column {
+  column-count: 2;
+  column-gap: 2em;
+
+  > * > * {
+    break-inside: avoid;
+  }
+}
+
+// Centres a block in what is left of a slide after the heading.
+.v-center-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 90%;
+  width: 100%;
+}
+
+// Figures and embeds centre themselves rather than sitting flush left, which is
+// what an iframe does by default.
+iframe {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 100%;
+}
+
+// ---------------------------------------------------------------------------
+// Colour swatches & boxes
+// ---------------------------------------------------------------------------
+
+.qmd-swatch {
+  display: inline-block;
+  width: 0.9em;
+  min-width: 0.9em;
+  height: 0.9em;
+  min-height: 0.9em;
+  border-radius: 3px;
+  vertical-align: -0.1em;
+  margin-right: 0.35em;
+  border: 1px solid $qmd-rule-grid;
+  line-height: 1;
+
+  &::before {
+    content: "\00a0";
+    display: inline-block;
+    width: 0.9em;
+    height: 0.9em;
+  }
+}
+
+.swatch-primary { @extend .qmd-swatch; background-color: $qmd-primary !important; }
+.swatch-secondary { @extend .qmd-swatch; background-color: $qmd-secondary !important; }
+.swatch-link { @extend .qmd-swatch; background-color: $qmd-link !important; }
+.swatch-accent-ink { @extend .qmd-swatch; background-color: $qmd-accent-ink !important; }
+.swatch-accent-rule { @extend .qmd-swatch; background-color: $qmd-accent-rule !important; }
+.swatch-series-1 { @extend .qmd-swatch; background-color: $qmd-series-1 !important; }
+.swatch-series-2 { @extend .qmd-swatch; background-color: $qmd-series-2 !important; }
+.swatch-series-3 { @extend .qmd-swatch; background-color: $qmd-series-3 !important; }
+.swatch-series-4 { @extend .qmd-swatch; background-color: $qmd-series-4 !important; }
+.swatch-series-5 { @extend .qmd-swatch; background-color: $qmd-series-5 !important; }
+.swatch-series-6 { @extend .qmd-swatch; background-color: $qmd-series-6 !important; }
+.swatch-series-7 { @extend .qmd-swatch; background-color: $qmd-series-7 !important; }
+.swatch-series-8 { @extend .qmd-swatch; background-color: $qmd-series-8 !important; }
+.swatch-ink { @extend .qmd-swatch; background-color: $qmd-ink !important; }
+.swatch-ink-secondary { @extend .qmd-swatch; background-color: $qmd-ink-secondary !important; }
+.swatch-ink-muted { @extend .qmd-swatch; background-color: $qmd-ink-muted !important; }
+

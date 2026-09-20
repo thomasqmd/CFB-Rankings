@@ -1,0 +1,7 @@
+project:
+  title: "CFB Bayesian Ranking Engine"
+  type: default
+  brand: _brand.yml
+  render:
+    - "docs/reports/*.qmd"
+    - "docs/presentation/*.qmd"

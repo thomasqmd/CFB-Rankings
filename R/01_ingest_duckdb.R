@@ -92,11 +92,11 @@ ingest_schedules_data <- function(seasons, con) {
         conference_game = as.logical(coalesce(conference_game, FALSE)),
         home_team = as.character(home_team),
         home_conference = as.character(home_conference),
-        home_division = as.character(coalesce(home_division, "fbs")),
+        home_division = as.character(home_division),
         home_points = as.integer(home_points),
         away_team = as.character(away_team),
         away_conference = as.character(away_conference),
-        away_division = as.character(coalesce(away_division, "fbs")),
+        away_division = as.character(away_division),
         away_points = as.integer(away_points),
         notes = as.character(notes)
       )

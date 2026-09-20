@@ -1,0 +1,270 @@
+// The type system, shared by both themes and all four formats.
+//
+// The two themes are told apart by COLOUR AND STRUCTURE, not by typeface: they
+// use the same three families. See inst/assets/fonts/README.md for how that was
+// arrived at, including why Outfit -- which four of the five source projects
+// used -- is not here (it ships no italic at any weight, so emphasis silently
+// rendered as roman).
+//
+// Where each family goes, which is a decision about reading distance rather
+// than about branding:
+//
+//   Atkinson Hyperlegible Next   headings everywhere, and ALL revealjs body
+//     text. Designed at the Braille Institute for low-vision readers; its value
+//     is in disambiguated letterforms (I/l/1, O/0, b/d), which is worth most at
+//     a distance and in short bursts. A slide bullet is both.
+//   Lora                         body text in html and pdf ONLY. A serif at
+//     paragraph length across a long report is easier to track line to line;
+//     that advantage does not apply to a six-word bullet.
+//   JetBrains Mono               code, everywhere.
+//
+// $qmd-font-path is where the bundled font files are relative to the compiled
+// stylesheet. The extension sets it; the default suits an extension directory
+// with the fonts vendored alongside.
+
+/*-- scss:defaults --*/
+
+// Set for real by the FORMAT partial -- qmd-html.scss and qmd-revealjs.scss
+// each build it from $qmd-ext-dir with a different prefix, because Quarto
+// resolves a theme file's url() against the output and the two formats put the
+// compiled stylesheet in different places. Defaults are assembled in reverse
+// `theme:` order, so both of those are already set by the time this is reached
+// and this !default never fires. It is here so the partial still compiles on
+// its own, which is what test-scss.R does.
+$qmd-font-path: "fonts" !default;
+
+// Bootstrap and reveal.js both read these two. Sans-serif is the HEADING face
+// rather than a third family: Quarto applies $font-family-sans-serif to UI
+// chrome (navbar, TOC, captions, table headers), which is display text.
+$font-family-sans-serif: $qmd-font-headings !default;
+$font-family-monospace: $qmd-font-mono !default;
+
+// The modular scale, as explicit multipliers of the base size.
+//
+// Computed from a ratio would be tidier but needs `@use "sass:math"`, and a
+// Quarto theme file is concatenated into a larger stylesheet where a leading
+// @use cannot be guaranteed to stay leading. These are a 1.2 ratio rounded to
+// two places, written out.
+$qmd-h1-size: 2.07em !default;
+$qmd-h2-size: 1.73em !default;
+$qmd-h3-size: 1.44em !default;
+$qmd-h4-size: 1.20em !default;
+$qmd-h5-size: 1.00em !default;
+$qmd-h6-size: 0.83em !default;
+
+// Headings are set tighter than body copy: line spacing that helps at
+// paragraph length opens gaps inside a two-line heading.
+$qmd-heading-line-height: 1.25 !default;
+
+// Extra tracking on capitals and short display strings, where Atkinson's wide
+// counters can otherwise read as crowded.
+$qmd-heading-letter-spacing: -0.01em !default;
+
+$headings-font-family: $qmd-font-headings !default;
+$headings-font-weight: $qmd-heading-weight !default;
+$headings-line-height: $qmd-heading-line-height !default;
+$headings-color: $qmd-primary !default;
+
+/*-- scss:rules --*/
+
+// The faces themselves.
+//
+// These live here rather than in _brand.yml's `typography.fonts:`, and that is
+// forced rather than preferred. Quarto emits brand's font declarations into the
+// USER `uses` LAYER -- `@import url(...)` for `source: google`, `@font-face` for
+// `source: file` -- which puts a non-@use rule ahead of the `@use "sass:color"`
+// in _qmd-functions.scss. Dart Sass then refuses the whole stylesheet with
+// "@use rules must be written before any other rules", and every render of every
+// format fails. Confirmed against Quarto 1.10.18 by dumping the assembled sass
+// with QUARTO_SAVE_SCSS; both font sources fail the same way.
+//
+// So _brand.yml still NAMES the families -- base, headings, monospace, which is
+// what Quarto's brand support needs to wire up its own variables -- and the
+// files are loaded here, in the rules layer, where a @font-face is legal.
+//
+// Loading them from disk rather than from Google also means a rendered document
+// keeps its type offline, which `embed-resources: true` inlines as data URIs.
+// $qmd-font-path is document-relative on purpose: Quarto resolves a stylesheet
+// url() against the document and copies the asset in, so an absolute path
+// silently becomes a broken relative one.
+
+// Atkinson Hyperlegible Next ships as a variable font with a wght axis spanning
+// its seven named instances (ExtraLight 200 to ExtraBold 800), which is what
+// makes hierarchy-by-weight possible without a second family.
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("#{$qmd-font-path}/AtkinsonHyperlegibleNext[wght].ttf") format("truetype-variations");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("#{$qmd-font-path}/AtkinsonHyperlegibleNext-Italic[wght].ttf") format("truetype-variations");
+  font-weight: 200 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+// Lora and JetBrains Mono are static cuts, so each weight and style is a real
+// file. All four exist for both, which is the point -- a faked bold or a faked
+// italic is what dropping Outfit was about.
+@font-face {
+  font-family: "Lora";
+  src: url("#{$qmd-font-path}/Lora-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lora";
+  src: url("#{$qmd-font-path}/Lora-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lora";
+  src: url("#{$qmd-font-path}/Lora-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lora";
+  src: url("#{$qmd-font-path}/Lora-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("#{$qmd-font-path}/JetBrainsMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("#{$qmd-font-path}/JetBrainsMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("#{$qmd-font-path}/JetBrainsMono-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("#{$qmd-font-path}/JetBrainsMono-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+
+// Headings. The colour is stated here rather than left to Bootstrap so that
+// revealjs, which has no Bootstrap, gets the same treatment.
+h1, h2, h3, h4, h5, h6,
+.h1, .h2, .h3, .h4, .h5, .h6 {
+  font-family: $qmd-font-headings;
+  font-weight: $qmd-heading-weight;
+  line-height: $qmd-heading-line-height;
+  letter-spacing: $qmd-heading-letter-spacing;
+  // Atkinson's lining figures are the default; tabular ones keep numbers in a
+  // heading from shifting between slides in an incremental reveal.
+  font-variant-numeric: tabular-nums;
+}
+
+// Long-form prose. Anything measured in paragraphs gets the serif; revealjs
+// overrides this back to the heading face, because a slide is not paragraphs.
+body {
+  font-family: $qmd-font-body;
+  font-size: $qmd-font-size-base;
+  line-height: $qmd-line-height-base;
+  color: $qmd-ink;
+  background-color: $qmd-background;
+  // Better word shapes at body sizes; harmless where unsupported.
+  font-kerning: normal;
+  font-variant-ligatures: common-ligatures;
+  text-rendering: optimizeLegibility;
+}
+
+code, kbd, pre, samp, .sourceCode {
+  font-family: $qmd-font-mono;
+  // JetBrains Mono's programming ligatures turn `!=` into a glyph that reads as
+  // something other than the two characters in the source, which is wrong in a
+  // document about code.
+  font-variant-ligatures: none;
+}
+
+blockquote {
+  border-left: 4px solid $qmd-accent-rule;
+  padding: 0.5em 1em;
+  margin: 1em 0;
+  color: $qmd-ink-secondary;
+  font-style: italic;
+}
+
+// Links.
+//
+// Underlined at rest, because colour alone is not an affordance and a reader
+// who cannot separate the link hue from body text has nothing else to go on.
+//
+// The hover state is the one place every source stylesheet is actively wrong.
+// All of them lighten -- `lighten($primary-color, 10%)`, `lighten($baylor_green,
+// 20%)` -- which lowers contrast against a light page at exactly the moment the
+// reader has singled the link out. Here the text colour does not move at all:
+// the underline thickens and a wash comes in behind it. Both are unmissable,
+// neither can cost a single point of contrast, and the thicker rule still reads
+// when the page is printed in greyscale.
+a {
+  color: $qmd-link;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+  border-radius: 2px;
+  transition: background-color 0.15s ease, text-decoration-thickness 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    color: $qmd-link;
+    text-decoration-thickness: 3px;
+    background-color: qmd-tint($qmd-link, 10%);
+  }
+}
+
+// Measure. Prose past roughly 75 characters a line gets hard to track back to
+// the next line; this caps the running text without touching figures, tables or
+// code, which legitimately want the full width.
+.qmd-measure {
+  max-width: 68ch;
+}
+
+// ---------------------------------------------------------------------------
+// Font utility classes
+// ---------------------------------------------------------------------------
+.font-headings {
+  font-family: $qmd-font-headings !important;
+}
+
+.font-body {
+  font-family: $qmd-font-body !important;
+}
+
+.font-mono {
+  font-family: $qmd-font-mono !important;
+}
+

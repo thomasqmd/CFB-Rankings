@@ -4,21 +4,18 @@ subtitle: "4-Pipeline Performance Matrix, Sub-Division Shrinkage, and Diagnostic
 date: today
 format:
   html:
-    theme: cosmo
     toc: true
     toc-depth: 3
     toc-location: left
     code-fold: true
     code-tools: true
+    embed-resources: true
     css: ../styles/custom.scss
-    self-contained: true
-execute:
-  echo: false
-  warning: false
-  message: false
 ---
 
-```{r setup}
+```{r}
+#| label: setup
+#| include: false
 library(targets)
 library(dplyr)
 library(ggplot2)
@@ -91,9 +88,16 @@ The Retrospective Bayesian Engine operates on complete season graphs $\mathcal{G
 
 ## 2. Computational Health & MCMC Convergence Audit
 
-All diagnostic assertions across all 4 pipelines must strictly satisfy pre-registered thresholds ($\widehat{R} \le 1.01$, $\text{ESS} \ge 400$, $0$ Divergences):
+::: {.callout-important title="Strict Diagnostic Quality Gate"}
+All diagnostic assertions across all 4 pipelines must strictly satisfy pre-registered thresholds ($\widehat{R} \le 1.01$, $\text{ESS} \ge 400$, $0$ Divergences) before pipeline publication.
+:::
 
-```{r diagnostics-table}
+Audit results for Pipeline 1 (WLD) are presented in @tbl-diagnostics:
+
+```{r}
+#| label: tbl-diagnostics
+#| tbl-cap: "Pipeline 1 (WLD) MCMC Diagnostic Audit"
+#| echo: false
 if (!is.null(diag_wld$gate_report)) {
   gt::gt(diag_wld$gate_report) |>
     gt::tab_header(title = "Pipeline 1 (WLD) MCMC Diagnostic Audit") |>
@@ -105,9 +109,12 @@ if (!is.null(diag_wld$gate_report)) {
 
 ## 3. Prior Sensitivity Analysis
 
-We perturb the FCS baseline prior across a $3 \times 3$ hyperparameter grid ($\mu_{\text{FCS}} \in \{-1.0, -1.5, -2.0\}$, $\sigma_{\text{FCS}} \in \{0.3, 0.5, 0.8\}$). The minimum rank correlation across all conditions must exceed $\rho \ge 0.985$:
+We perturb the FCS baseline prior across a $3 \times 3$ hyperparameter grid ($\mu_{\text{FCS}} \in \{-1.0, -1.5, -2.0\}$, $\sigma_{\text{FCS}} \in \{0.3, 0.5, 0.8\}$). The minimum rank correlation across all conditions must exceed $\rho \ge 0.985$ (see @tbl-sensitivity):
 
-```{r sensitivity-table}
+```{r}
+#| label: tbl-sensitivity
+#| tbl-cap: "FCS Prior Perturbation Sensitivity Sweep"
+#| echo: false
 if (is.data.frame(sens_wld)) {
   gt::gt(sens_wld) |>
     gt::tab_header(title = "FCS Prior Perturbation Sensitivity Sweep") |>

@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="500"
+   height="500"
+   viewBox="0 0 500 500"
+   version="1.1"
+   id="svg1"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath117">
+      <rect
+         style="fill:#000000;stroke:#000000;stroke-width:0;stroke-linejoin:bevel;paint-order:stroke markers fill;stop-color:#000000"
+         id="rect117"
+         width="20"
+         height="200"
+         x="530"
+         y="595" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath51">
+      <path
+         id="path51"
+         style="stroke-width:0.0999999;stroke-linecap:square;paint-order:markers fill stroke;stop-color:#000000"
+         d="m 1806.4991,-753.5228 h 1637.2646 v 66.90533 H 1806.4991 Z" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath55">
+      <path
+         id="path55"
+         style="stroke-width:0.1;stroke-linecap:square;paint-order:markers fill stroke;stop-color:#000000"
+         d="m 1736.6147,-745.57287 h 1589.4765 v 72.46715 H 1736.6147 Z" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath54">
+      <path
+         id="path54"
+         style="stroke-width:0.0999999;stroke-linecap:square;paint-order:markers fill stroke;stop-color:#000000"
+         d="m 1691.1994,-792.32001 h 1634.8919 v 92.82806 H 1691.1994 Z" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath52">
+      <path
+         id="path52"
+         style="stroke-width:0.1;stroke-linecap:square;paint-order:markers fill stroke;stop-color:#000000"
+         d="m -880.82767,-187.29769 h 1640.84 v 73.28155 h -1640.84 z" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath27">
+      <rect
+         style="fill:none;stroke:#000000;stroke-width:0.999999;stroke-linecap:butt;stroke-linejoin:bevel;paint-order:stroke markers fill;stop-color:#000000"
+         id="rect28-6"
+         width="46.160622"
+         height="39.922417"
+         x="86.574379"
+         y="420.06253" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath33">
+      <rect
+         style="fill:#000000;stroke:none;stroke-width:0.999995;stroke-linecap:butt;stroke-linejoin:bevel;paint-order:stroke markers fill;stop-color:#000000"
+         id="rect33"
+         width="46.19186"
+         height="80.006783"
+         x="74.999985"
+         y="399.99661" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath25">
+      <rect
+         style="fill:#ff0000;stroke:none;stroke-width:3;stroke-linecap:square;stroke-linejoin:miter;paint-order:stroke markers fill;stop-color:#000000"
+         id="rect25-8"
+         width="78"
+         height="45.033199"
+         x="763.61322"
+         y="452.82422" />
+    </clipPath>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath5">
+      <rect
+         style="fill:#000000;stroke:#000000;stroke-width:0;stroke-linejoin:bevel;paint-order:stroke markers fill;stop-color:#000000"
+         id="rect5-4"
+         width="20"
+         height="200"
+         x="530"
+         y="595" />
+    </clipPath>
+    <linearGradient
+       id="swatch15">
+      <stop
+         style="stop-color:#303e4e;stop-opacity:1;"
+         offset="0"
+         id="stop15" />
+    </linearGradient>
+    <linearGradient
+       id="swatch5">
+      <stop
+         style="stop-color:#303e4e;stop-opacity:1;"
+         offset="0"
+         id="stop5" />
+    </linearGradient>
+    <font
+       horiz-adv-x="1000"
+       id="font118">
+      <font-face
+         units-per-em="1000"
+         ascent="750"
+         cap-height="600"
+         x-height="400"
+         descent="200"
+         id="font-face118"
+         font-family="SVGFont 1" />
+      <missing-glyph
+         d="M0,0h1000v1000h-1000z"
+         id="missing-glyph118" />
+    </font>
+  </defs>
+  <g
+     id="layer1">
+    <ellipse
+       style="fill:none;fill-opacity:1;stroke:#303e4e;stroke-width:11.8427;stroke-linejoin:bevel;stroke-dasharray:none;stroke-opacity:1;paint-order:normal"
+       id="path4"
+       cx="250"
+       cy="249.99998"
+       rx="244.07866"
+       ry="244.07864" />
+    <path
+       style="fill:none;fill-opacity:1;stroke:#303e4e;stroke-width:12;stroke-linecap:round;stroke-linejoin:bevel;stroke-dasharray:none;stroke-opacity:1;paint-order:normal"
+       d="M 250,100 V 400"
+       id="path118" />
+    <g
+       id="g120"
+       transform="matrix(1.0630164,0,0,0.9988661,-15.753412,0.27781361)">
+      <text
+         xml:space="preserve"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:193.042px;font-family:Lora;-inkscape-font-specification:Lora;text-align:start;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:#303e4e;fill-opacity:1;stroke:#303e4e;stroke-width:5.027;stroke-linecap:butt;stroke-linejoin:bevel;stroke-dasharray:none;stroke-opacity:1;paint-order:normal"
+         x="88.138878"
+         y="312.93671"
+         id="text118"
+         transform="scale(1.0014401,0.99856195)"><tspan
+           id="tspan118"
+           x="88.138878"
+           y="312.93671"
+           style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:Lora;-inkscape-font-specification:Lora;fill:#303e4e;fill-opacity:1;stroke-width:5.027;stroke-dasharray:none">T</tspan></text>
+      <text
+         xml:space="preserve"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:196.222px;font-family:Lora;-inkscape-font-specification:Lora;text-align:start;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:#303e4e;fill-opacity:1;stroke:#303e4e;stroke-width:5.10981;stroke-linecap:butt;stroke-linejoin:bevel;stroke-dasharray:none;stroke-opacity:1;paint-order:normal"
+         x="275.59802"
+         y="319.13199"
+         id="text119"
+         transform="scale(1.0214024,0.97904607)"><tspan
+           id="tspan119"
+           x="275.59802"
+           y="319.13199"
+           style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:Lora;-inkscape-font-specification:Lora;fill:#303e4e;fill-opacity:1;stroke-width:5.10981;stroke-dasharray:none">R</tspan></text>
+    </g>
+  </g>
+</svg>

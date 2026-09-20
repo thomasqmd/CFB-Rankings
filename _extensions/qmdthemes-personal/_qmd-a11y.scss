@@ -1,0 +1,173 @@
+// Accessibility that the palette cannot cover.
+//
+// Contrast and colour-blind separation are settled upstream, in _brand.yml and
+// the gates in test-contrast.R. What is left is the part that is structural
+// rather than chromatic: can this be operated from a keyboard, does it survive
+// a greyscale printout, does it respect a reader who has asked the system for
+// less motion or more contrast.
+//
+// None of the ten source stylesheets contained any of this. Two of them
+// actively removed a piece of it -- Wealth/theme.scss suppresses the focus ring
+// on tab links (`outline: none !important; box-shadow: none !important`), which
+// leaves a keyboard user with no way to tell where they are, and
+// presentation-theme.scss hides scrollbars entirely, which removes the only
+// indication that a slide has content below the fold.
+
+/*-- scss:rules --*/
+
+// ---------------------------------------------------------------------------
+// Focus
+// ---------------------------------------------------------------------------
+// :focus-visible rather than :focus, so a ring appears for keyboard navigation
+// and not on every mouse click. Stated for the interactive elements Bootstrap
+// and reveal.js each suppress in places, and marked !important because
+// Wealth/theme.scss's pattern of clearing the outline is exactly what this has
+// to survive being merged with.
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible,
+.nav-link:focus-visible,
+.reveal .controls button:focus-visible,
+.reveal .slide-menu-button:focus-visible {
+  @include qmd-focus-ring;
+}
+
+// Skip link: the first thing a keyboard reaches on a report, hidden until then.
+.qmd-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 0.6em 1em;
+  background-color: $qmd-primary;
+  color: $qmd-on-primary;
+  border-radius: 0 0 6px 0;
+
+  &:focus {
+    left: 0;
+  }
+}
+
+// Available to content, and used by the classes below to carry a label that a
+// screen reader needs and the page does not show.
+.visually-hidden,
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Motion
+// ---------------------------------------------------------------------------
+// A reader who has set "reduce motion" at the OS level has usually done so
+// because animation causes them nausea or migraine. reveal.js is built on slide
+// transitions, so this cannot remove motion wholesale without breaking the
+// format -- what it does remove is the incidental kind: hover fades, the
+// progress bar, autoplaying media, and reveal's own transition timing.
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .reveal .slides section {
+    transition: none !important;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Forced colours
+// ---------------------------------------------------------------------------
+// Windows High Contrast and similar replace every colour with a system palette,
+// including backgrounds -- which silently deletes anything whose meaning is
+// carried by a background fill. The heading bar, the definition block and the
+// active tab all become invisible unless they also have a border.
+@media (forced-colors: active) {
+  .reveal h2,
+  .def,
+  .panel-tabset .nav-link.active,
+  .reveal .panel-tabset ul li a.active {
+    border: 2px solid currentColor;
+  }
+
+  a {
+    text-decoration: underline;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Print
+// ---------------------------------------------------------------------------
+// Reports get printed and read on paper, where the page is white whatever the
+// theme said, ink is expensive, and a link's destination is not reachable.
+@media print {
+  // Paper is white whatever the theme's background token says, and ink on
+  // paper is black. These are the two places in the package where a colour is
+  // a physical fact rather than a brand decision, so they are CSS keywords
+  // rather than tokens -- a theme override here would be a mistake.
+  body {
+    background: white;
+    color: black;
+  }
+
+  // Tinted surfaces print as grey wash; the border is what still carries them.
+  .def {
+    background: transparent !important;
+    border: 1px solid $qmd-ink-muted;
+  }
+
+  // A URL a reader can type. Skipped for links whose text is already the URL,
+  // and for in-page anchors, which mean nothing off-screen.
+  a[href^="http"]:not([href$="#"])::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    word-break: break-all;
+  }
+
+  // Nothing splits a figure or a table across a page break.
+  figure,
+  table,
+  .cell-output-display {
+    break-inside: avoid;
+  }
+
+  h1, h2, h3, h4 {
+    break-after: avoid;
+  }
+
+  // Interface chrome is not content.
+  .quarto-title-banner,
+  #quarto-margin-sidebar,
+  .nav-tabs,
+  .reveal .controls,
+  .reveal .progress,
+  .reveal .slide-number {
+    display: none !important;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scrollbars
+// ---------------------------------------------------------------------------
+// presentation-theme.scss hides them outright (`::-webkit-scrollbar { display:
+// none }` plus `scrollbar-width: none`). On a scrollable slide that removes the
+// only signal that there is more below, so they are kept and made quiet
+// instead.
+.reveal .slides section.scrollable,
+pre.sourceCode,
+.cell-output pre {
+  scrollbar-width: thin;
+  scrollbar-color: $qmd-rule-axis transparent;
+}

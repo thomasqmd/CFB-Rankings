@@ -1,0 +1,240 @@
+// Tables, for both formats.
+//
+// All table styling lives here, including the reveal.js side. That is
+// deliberate: airrosti-theme.scss scopes its eight density classes under
+// `.reveal`, so none of them work in a report, and splitting them across two
+// files would mean the density scale existed twice and could drift. Emitting
+// each block once per document scope keeps one definition and still outranks
+// reveal.js's own `.reveal table th`, which an unscoped `table th` would lose
+// to on specificity.
+//
+// $qmd-table-scopes is the list of wrappers. `.reveal` matches nothing in a
+// report and `main` matches nothing in a deck, so both are always safe to emit.
+
+/*-- scss:defaults --*/
+
+$qmd-table-scopes: ".reveal", "main" !default;
+
+// Bootstrap's own table variables, pointed at the theme so an unstyled Quarto
+// table is already close before any of the rules below apply.
+$table-border-color: $qmd-rule-grid !default;
+$table-group-separator-color: $qmd-primary !default;
+
+/*-- scss:rules --*/
+
+@each $scope in $qmd-table-scopes {
+  #{$scope} {
+    table {
+      @include qmd-table-base;
+    }
+
+    table th,
+    table td {
+      @include qmd-table-cells;
+
+      // Every cell in a DECK table is a short label or a formatted number, and
+      // one that wraps costs a row of height on a slide with a fixed number of
+      // rows to fit. A report table has prose in it and must be allowed to wrap.
+      // The two answers differ, so this is decided per scope rather than in the
+      // shared mixin.
+      @if $scope == ".reveal" {
+        white-space: nowrap;
+      } @else {
+        white-space: normal;
+      }
+    }
+
+    table thead th {
+      @include qmd-table-head;
+    }
+
+    // Hairlines between rows, and none above the first -- the header rule is
+    // already there and a second line under it reads as a double rule.
+    table tbody td,
+    table tbody th {
+      @include qmd-table-rows;
+    }
+
+    table tbody tr:first-child td,
+    table tbody tr:first-child th {
+      border-top: none;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Density classes
+// ---------------------------------------------------------------------------
+// Eight of these came from airrosti-theme.scss, one per table in the deck, each
+// tuned so that table filled its slide. They are kept because they encode real
+// work -- a ten-row Elixhauser distribution and a three-row summary need
+// genuinely different padding to fill the same slide -- but they are stated
+// here as a SCALE rather than as eight unrelated numbers, so a new table picks
+// the nearest step instead of getting a ninth bespoke class.
+//
+// The names are the ones the existing decks already use.
+//
+//   .table-roomy       fills vertical space; few rows
+//   .summary-table       "     (deck name)
+//   .table-comfortable default padding, explicit
+//   .appendix-table      "
+//   .outcome-table     narrower columns, generous rows
+//   .balance-result-table "
+//   .covariates-table  narrowest columns, generous rows -- many short columns
+//   .table-tight       many rows to fit
+//   .weighting-table     "
+//   .elixhauser-table  many rows, wide-set lines
+//   .table-condensed   Bootstrap's own name, kept working
+//
+// The vertical padding is what changed when the slide box went to 1600x900, and
+// it is the only lever that could have. A table has as many rows as it has rows,
+// so the only way it fills a taller slide is for each row to be taller. Font
+// size would do that too and is the wrong tool: it buys height and width
+// together, and width is the scarce dimension in a seven-column table whose
+// cells do not wrap. Padding buys height alone.
+//
+// The numbers are not eyeballed. Each solves
+//
+//     row height = font-size x line-height + 2 x padding-y
+//
+// for the padding that puts (rows x row height) at roughly 80-85% of
+// $qmd-slide-figure-height at the size that table is set in. The row counts the
+// deck classes were fitted to are fixed and known; a table that grows a row
+// wants checking against the bottom of its slide.
+//
+// FONT SIZE IS IN THAT EQUATION AND IS NOT SET HERE, which is the one thing to
+// know before reaching for a class. These were fitted against deck tables set
+// from R at roughly two thirds of body size (kableExtra's `font_size`, or the
+// equivalent). Applied to a table at full slide type they are far too generous:
+// 1.05em of padding either side of 36px text is a row 125px tall, and six of
+// them have filled the slide. Pick a class AND set the size, or leave the table
+// on the base density above.
+//
+// Two of them moved DOWN rather than up. .elixhauser-table's line height was
+// 1.75 against the type it used to be set in, and the same multiple against the
+// larger type ran its twelfth row off the slide -- the row count is fixed and
+// the type is not. .table-condensed is the row-heaviest step there is and has
+// no headroom to give away.
+//
+// !important is retained: these exist to override the base block above, and in
+// reveal.js they are also competing with the deck theme's own table rules.
+
+@mixin qmd-table-density($v, $h, $lh) {
+  table {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  table th,
+  table td {
+    padding: $v $h !important;
+    line-height: $lh;
+  }
+}
+
+.table-roomy,
+.summary-table { @include qmd-table-density(1.05em, 1.1em, 1.4); }
+
+.table-comfortable,
+.appendix-table { @include qmd-table-density(0.7em, 0.65em, 1.4); }
+
+// Widest table in the set -- a raw-and-weighted pair per arm plus the effect,
+// its interval and a p-value -- so the horizontal padding stays tight and the
+// vertical padding does the filling.
+.outcome-table { @include qmd-table-density(1.05em, 0.38em, 1.35); }
+
+.balance-result-table { @include qmd-table-density(1.15em, 0.42em, 1.32); }
+
+.covariates-table { @include qmd-table-density(0.65em, 0.25em, 1.45); }
+
+.table-tight,
+.weighting-table { @include qmd-table-density(0.58em, 0.52em, 1.28); }
+
+// Wide-set lines despite tight padding: ten rows of proportions under two header
+// rows, where the vertical rhythm is what lets the eye stay on a row.
+.elixhauser-table { @include qmd-table-density(0.28em, 0.85em, 1.45); }
+
+.table-condensed { @include qmd-table-density(0.25em, 0.75em, 1.25); }
+
+// Summary tables centre their numbers and left-align the row labels.
+.summary-table {
+  table th,
+  table td { text-align: center; }
+
+  table th:first-child,
+  table td:first-child { text-align: left; }
+}
+
+// ---------------------------------------------------------------------------
+// Notes and layout tables
+// ---------------------------------------------------------------------------
+
+// A note under a table, emitted as a paragraph rather than through
+// kableExtra::footnote(). The footnote route puts the text in a <tfoot> cell,
+// which makes the browser widen the first column to fit the whole sentence.
+// $qmd-ink-secondary rather than $qmd-ink-muted: at 0.5em this is the smallest
+// text in the deck, and the muted ink is derived to clear AA at BODY size. A
+// note that small wants the darker of the two greys.
+.table-note {
+  font-size: 0.5em;
+  color: $qmd-ink-secondary;
+  margin-top: 0.6em;
+  text-align: left;
+  white-space: normal;
+}
+
+// Borderless layout tables -- markdown tables used to align columns rather than
+// to present data, as on a CV or About page. All of Bootstrap's table chrome
+// comes back off.
+.info-table {
+  table {
+    width: auto;
+    margin: 0;
+  }
+
+  // The markdown needs a header row to parse as a table; it is left empty.
+  thead { display: none; }
+
+  // Pandoc emits a <colgroup> giving each column an equal percentage width, and
+  // those <col> widths beat any width set on the cells. Clearing them is what
+  // lets columns size to their content.
+  col { width: auto !important; }
+
+  table, tbody, tr, td {
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  td {
+    padding: 0.45rem 1rem 0.45rem 0;
+    vertical-align: baseline;
+    white-space: normal;
+  }
+
+  // Label and title columns stay on one line.
+  td:first-child,
+  td:nth-child(2) { white-space: nowrap; }
+
+  // Send the slack to the final column. Without this the table spreads leftover
+  // width across every column, opening a gap after short cells. last-child
+  // works for both the three-column and two-column shapes.
+  td:last-child { width: 100%; }
+}
+
+// Three columns will not fit a phone, and forcing them causes a horizontal
+// scroll. Stack each row into lines instead.
+@media (max-width: 576px) {
+  .info-table {
+    td:first-child,
+    td:nth-child(2) { white-space: normal; }
+
+    table, tbody, tr, td {
+      display: block;
+      width: auto !important;
+    }
+
+    tr { margin-bottom: 1rem; }
+    td { padding: 0; }
+  }
+}

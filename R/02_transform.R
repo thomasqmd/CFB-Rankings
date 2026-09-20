@@ -20,6 +20,12 @@ build_team_lookup <- function(sched_df) {
   away_teams <- sched_df |>
     dplyr::select(team = away_team, conference = away_conference, division = away_division)
   
+  fbs_confs <- c(
+    "acc", "big ten", "big 12", "sec", "pac-12", "pac-2",
+    "american athletic", "conference usa", "mid-american",
+    "mountain west", "sun belt", "fbs independents"
+  )
+  
   teams <- dplyr::bind_rows(home_teams, away_teams) |>
     dplyr::filter(!is.na(team), team != "") |>
     dplyr::group_by(team) |>
@@ -29,10 +35,14 @@ build_team_lookup <- function(sched_df) {
       .groups = "drop"
     ) |>
     dplyr::mutate(
-      division_clean = tolower(coalesce(division, "fbs")),
-      is_fbs = division_clean %in% c("fbs", "i-a", "division i-a"),
+      div_lower = tolower(coalesce(division, "")),
+      conf_lower = tolower(coalesce(conference, "")),
+      # Robust subdivision classification accounting for year-to-year realignment and FCS promotions:
+      is_fbs = (div_lower %in% c("fbs", "i-a", "division i-a") | conf_lower %in% fbs_confs) &
+               !div_lower %in% c("fcs", "i-aa", "division i-aa", "ii", "iii"),
       subdivision_id = ifelse(is_fbs, 1L, 2L) # 1 = FBS, 2 = FCS
     ) |>
+    dplyr::select(team, conference, division, is_fbs, subdivision_id) |>
     dplyr::arrange(desc(is_fbs), team) |>
     dplyr::mutate(team_id = dplyr::row_number())
   
@@ -227,6 +237,7 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   
   # 1. Stan data for Pipeline 1: WLD (Ordered Logit Actual Outcomes)
   stan_data_wld <- list(
+    season = as.integer(season),
     N_games = nrow(wld_df),
     N_teams = nrow(team_lookup),
     home_team = wld_df$home_id,
@@ -243,6 +254,7 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   
   # 2. Stan data for Pipeline 2: PD (Robust Student-t Actual Point Differential)
   stan_data_pd <- list(
+    season = as.integer(season),
     N_games = nrow(pd_df),
     N_teams = nrow(team_lookup),
     home_team = pd_df$home_id,
@@ -259,6 +271,7 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   
   # 3. Stan data for Pipeline 3: XWLD (Ordered Logit Expected Outcomes)
   stan_data_xwld <- list(
+    season = as.integer(season),
     N_games = nrow(xwld_df),
     N_teams = nrow(team_lookup),
     home_team = xwld_df$home_id,
@@ -275,6 +288,7 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   
   # 4. Stan data for Pipeline 4: XPD (Robust Student-t Net EPA Differential)
   stan_data_xpd <- list(
+    season = as.integer(season),
     N_games = nrow(xpd_df),
     N_teams = nrow(team_lookup),
     home_team = xpd_df$home_id,

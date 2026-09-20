@@ -43,8 +43,9 @@ fit_stan_engine <- function(stan_data,
                             fast_prototype = FALSE) {
   mod <- compile_stan_model(stan_file)
   
-  # Resolve automated warm-start initialization if init is NULL and warm_start is TRUE
-  init_file <- file.path(inits_dir, paste0(engine_label, "_inits.rds"))
+  # Scope inits by season if season metadata is provided
+  season_prefix <- if (!is.null(stan_data$season)) paste0(stan_data$season, "_") else ""
+  init_file <- file.path(inits_dir, paste0(season_prefix, engine_label, "_inits.rds"))
   effective_init <- init
   effective_warmup <- iter_warmup
   
@@ -71,11 +72,14 @@ fit_stan_engine <- function(stan_data,
     }
   }
   
+  # Strip non-Stan metadata from stan_data before passing to sampler
+  declared_data <- stan_data[names(stan_data) != "season"]
+  
   if (inherits(mod, "CmdStanModel")) {
     if (fast_prototype) {
       message(sprintf("[%s] Fast prototype mode enabled: running variational inference (meanfield)...", engine_label))
       fit <- mod$variational(
-        data = stan_data,
+        data = declared_data,
         seed = 42,
         algorithm = "meanfield",
         iter = 5000
@@ -88,7 +92,7 @@ fit_stan_engine <- function(stan_data,
                     engine_label, chains, effective_warmup, iter_sampling, is_warm))
     
     fit <- mod$sample(
-      data = stan_data,
+      data = declared_data,
       chains = chains,
       parallel_chains = parallel_chains,
       iter_warmup = effective_warmup,
@@ -114,7 +118,7 @@ fit_stan_engine <- function(stan_data,
     # rstan fallback
     fit <- rstan::sampling(
       mod,
-      data = stan_data,
+      data = declared_data,
       chains = chains,
       cores = parallel_chains,
       warmup = effective_warmup,

@@ -1,0 +1,12 @@
+% Definition and Cross-Reference Macros for LaTeX PDF
+% Shipped by qmdthemes for interactive definition links.
+
+\providecommand{\texorpdfstring}[2]{#1}
+\providecommand{\defn}[2]{%
+  \par\vspace{0.5em}\noindent\textbf{Definition (#1):} \textit{#2}\par\vspace{0.5em}%
+}
+\providecommand{\linkeddefn}[2]{%
+  \texorpdfstring{\hypertarget{ref-#1}{\hyperlink{def-#1}{\defn{#1}{#2}}}}{\defn{#1}{#2}}}
+\providecommand{\defanchor}[1]{\texorpdfstring{\hypertarget{def-#1}{}}{}}
+\providecommand{\backlink}[1]{%
+  \texorpdfstring{\hyperlink{ref-#1}{\textcolor{qmdprimary}{\small$\hookleftarrow$}}}{}}

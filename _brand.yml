@@ -1,0 +1,80 @@
+# Personal theme -- THE source of truth.
+#
+# This is the only file in the package where a colour is typed. The SCSS
+# variables, the CSS custom properties, the LaTeX preamble, the Typst tokens and
+# the R palette objects are all GENERATED from it by data-raw/build-tokens.R.
+
+meta:
+  name: Thomas Reinke
+  link: https://thomasqmd.quarto.pub/website
+
+color:
+  palette:
+    # -- Identity, chrome only ------------------------------------------------
+    navy: "#303e4e"   # taken from TRlogo.svg -- the anchor for everything below
+    teal: "#18bc9c"   # flatly's teal, already used throughout the TDA plotting
+
+    # -- Categorical, 8 slots, FIXED ORDER -----------------------------------
+    series-1-blue: "#3a6ea5"    # the logo navy, lifted into the band
+    series-2-teal: "#0f9a7d"    # the brand teal, darkened until it clears 3:1
+    series-3-orange: "#d1622a"
+    series-4-violet: "#6b4fb2"
+    series-5-ochre: "#a8820a"
+    series-6-red: "#c1393f"
+    series-7-green: "#7d9c33"
+    series-8-magenta: "#c4527f"
+
+    # -- Sequential: magnitude on an unbroken scale --------------------------
+    seq-1: "#eef1f4"
+    seq-2: "#cdd6df"
+    seq-3: "#a9b5c3"
+    seq-4: "#8695a8"
+    seq-5: "#65778d"
+    seq-6: "#485b73"
+    seq-7: "#303e4e"
+
+    # -- Ordinal: ordered but DISCRETE steps ---------------------------------
+    ord-1: "#a9b5c3"
+    ord-2: "#8695a8"
+    ord-3: "#65778d"
+    ord-4: "#485b73"
+    ord-5: "#303e4e"
+
+    # -- Diverging: a meaningful middle, two directions ----------------------
+    div-1: "#3a6ea5"
+    div-2: "#7f9fc4"
+    div-3: "#c3d2e2"
+    div-4: "#f0efec"   # neutral midpoint
+    div-5: "#e8bfbc"
+    div-6: "#d18a87"
+    div-7: "#c1393f"
+
+    # -- Chart chrome ---------------------------------------------------------
+    ink: "#222222"           # 15.91:1
+    ink-secondary: "#52514e" #  7.94:1
+    ink-muted: "#77756f"     #  4.61:1
+    rule-grid: "#e1e0d9"     #  1.24:1 -- grid lines, never text
+    rule-axis: "#c3c2b7"     #  1.68:1 -- axis lines, never text
+
+  background: "#ffffff"
+  foreground: "#222222"
+  primary: navy
+  secondary: series-2-teal
+
+logo:
+  small: logos/TRlogo.svg
+  medium: logos/TRlogo.svg
+  large: logos/T.png
+
+typography:
+  base:
+    family: Lora
+    size: 1.1rem
+    line-height: 1.6
+  headings:
+    family: Atkinson Hyperlegible Next
+    weight: 600
+  monospace: JetBrains Mono
+  link:
+    color: navy
+    decoration: underline

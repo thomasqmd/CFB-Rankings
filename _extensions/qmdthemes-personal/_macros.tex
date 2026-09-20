@@ -1,0 +1,139 @@
+% Mathematical and Statistical LaTeX Macros
+% Shipped by qmdthemes for academic and technical reporting.
+% Opt-in include for PDF documents via include-in-header: _macros.tex
+
+% Greek letters
+\providecommand{\al}{\alpha}
+\providecommand{\be}{\beta}
+\providecommand{\ga}{\gamma}
+\providecommand{\de}{\delta}
+\providecommand{\ep}{\epsilon}
+\providecommand{\ze}{\zeta}
+\providecommand{\ka}{\kappa}
+\providecommand{\la}{\lambda}
+\providecommand{\si}{\sigma}
+\providecommand{\up}{\upsilon}
+\providecommand{\om}{\omega}
+\providecommand{\Ga}{\Gamma}
+\providecommand{\De}{\Delta}
+\providecommand{\Th}{\Theta}
+\providecommand{\La}{\Lambda}
+\providecommand{\Si}{\Sigma}
+\providecommand{\Om}{\Omega}
+\providecommand{\sisq}{\sigma^{2}}
+
+% Shorthand and formatting
+\providecommand{\bs}[1]{\boldsymbol{#1}}
+\providecommand{\f}[2]{\frac{#1}{#2}}
+\providecommand{\floor}[1]{\left\lfloor#1\right\rfloor}
+\providecommand{\pa}{\partial}
+\providecommand{\mc}[1]{\mathcal{#1}}
+\providecommand{\mf}[1]{\mathfrak{#1}}
+
+% Probability and Statistics
+\providecommand{\Indic}[2]{1_{#1}(#2)}
+\providecommand{\iid}{\stackrel{\mathrm{iid}}{\sim}}
+\providecommand{\E}[1]{\mathbb{E}\left[#1\right]}
+\providecommand{\Ewrt}[2]{\mathbb{E}_{#1}\left[#2\right]}
+\providecommand{\Var}[1]{\mathrm{Var}\left[#1\right]}
+\providecommand{\Cov}[2]{\mathrm{Cov}\left[#1,#2\right]}
+\providecommand{\CovVec}[1]{\mathrm{Cov}\left[#1\right]}
+\providecommand{\Bern}[1]{\mathrm{Bernoulli}(#1)}
+\providecommand{\Bin}[2]{\mathrm{Bin}(#1,#2)}
+\providecommand{\NegBin}[2]{\mathrm{NegBin}(#1,#2)}
+\providecommand{\Multinom}[1]{\mathrm{Multinom}(#1)}
+\providecommand{\Mult}[3]{\mathrm{Multinom}_{#1}(#2,#3)}
+\providecommand{\Pois}[1]{\mathrm{Pois}(#1)}
+\providecommand{\Unif}[2]{\mathrm{Unif}(#1,#2)}
+\providecommand{\Norm}[2]{\mathcal{N}(#1,#2)}
+\providecommand{\MVpNorm}[3]{\mathcal{N}_{#1}\left(#2,#3\right)}
+\providecommand{\WDist}[3]{\mathcal{W}_{#1}\left(#2,#3\right)}
+\providecommand{\ExpD}[1]{\mathrm{Exp}\left(#1\right)}
+\providecommand{\BetaD}[2]{\mathrm{Beta}\left(#1, #2\right)}
+\providecommand{\GammaD}[2]{\mathrm{Gamma}\left(#1, #2\right)}
+\providecommand{\Weibull}{\mathrm{Weibull}}
+\providecommand{\Rayleigh}{\mathrm{Rayleigh}}
+\providecommand{\Maxwell}{\mathrm{Maxwell}}
+\providecommand{\Logistic}{\mathrm{Logistic}}
+\providecommand{\IG}{\mathrm{IG}}
+\providecommand{\Gumbel}{\mathrm{Gumbel}}
+\providecommand{\Cauchy}{\mathrm{Cauchy}}
+\providecommand{\thetavec}{\underline{\theta}}
+\providecommand{\etavec}{\underline{\eta}}
+\providecommand{\PR}[1]{P\left(#1\right)}
+\providecommand{\PRwrt}[2]{P_{#1}\left(#2\right)}
+\providecommand{\PRRV}[1]{P\left[#1\right]}
+\providecommand{\PRRVwrt}[2]{P_{#1}\left[#2\right]}
+\providecommand{\sa}{\sigma\mathrm{-algebra}}
+\providecommand{\disju}{\stackrel{\cdot}{\cup}}
+\providecommand{\bigdisju}{\stackrel{\cdot}{\bigcup}}
+\providecommand{\pisys}{\pi\mathrm{-system}}
+\providecommand{\lamsys}{\lambda\mathrm{-system}}
+\providecommand{\io}{\mathrm{ i.o. }}
+\providecommand{\set}[1]{\left\{#1\right\}}
+\providecommand{\oset}[1]{\left[#1\right]}
+\providecommand{\tpl}[1]{\left(#1\right)}
+\providecommand{\indep}{\ \underline{ \ \parallel } \ \ }
+\providecommand{\nindep}{\ \underline{ \ \nparallel \ } \ \ }
+\providecommand{\convas}{\stackrel{\mathrm{\scriptsize{a.s.}}}{\longrightarrow}}
+\providecommand{\nconvas}{\stackrel{\mathrm{\scriptsize{a.s.}}}{\nrightarrow}}
+\providecommand{\convip}[1]{\stackrel{\scriptsize{#1}}{\longrightarrow}}
+\providecommand{\nconvip}[1]{\stackrel{\scriptsize{#1}}{\nrightarrow}}
+\providecommand{\convlp}[1]{\stackrel{\scriptsize{L_{#1}}}{\longrightarrow}}
+\providecommand{\nconvlp}[1]{\stackrel{\scriptsize{L_{#1}}}{\nrightarrow}}
+\providecommand{\lpnorm}[2]{\left|\left|#2\right|\right|_{#1}}
+\providecommand{\Far}{F^{\leftarrow}}
+\providecommand{\convd}{\stackrel{\scriptsize{d}}{\longrightarrow}}
+\providecommand{\nconvd}{\stackrel{\scriptsize{d}}{\nrightarrow}}
+\providecommand{\eqd}{\stackrel{\scriptsize{d}}{=}}
+\providecommand{\logit}{\mathrm{logit}}
+\providecommand{\expit}{\mathrm{expit}}
+\providecommand{\Func}[1]{{\tt #1}}
+
+% Number systems and spaces
+\providecommand{\C}{\mathbb{C}}
+\providecommand{\R}{\mathbb{R}}
+\providecommand{\Q}{\mathbb{Q}}
+\providecommand{\N}{\mathbb{N}}
+\providecommand{\Z}{\mathbb{Z}}
+\providecommand{\S}{\mathbb{S}}
+\providecommand{\Cinf}{\mathbb{C}_{\infty}}
+\providecommand{\CP}{\mathbb{CP}^{1}}
+\providecommand{\RE}{\mathrm{Re}}
+\providecommand{\IM}{\mathrm{IM}}
+\providecommand{\Proj}[2]{\mathrm{Proj}_{#1}#2}
+\providecommand{\pii}{\pi i}
+\providecommand{\prp}{^{\perp}}
+\providecommand{\st}{^\star}
+
+% Matrices and Vectors
+\providecommand{\ma}[1]{\textbf{#1}}
+\providecommand{\ve}[1]{\textbf{#1}}
+\providecommand{\rve}[1]{\boldsymbol{#1}}
+\providecommand{\norm}[1]{\left|\left|#1\right|\right|}
+\providecommand{\specrad}[1]{\rho\left(\mathbf{#1}\right)}
+\providecommand{\Cn}{\mathbb{C}^{n}}
+\providecommand{\Cnn}{\mathbb{C}^{n \times n}}
+\providecommand{\Cmn}{\mathbb{C}^{m \times n}}
+\providecommand{\diag}{\mathrm{diag}}
+\providecommand{\tr}{\mathrm{tr}}
+\providecommand{\ip}[2]{\left\langle #1, #2\right\rangle}
+\providecommand{\twovec}[2]{\left[\begin{matrix}#1 \\ #2 \end{matrix}\right]}
+\providecommand{\twomat}[4]{\left[\begin{matrix}#1 & #3 \\ #2 & #4 \end{matrix}\right]}
+\providecommand{\threevec}[3]{\left[\begin{matrix}#1 \\ #2 \\ #3\end{matrix}\right]}
+\providecommand{\threemat}[9]{\left[\begin{matrix}#1 & #4 & #7 \\ #2 & #5 & #8 \\ #3 & #6 & #9\end{matrix}\right]}
+\providecommand{\fourvec}[4]{\left[\begin{matrix}#1 \\ #2 \\ #3 \\ #4\end{matrix}\right]}
+
+% Number theory
+\providecommand{\mod}[2]{#1\,\mathrm{mod}\,#2}
+\providecommand{\equivmod}[3]{#1\,=\,#2\,\mathrm{mod}\,#3}
+\providecommand{\nequivmod}[3]{#1\,\neq\,#2\,\mathrm{mod}\,#3}
+\providecommand{\divides}[2]{#1\,|\,#2}
+\providecommand{\ndivides}[2]{#1\,\nmid\,#2}
+\providecommand{\divisors}[1]{\mc{D}_{#1}}
+
+% Optimization operators
+\makeatletter
+\@ifundefined{argmin}{\DeclareMathOperator*{\argmin}{\arg\!\min}}{}
+\@ifundefined{argmax}{\DeclareMathOperator*{\argmax}{\arg\!\max}}{}
+\makeatother

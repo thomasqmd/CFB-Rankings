@@ -1,0 +1,692 @@
+// Slide chrome.
+//
+// Merged from airrosti-theme.scss, Website/templates/revealjs/brand.scss,
+// PPP/quarto-assets/tol.scss, PPP/quarto-assets/baylor-theme.scss,
+// presentation-theme.scss, gemini-theme.scss and
+// baylor_theme/_extensions/baylor_theme/{baylor-theme,custom}.scss.
+//
+// Those eight files are largely copies of one another. The merge is mostly a
+// matter of choosing which copy was the later thought -- recorded at each rule
+// where they disagree -- and of replacing the literals they all inherited
+// unchanged from whichever template they were forked from.
+//
+// Not carried across: the commented-out palettes in gemini-theme.scss, and its
+// `.reveal .slides section > h1/h2/h3 { border: 8px solid }` treatment, which
+// the later files replaced with the filled bar below.
+//
+// EVERY LENGTH MEASURED AGAINST THE SLIDE comes from a $qmd-slide-* token. Those
+// are generated from QMD_SLIDE in R/slides.R, which also produces the
+// `width:`/`height:` pair in _extension.yml and the figure size
+// qmd_fig_dims("revealjs") reports -- so the box, the caps that stop a figure
+// running off it, and the size knitr draws at cannot drift apart. Nothing in
+// this file may reintroduce a px count taken against the slide.
+
+/*-- scss:defaults --*/
+
+// Where the @font-face rules in _qmd-typography.scss look for the bundled files.
+//
+// reveal.js does not inline its theme: it writes the compiled stylesheet out to
+// <doc>_files/libs/revealjs/dist/theme/, and the browser then resolves every
+// url() in it relative to THAT directory rather than to the document. Five
+// segments deep, so five levels back up. Without the prefix pandoc reports ten
+// "Could not fetch resource ...dist/theme/_extensions/..." warnings and the
+// deck silently falls back to a system face -- which for Atkinson Hyperlegible
+// Next means falling back to nothing, since it is not a system font.
+$qmd-font-path: "../../../../../#{$qmd-ext-dir}/fonts" !default;
+
+// The slide body is set in the HEADING face, not the serif that html and pdf
+// use. A bullet is a handful of words read at a distance, which is what
+// Atkinson is for; Lora's advantage is tracking line to line across a
+// paragraph, and a slide has no paragraphs.
+$presentation-font-family: $qmd-font-headings !default;
+$presentation-heading-font: $qmd-font-headings !default;
+$presentation-heading-font-weight: $qmd-heading-weight !default;
+$presentation-line-height: 1.5 !default;
+
+// Body type, and the size every `em` on a slide is ultimately measured against.
+// It is a px number and does not grow with the slide box, which is why it is
+// stated with the box in R/slides.R rather than here.
+$presentation-font-size-root: $qmd-slide-root-font-size !default;
+
+// The heading scale, in PX rather than in em, and that is the point.
+//
+// `1.35em` meant 1.35x whatever the enclosing section was set at, so a size
+// class on the slide -- `{.smaller}`, `{.smallest}` -- scaled the heading along
+// with the body it was meant to shrink. The green bar behind an `h2` is sized by
+// the text inside it, so the bar shrank too, and the deck's most constant piece
+// of furniture changed size from one slide to the next.
+//
+// Pinned to the root size instead, which no ancestor font-size can reach. A size
+// class now means what it says: smaller body copy, same heading.
+//
+// Six of the eight sources agree on these multipliers; presentation-theme.scss's
+// 48px root with 2.5em h1 is a different deck shape entirely and is not merged.
+$presentation-h1-font-size: $qmd-slide-root-font-size * 1.9 !default;
+$presentation-h2-font-size: $qmd-slide-root-font-size * 1.35 !default;
+$presentation-h3-font-size: $qmd-slide-root-font-size * 1.15 !default;
+$presentation-h4-font-size: $qmd-slide-root-font-size * 1 !default;
+$presentation-block-margin: 12px !default;
+
+$body-bg: $qmd-background !default;
+$body-color: $qmd-ink !default;
+$link-color: $qmd-link !default;
+$selection-bg: qmd-tint($qmd-primary, 25%) !default;
+
+/*-- scss:rules --*/
+
+// ---------------------------------------------------------------------------
+// Title slide
+// ---------------------------------------------------------------------------
+.title-slide {
+  text-align: left;
+
+  .date {
+    font-size: 0.9em;
+    color: $qmd-ink-muted;
+    font-style: italic;
+    margin-top: 1em;
+  }
+}
+
+#title-slide {
+  .title { font-size: 1.6em; line-height: 1.2; }
+  .subtitle { font-size: 0.9em; color: $qmd-ink-secondary; }
+}
+
+.quarto-title-authors {
+  display: flex;
+  justify-content: left;
+
+  .quarto-title-author {
+    padding-left: 0;
+    padding-right: 0;
+    width: 100%;
+  }
+}
+
+// A rule above the author block. The sources set this in the primary (airrosti,
+// tol, baylor-theme) or the accent (brand.scss); the primary reads as
+// structure, the accent as decoration, and this is structure.
+.quarto-title-author::before {
+  content: "";
+  display: block;
+  border: none;
+  background-color: $qmd-primary;
+  height: 2px;
+  border-radius: 4px;
+  width: 100%;
+}
+
+// reveal's default puts a rule after the title, which duplicates the one above.
+hr,
+h1.title::after {
+  content: "";
+  display: block;
+  border: none;
+  background-color: transparent !important;
+  height: 0;
+  margin: 0 !important;
+}
+
+// ---------------------------------------------------------------------------
+// Headings
+// ---------------------------------------------------------------------------
+
+// Content slides: a filled bar.
+//
+// The text colour is $qmd-on-primary, which is COMPUTED. Every source writes a
+// near-white here, which is right for a dark green bar and illegible on
+// anything light -- University Gold behind white text is 1.7:1. A theme whose
+// primary is light now gets dark text without anyone having to notice.
+//
+// The size is restated rather than left to reveal's own `.reveal h2` rule so
+// that the pinned px value above is what lands, whatever Quarto's stylesheet
+// does with the variable. Padding is in em OF THE HEADING'S OWN SIZE, so the
+// bar holds its proportions if the type scale moves; it used to be 5px/10px
+// measured against a root font size the deck no longer has.
+.reveal h2 {
+  font-size: $presentation-h2-font-size;
+  background-color: $qmd-primary;
+  color: $qmd-on-primary;
+  padding: 0.1em 0 0.1em 0.21em;
+  border-radius: 10px;
+}
+
+// Section-break slides (`# Section`): the wordmark over an accent rule, so a
+// break reads as a break rather than as one more content slide with a bar.
+.reveal h1:not(.title) {
+  color: $qmd-primary;
+  text-align: left;
+
+  &::after {
+    content: "";
+    display: block;
+    border: none;
+    background-color: $qmd-accent-rule;
+    height: 6px;
+    border-radius: 3px;
+    width: 100%;
+    margin-top: 0.25em;
+  }
+}
+
+// A title that has to fit a long string. The class itself is in
+// _qmd-utilities.scss with the rest of the size scale; this is the deck's
+// override of it, and it is scoped under `.reveal` FOR SPECIFICITY rather than
+// for reach. `.reveal h2` is a class plus an element, so a bare `.smallertitle`
+// on a heading loses to it now that h2 carries a pinned px size, and loses
+// silently. One class deeper takes the cascade back.
+.reveal .smallertitle {
+  font-size: 0.6em;
+  margin: 8px 1px;
+}
+
+// ---------------------------------------------------------------------------
+// Links
+// ---------------------------------------------------------------------------
+// _qmd-typography.scss already gives every link the underline-at-rest and the
+// thicken-plus-wash hover that no source stylesheet had. On a slide the wash is
+// pill-shaped, matching the tabset pills below: a fully rounded end cap and a
+// little padding for it to sit in, rather than a rectangle cropped tight to the
+// glyphs. The negative horizontal margin cancels the padding, so the pill grows
+// outward and the surrounding words do not shift when it appears.
+//
+// The radius is half the line box rather than a fixed value, so it stays a
+// capsule at any type size the deck uses.
+.reveal a {
+  line-height: 1.5em;
+  padding: 0.05em 0.35em;
+  margin: 0 -0.35em;
+  border-radius: 0.85em;
+}
+
+// Deck furniture is not prose, so it opts out of all of that. Both the pill and
+// the underline: a logo with a wash behind it is a rendering artefact, and the
+// counter has no room for either (see the nowrap note further down).
+//
+// The negative margin is the part that has to come off. `.reveal a` uses it to
+// let the hover pill grow outward without moving the words either side; on an
+// element positioned against a corner it just pulls the element off-centre.
+.reveal .slide-logo a,
+.reveal .slide-number a {
+  text-decoration: none;
+  background-color: transparent;
+  margin: 0;
+}
+
+// The counter keeps a padded pill of its own -- sized with the rest of the
+// furniture further down -- so only the logo drops the padding outright.
+.reveal .slide-logo a {
+  padding: 0;
+}
+
+// The footer link is the one place the accent carries text, so it uses the ink
+// variant rather than the rule variant -- $qmd-accent-rule is derived to 3:1,
+// which is a border threshold, not a text one.
+.reveal .footer a {
+  color: $qmd-accent-ink !important;
+}
+
+// ---------------------------------------------------------------------------
+// Bullets
+// ---------------------------------------------------------------------------
+// Four levels, each a step smaller and in a different colour, so depth is
+// legible at a glance from the back of a room.
+//
+// The `:not()` pair is load-bearing: Quarto builds tabset navigation out of a
+// <ul>, and without it every tab acquires an arrow.
+//
+// Sizing follows airrosti-theme.scss's em-and-baseline approach rather than
+// brand.scss's `position: relative; right: 10px; bottom: 5px` with px sizes.
+// The latter is a fixed nudge that stops lining up as soon as the font size
+// changes, which is exactly what the four levels do.
+$qmd-bullet-levels: (
+  1: (color: $qmd-primary,      size: 0.70em, gap: 0.40em),
+  2: (color: $qmd-accent-rule,  size: 0.65em, gap: 0.35em),
+  3: (color: $qmd-series-3,     size: 0.60em, gap: 0.30em),
+  4: (color: $qmd-series-6,     size: 0.55em, gap: 0.25em)
+);
+
+.reveal .slide ul:not([role="tablist"]):not(.panel-tabset-tabnav) {
+  li {
+    list-style-type: none;
+
+    // A bullet whose text is wrapped in <p> by Pandoc otherwise starts on the
+    // line below its own marker.
+    > p {
+      display: inline;
+      margin: 0;
+    }
+  }
+}
+
+// The cascade, written out. Generating it would mean building "ul ul ul" by
+// repetition, which Sass has no clean operator for; four explicit rules read
+// better than the loop that would replace them, and the values still come from
+// the one map above.
+.reveal .slide ul:not([role="tablist"]):not(.panel-tabset-tabnav) li::before {
+  content: "\27A4";
+  display: inline-block;
+  color: map.get(map.get($qmd-bullet-levels, 1), color);
+  font-size: map.get(map.get($qmd-bullet-levels, 1), size);
+  margin-right: map.get(map.get($qmd-bullet-levels, 1), gap);
+  vertical-align: 0.1em;
+}
+
+.reveal .slide ul:not([role="tablist"]):not(.panel-tabset-tabnav) ul li::before {
+  color: map.get(map.get($qmd-bullet-levels, 2), color);
+  font-size: map.get(map.get($qmd-bullet-levels, 2), size);
+  margin-right: map.get(map.get($qmd-bullet-levels, 2), gap);
+}
+
+.reveal .slide ul:not([role="tablist"]):not(.panel-tabset-tabnav) ul ul li::before {
+  color: map.get(map.get($qmd-bullet-levels, 3), color);
+  font-size: map.get(map.get($qmd-bullet-levels, 3), size);
+  margin-right: map.get(map.get($qmd-bullet-levels, 3), gap);
+}
+
+.reveal .slide ul:not([role="tablist"]):not(.panel-tabset-tabnav) ul ul ul li::before {
+  color: map.get(map.get($qmd-bullet-levels, 4), color);
+  font-size: map.get(map.get($qmd-bullet-levels, 4), size);
+  margin-right: map.get(map.get($qmd-bullet-levels, 4), gap);
+}
+
+// A fragment wrapping a list otherwise adds a blank line above it.
+.reveal .slide div.fragment > ul {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Outline slide
+// ---------------------------------------------------------------------------
+// `toc: true` emits `<section id="TOC"><nav role="doc-toc"><h2>…</h2><ul>`,
+// which is not a `.slide ul`, so none of the bullet rules above reach it.
+#TOC nav[role="doc-toc"] {
+  // The nav arrives with a width cap of Quarto's making, narrow enough that a
+  // section name of ordinary length broke across two lines while the right half
+  // of the slide sat empty. Released here so an entry is measured against the
+  // slide it is on.
+  max-width: none;
+  width: 100%;
+
+  ul {
+    list-style: none;
+    padding-left: 0;
+    margin-left: 0;
+    max-width: none;
+  }
+
+  // Depth is a document setting; this keeps a deeper one from turning the
+  // outline into a slide index.
+  ul ul { display: none; }
+
+  li {
+    font-size: 1.1em;
+    margin: 0.5em 0;
+
+    // One line per entry, whatever the container turns out to be. Widening the
+    // nav above fixes today's section names and would quietly stop working the
+    // first time one of them got longer; this does not.
+    //
+    // A wrapped entry is worse here than a long one: the marker is a ::before on
+    // the li, so the second line starts at the left margin with no arrow in
+    // front of it and reads as a separate, unlabelled item.
+    white-space: nowrap;
+
+    &::before {
+      content: "\27A4";
+      color: $qmd-primary;
+      font-size: 0.75em;
+      margin-right: 0.5em;
+    }
+  }
+
+  a {
+    color: $qmd-ink;
+    text-decoration: none;
+    background-color: transparent;
+
+    &:hover {
+      color: $qmd-primary;
+      text-decoration: underline;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tabsets
+// ---------------------------------------------------------------------------
+// Pills rather than reveal's underlined tabs.
+.reveal .panel-tabset {
+  ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    border-bottom: none !important;
+    padding-left: 0 !important;
+    margin-bottom: 20px;
+
+    li {
+      list-style: none !important;
+      margin: 0 !important;
+
+      &::before {
+        content: none !important;
+        display: none !important;
+      }
+
+      a {
+        display: inline-block;
+        background-color: qmd-tint($qmd-primary, 8%) !important;
+        color: $qmd-ink !important;
+        border-radius: 20px !important;
+        padding: 8px 15px !important;
+        // Cancels the negative margin `.reveal a` carries to make its hover
+        // pill grow outward. Here it would pull each pill into the gap beside
+        // it and close the row up.
+        margin: 0 !important;
+        border: none !important;
+        font-size: 0.8em;
+        text-decoration: none !important;
+        transition: background-color 0.2s ease;
+
+        // The three states run light to dark in the order resting < hover <
+        // active, so the pill the eye lands on hardest is always the one whose
+        // panel is on screen.
+        //
+        // They used to run resting < active < hover, which inverted on contact:
+        // hovering any other pill made it darker than the selected one, so the
+        // pill under the cursor read as the current tab and the actual current
+        // tab read as one of the alternatives. On a slide whose whole job is to
+        // show one region at a time, that is the one thing the row has to get
+        // right.
+        &:hover {
+          background-color: $qmd-primary !important;
+          color: $qmd-on-primary !important;
+        }
+
+        // `[aria-selected="true"]` and not just `.active`.
+        //
+        // Quarto builds a reveal.js tabset with Tabby, not with Bootstrap nav
+        // tabs -- the emitted list is `<ul class="panel-tabset-tabby">` -- and
+        // Tabby marks the current tab by setting `aria-selected` on its anchor.
+        // It never adds an `.active` class to anything. An `.active`-only rule
+        // therefore matched no element on any slide, which is why a pill fell
+        // back to its resting colour the moment the pointer left it: hover was
+        // the only state that had ever been styled.
+        //
+        // `.active` is kept alongside so the row still reads correctly under
+        // every non-reveal Quarto format, which does use it.
+        //
+        // Last in the block, so it wins over `:hover` on equal specificity --
+        // an attribute selector and a pseudo-class weigh the same, so source
+        // order decides. The selected pill holds its appearance when the cursor
+        // crosses it rather than appearing to lift to a different state while
+        // it is already selected.
+        &.active,
+        &.active:hover,
+        &[aria-selected="true"],
+        &[aria-selected="true"]:hover {
+          background-color: qmd-shade($qmd-primary, 15%) !important;
+          color: $qmd-on-primary !important;
+          // Already here -- nothing to click towards.
+          cursor: default;
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Code
+// ---------------------------------------------------------------------------
+.reveal {
+  code {
+    font-size: 70%;
+    background-color: qmd-tint($qmd-primary, 7%);
+    color: $qmd-ink;
+    padding: 4px;
+    border-radius: 6px;
+  }
+
+  div.sourceCode pre code {
+    font-size: 100%;
+    background-color: qmd-tint($qmd-primary, 4%);
+  }
+
+  pre code {
+    font-size: 100%;
+    padding-top: 15px;
+  }
+
+  // A code block scrolls rather than running off the slide, and what it has to
+  // fit inside is the same height a figure gets. reveal's own default is 500px,
+  // measured against nothing in particular.
+  pre.sourceCode code {
+    max-height: $qmd-slide-figure-height;
+  }
+
+  .cell {
+    margin: 8px;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Figures and widgets
+// ---------------------------------------------------------------------------
+// The chunk defaults draw a figure at the full slide width and at
+// $qmd-slide-figure-height, so a figure on a slide of its own binds on width and
+// fills the slide. The cap is for slides that also carry text or a table: a
+// figure whose width is already set and that would overrun the height is a
+// constraint violation, and the browser resolves it by scaling both dimensions
+// -- so the figure shrinks to fit rather than running off the bottom.
+.reveal .slide .cell-output-display img,
+.reveal .slide .quarto-figure img,
+.reveal .slide p > img {
+  max-height: $qmd-slide-figure-height;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.reveal .slide.smaller .cell-output-display img,
+.reveal .slide.smaller .quarto-figure img {
+  max-height: $qmd-slide-figure-height-smaller;
+}
+
+// htmlwidgets carry their own pixel width. One wider than the slide makes
+// reveal.js put the whole slide in a scrolling box, so this caps it as a
+// backstop and the widget sizes itself down instead.
+//
+// The cap is the SAME figure height a static image gets. It used to be a
+// hardcoded 360px, well short of the figure allowance, so an interactive figure
+// was squeezed into two thirds of the space its static equivalent got on an
+// identical slide -- the one number in this file that was not derived from the
+// slide arithmetic everything else is built on.
+//
+// `width: 100%` is a FALLBACK here and must not be !important.
+//
+// It is there because a widget with no width of its own would otherwise collapse
+// to its intrinsic size and sit in the middle of an empty slide. But an
+// !important declaration beats an inline style, so the version that carried one
+// silently overrode every width a deck set: a DataTable handed 1520px was
+// stretched back out to the full slide, and no amount of changing the number in
+// the .qmd made any difference, because the number was never what was being
+// used. A deck that sizes its widget deliberately -- which is what
+// qmd_slide_geometry()'s widget_width and table_width are for -- has to be able
+// to win.
+//
+// max-width KEEPS its !important: that one is a bound, not a preference, and a
+// widget wider than the slide is what puts reveal.js into a scroll container.
+.reveal .html-widget,
+.reveal .plotly {
+  width: 100%;
+  max-width: 100% !important;
+  max-height: $qmd-slide-figure-height !important;
+  margin: 0 auto;
+}
+
+// The inner plotly containers are sized by its own JS, so they are held to a
+// ceiling rather than given a width that would fight it.
+.reveal .plotly .plot-container,
+.reveal .plotly .svg-container {
+  max-width: 100% !important;
+}
+
+.reveal .slide.smaller .html-widget,
+.reveal .slide.smaller .plotly {
+  max-height: $qmd-slide-figure-height-smaller !important;
+}
+
+// A tabset on a slide has to hold ONE height across its panels.
+//
+// Each panel is laid out only when it is first shown, and a plotly widget sizes
+// itself at that moment -- so without a floor the slide visibly resizes as the
+// reader clicks between tabs, and if a panel comes out taller than the slide,
+// reveal.js wraps the whole deck in a scrollbar in the middle of a talk.
+//
+// The floor and the ceiling are the same number on purpose: every panel then
+// occupies exactly the space the tallest one needs, and nothing moves.
+.reveal .slide .panel-tabset {
+  .tab-content {
+    min-height: $qmd-slide-tabset-height;
+  }
+
+  .html-widget,
+  .plotly {
+    max-height: $qmd-slide-tabset-height !important;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deck furniture: the corner logo, the footer line, and the slide counter
+// ---------------------------------------------------------------------------
+//
+// These three are the only things on screen that reveal.js does not scale. It
+// fits the deck to the window by scaling `.slides`, and Quarto puts all three
+// outside `.slides` -- `position: fixed` against the viewport -- so they are
+// drawn at whatever px size the stylesheet gives them, on any display. On a
+// 2560x1440 that is an 18px footer next to body text rendering at about 53px,
+// and all three huddled against the window's corners rather than the slide's.
+//
+// Both halves of that are fixed by doing reveal's arithmetic again. Reveal
+// publishes its own scale factor as `--slide-scale` on the viewport element, and
+// custom properties inherit, so it can be read from here.
+//
+// The gutter is the band of window left over once the slide has been scaled into
+// it. It cannot come out negative: reveal picks the scale as the smaller of the
+// two axis fits, so the scaled slide is always inside the (1 - margin) of the
+// window it is given, and the gutter is at least half the margin. That is what
+// makes the plain subtraction below safe without a max().
+//
+// `* 0.5` and not `/ 2`, which Sass reads as its own division operator.
+.reveal {
+  --qmd-chrome-scale: var(--slide-scale, 1);
+  --qmd-slide-gutter-x: calc((100vw - #{$qmd-slide-width} * var(--qmd-chrome-scale)) * 0.5);
+  --qmd-slide-gutter-y: calc((100vh - #{$qmd-slide-height} * var(--qmd-chrome-scale)) * 0.5);
+}
+
+// Corner logo: bottom right of the SLIDE, not of the window.
+//
+// The height is a slide-unit measurement, so on a display larger than the slide
+// box it is drawn above its own pixel size. That is what the vector marks are
+// for; baylor.png is a 214x40 raster with no larger copy anywhere on disk
+// (inst/assets/logos/README.md), so on a hidpi screen it is being upscaled, and
+// the fix for that is a bigger source asset rather than a smaller logo.
+.reveal .slide-logo {
+  height: calc(#{$qmd-slide-logo-height} * var(--qmd-chrome-scale)) !important;
+  max-height: calc(#{$qmd-slide-logo-height} * var(--qmd-chrome-scale)) !important;
+  max-width: unset !important;
+  top: unset !important;
+  bottom: calc(var(--qmd-slide-gutter-y) + #{$qmd-slide-inset-y} * var(--qmd-chrome-scale)) !important;
+  right: calc(var(--qmd-slide-gutter-x) + #{$qmd-slide-inset-x} * var(--qmd-chrome-scale)) !important;
+}
+
+.reveal .slide-logo img {
+  height: calc(#{$qmd-slide-logo-height} * var(--qmd-chrome-scale)) !important;
+  max-height: calc(#{$qmd-slide-logo-height} * var(--qmd-chrome-scale)) !important;
+  max-width: unset !important;
+}
+
+// Footer. Quarto centres it across the window and sets 18px; the width is right
+// either way, since the slide is centred too, but the size and the height off
+// the bottom both have to scale.
+.reveal .footer {
+  font-size: calc(#{$qmd-slide-footer-size} * var(--qmd-chrome-scale)) !important;
+  bottom: calc(var(--qmd-slide-gutter-y) + #{$qmd-slide-inset-y} * var(--qmd-chrome-scale)) !important;
+}
+
+// Slide counter, top right -- ABOVE the slide rather than on it.
+//
+// Quarto puts it top right whenever a logo is present, on the reasoning that the
+// logo has taken the bottom right. That works while the counter is pinned to the
+// window, out past the slide's edge; pinned to the slide's own top right corner
+// it lands inside the heading bar, which is full width and filled.
+//
+// So it keeps the top right and stays off the slide: right edge in the same
+// column as the logo below it, bottom edge a small gap above the slide's top
+// edge, sitting in the gutter. The gutter is deck background, so the counter has
+// nothing behind it and the heading still gets the slide's whole width.
+//
+// That costs margin, and it is the only thing in the deck that does --
+// qmd_slide_geometry() computes the floor, _extension.yml carries a value above
+// it, and the test suite asserts the two agree. Take the margin below that floor
+// and the counter climbs out of the top of the window; there is no max() here to
+// catch it, because the alternative (pinning to the window's own top edge) puts
+// it out of line with the logo without saying why.
+//
+// `has-logo` is matched as well because that rule is more specific than a bare
+// `.reveal .slide-number` and would otherwise put top and right back at 8px off
+// the window. `bottom` and `left` are unset rather than left to lose a
+// specificity argument, since `position: absolute` honours top and bottom
+// together by stretching.
+.reveal .slide-number,
+.reveal.has-logo .slide-number {
+  font-size: calc(#{$qmd-slide-number-size} * var(--qmd-chrome-scale)) !important;
+  line-height: 1;
+  bottom: unset !important;
+  left: unset !important;
+  top: calc(var(--qmd-slide-gutter-y) - #{$qmd-slide-number-band} * var(--qmd-chrome-scale)) !important;
+  right: calc(var(--qmd-slide-gutter-x) + #{$qmd-slide-inset-x} * var(--qmd-chrome-scale)) !important;
+  // "18 / 46" was breaking after the slash and stacking the total on a second
+  // line. The counter sits in a narrow corner box, and once `.reveal a` above
+  // started carrying horizontal padding there was no longer room for the whole
+  // string -- so it wrapped at the one space it has. nowrap on the box and on
+  // the link both, because the break can happen in either: the box is what
+  // reveal.js sizes, the link is what holds the text.
+  white-space: nowrap;
+}
+
+// The pill's padding is part of the band measured above, so it scales with
+// everything else.
+.reveal .slide-number a {
+  font-size: 100%;
+  border-radius: 12px;
+  padding: calc(#{$qmd-slide-number-pad} * var(--qmd-chrome-scale));
+  color: $qmd-ink-secondary;
+  white-space: nowrap;
+}
+
+.reveal .progress {
+  color: $qmd-primary;
+}
+
+// reveal draws its menu and chalkboard buttons from inlined SVG, where the fill
+// is inside a URL string and the cascade cannot reach it. Every source file
+// carries `fill="rgb(35, 55, 59)"` here -- a slate blue belonging to neither
+// theme, inherited unchanged from the template they were all forked from, and
+// the one colour in the whole set that nobody ever chose.
+.reveal .slide-menu-button .fa-bars::before {
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='#{qmd-svg-color($qmd-primary)}' viewBox='0 0 16 16'><path fill-rule='evenodd' d='M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5z'/></svg>");
+}
+
+.reveal .slide-chalkboard-buttons .fa-easel2::before {
+  padding-bottom: 6px;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='#{qmd-svg-color($qmd-primary)}' viewBox='0 0 16 16'><path fill-rule='evenodd' d='M8 0a.5.5 0 0 1 .447.276L8.81 1h4.69A1.5 1.5 0 0 1 15 2.5V11h.5a.5.5 0 0 1 0 1h-2.86l.845 3.379a.5.5 0 0 1-.97.242L12.11 14H3.89l-.405 1.621a.5.5 0 0 1-.97-.242L3.36 12H.5a.5.5 0 0 1 0-1H1V2.5A1.5 1.5 0 0 1 2.5 1h4.691l.362-.724A.5.5 0 0 1 8 0ZM2 11h12V2.5a.5.5 0 0 0-.5-.5h-11a.5.5 0 0 0-.5.5V11Zm9.61 1H4.39l-.25 1h7.72l-.25-1Z'/></svg>");
+}
+
+.reveal .slide-chalkboard-buttons .fa-brush::before {
+  padding-bottom: 6px;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='#{qmd-svg-color($qmd-primary)}' viewBox='0 0 16 16'><path d='M15.825.12a.5.5 0 0 1 .132.584c-1.53 3.43-4.743 8.17-7.095 10.64a6.067 6.067 0 0 1-2.373 1.534c-.018.227-.06.538-.16.868-.201.659-.667 1.479-1.708 1.74a8.118 8.118 0 0 1-3.078.132 3.659 3.659 0 0 1-.562-.135 1.382 1.382 0 0 1-.466-.247.714.714 0 0 1-.204-.288.622.622 0 0 1 .004-.443c.095-.245.316-.38.461-.452.394-.197.625-.453.867-.826.095-.144.184-.297.287-.472l.117-.198c.151-.255.326-.54.546-.848.528-.739 1.201-.925 1.746-.896.126.007.243.025.348.048.062-.172.142-.38.238-.608.261-.619.658-1.419 1.187-2.069 2.176-2.67 6.18-6.206 9.117-8.104a.5.5 0 0 1 .596.04zM4.705 11.912a1.23 1.23 0 0 0-.419-.1c-.246-.013-.573.05-.879.479-.197.275-.355.532-.5.777l-.105.177c-.106.181-.213.362-.32.528a3.39 3.39 0 0 1-.76.861c.69.112 1.736.111 2.657-.12.559-.139.843-.569.993-1.06a3.122 3.122 0 0 0 .126-.75l-.793-.792zm1.44.026c.12-.04.277-.1.458-.183a5.068 5.068 0 0 0 1.535-1.1c1.9-1.996 4.412-5.57 6.052-8.631-2.59 1.927-5.566 4.66-7.302 6.792-.442.543-.795 1.243-1.042 1.826-.121.288-.214.54-.275.72v.001l.575.575zm-4.973 3.04.007-.005a.031.031 0 0 1-.007.004zm3.582-3.043.002.001h-.002z'/></svg>");
+}

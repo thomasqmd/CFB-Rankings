@@ -4,21 +4,18 @@ subtitle: "4-Pipeline Performance Decomposition (WLD, PD, XWLD, XPD)"
 date: today
 format:
   html:
-    theme: cosmo
     toc: true
     toc-depth: 3
     toc-location: left
     code-fold: true
     code-tools: true
+    embed-resources: true
     css: ../styles/custom.scss
-    self-contained: true
-execute:
-  echo: false
-  warning: false
-  message: false
 ---
 
-```{r setup}
+```{r}
+#| label: setup
+#| include: false
 library(targets)
 library(dplyr)
 library(gt)
@@ -97,8 +94,7 @@ This briefing details the **Week `r season_info$week`, `r season_info$season`** 
 3. **Pipeline 3: XWLD (Expected Discrete):** Post-game win expectancy / expected outcome categories.
 4. **Pipeline 4: XPD (Expected Continuous):** Robust Student-$t$ net EPA differential across offensive plays.
 
-::: {.callout-note}
-### Model Health & 4-Pipeline Convergence Gate
+::: {.callout-note title="Model Health & 4-Pipeline Convergence Gate"}
 - **Pipeline 1 (WLD Ordered Logit):** `r ifelse(diag_wld$passed, "PASSED (R-hat <= 1.01, 0 Divergences)", "ALERT: Check MCMC diagnostics")`
 - **Pipeline 2 (PD Student-t):** `r ifelse(diag_pd$passed, "PASSED (R-hat <= 1.01, 0 Divergences)", "ALERT: Check MCMC diagnostics")`
 - **Pipeline 3 (XWLD Ordered Logit):** `r ifelse(diag_xwld$passed, "PASSED (R-hat <= 1.01, 0 Divergences)", "ALERT: Check MCMC diagnostics")`
@@ -109,9 +105,12 @@ This briefing details the **Week `r season_info$week`, `r season_info$season`** 
 
 ## Top 25 Retrospective Rankings
 
-The table below reports the Top 25 FBS programs ranked by the **4-Pipeline Composite Index** (fusing Actual vs. Expected and Discrete vs. Continuous metrics), alongside their Sonneborn–Berger schedule equity and individual pipeline ranks:
+The table below reports the Top 25 FBS programs ranked by the **4-Pipeline Composite Index** (fusing Actual vs. Expected and Discrete vs. Continuous metrics), alongside their Sonneborn–Berger schedule equity and individual pipeline ranks (see @tbl-top25):
 
-```{r top25-table}
+```{r}
+#| label: tbl-top25
+#| tbl-cap: "FBS Top 25: 4-Pipeline Performance Matrix"
+#| echo: false
 top25 <- composite |>
   dplyr::filter(subdivision_id == 1L) |>
   dplyr::slice(1:25) |>
@@ -137,7 +136,7 @@ gt::gt(top25) |>
   gtExtras::gt_theme_538() |>
   gt::data_color(
     columns = `Composite Index`,
-    palette = c("#E8ECFB", "#4477AA")
+    palette = c("#eef1f4", "#3a6ea5")
   ) |>
   gt::fmt_number(
     columns = c(`SB Score`, `Buchholz SOS`),
@@ -153,12 +152,19 @@ gt::gt(top25) |>
 
 ## AP Poll Divergence & Resume Outliers
 
-By contrasting the Bayesian retrospective index with traditional media consensus (AP Top 25), we identify teams whose on-field resume deviates from public perception:
+By contrasting the Bayesian retrospective index with traditional media consensus (AP Top 25), we identify teams whose on-field resume deviates from public perception (@fig-ap-divergence):
 
-```{r divergence-grid, fig.width=9, fig.height=4}
+```{r}
+#| label: fig-ap-divergence
+#| fig-cap: "Teams with the largest positive rank differential (Bayes Rank > AP Rank)"
+#| fig-alt: "Horizontal bar chart displaying rank differential relative to AP Poll"
+#| fig-width: 9
+#| fig-height: 4.5
+#| fig-align: center
+#| echo: false
 if (!is.null(benchmark$most_underrated) && nrow(benchmark$most_underrated) > 0) {
   p1 <- ggplot(benchmark$most_underrated, aes(x = reorder(team, ap_delta), y = ap_delta)) +
-    geom_col(fill = "#228833", width = 0.6) +
+    geom_col(fill = "#0f9a7d", width = 0.6) +
     coord_flip() +
     theme_minimal() +
     labs(

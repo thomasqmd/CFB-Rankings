@@ -1,0 +1,121 @@
+// Deriving a colour rather than typing one.
+//
+// This is the partial that makes the "a value is typed once" rule survive
+// contact with real stylesheets. Every source this package replaces needed
+// colours that are not in the palette -- a tint behind a definition block, a
+// slightly darker link, a fill inside an inlined SVG -- and every one of them
+// solved it by writing another hex. baylor_theme/custom.scss is the clearest
+// case: it declares a `$baylor_green` variable in its defaults and then
+// hard-codes a DIFFERENT green directly into `.reveal h2` two screens further
+// down. The two never matched, and nothing in that project could say so.
+//
+// darken() and lighten() are deliberately absent. Besides being deprecated,
+// they move a colour towards black or white rather than towards anything this
+// theme knows about, so a "slightly lighter" surface stops matching the page as
+// soon as the page changes.
+//
+// Anything that must clear a CONTRAST THRESHOLD is not derived here. Sass can
+// mix two colours but cannot tell you whether the result is still legible, so
+// those colours come from R/brand.R, where the WCAG maths is tested, and
+// arrive as $qmd-accent-ink, $qmd-on-primary and friends.
+
+/*-- scss:uses --*/
+@use "sass:color";
+@use "sass:map";
+@use "sass:string";
+
+/*-- scss:functions --*/
+
+// A wash of $color over the page. $amount is how much COLOUR there is, so
+// qmd-tint($qmd-primary, 8%) reads as "8% primary" rather than as mix()'s
+// backwards "92% of the first argument".
+@function qmd-tint($color, $amount) {
+  @return color.mix($color, $qmd-background, $amount);
+}
+
+// The same idea towards the theme's ink. Used for hover and active states:
+// moving towards ink on a light page RAISES contrast, so a state change cannot
+// cost legibility. Every source stylesheet lightens on hover, which lowers it
+// at exactly the moment someone is pointing at the link.
+@function qmd-shade($color, $amount) {
+  @return color.mix($qmd-ink, $color, $amount);
+}
+
+// A colour, encoded for use inside a `data:` URI.
+//
+// reveal.js draws its menu and chalkboard buttons from inlined SVG, so the
+// fill is part of a URL string rather than a CSS property and cannot be themed
+// by the cascade.
+@function qmd-svg-color($color) {
+  @return "%23" + string.to-lower-case(string.slice(ie-hex-str($color), 4));
+}
+
+/*-- scss:mixins --*/
+
+// Table styling has to reach two different document structures -- `.reveal`
+// wraps a deck, `main` wraps a report -- and reveal.js's own rules outrank an
+// unscoped `table th`. Rather than write the block twice or reach for
+// !important, _tables.scss emits it once per scope from these.
+@mixin qmd-table-base {
+  // Columns sized to their contents, headers kept on one line. Every cell in
+  // these tables is a short label or a formatted number, so nothing needs to
+  // wrap -- and a header that wraps steals vertical space from the rows.
+  table-layout: auto;
+  width: auto;
+  margin: 0.6em auto;
+  border-collapse: collapse;
+}
+
+// The base density, before any of the classes in _qmd-tables.scss.
+//
+// This was briefly raised to airrosti's 0.6em/0.95em along with the density
+// scale, and that was a mistake worth recording: padding is in `em`, so the row
+// height it buys depends on the font size the table is set at, and airrosti sets
+// ITS deck tables down to roughly two thirds of body size from R. This package
+// sets no table font size at all, so 0.6em there landed against full 36px slide
+// type -- 21.6px of padding a side, and a row nearly 94px tall. Eight rows and a
+// header no longer fit the slide.
+//
+// The number is unchanged from the merge, then, and the arithmetic in
+// _qmd-tables.scss is what it is against: a table with rows to fit reaches for a
+// density class AND sets its own font size, the way the source decks do.
+//
+// white-space is NOT set here. A deck table wants nowrap and a report table
+// wants to wrap, so _qmd-tables.scss decides it per scope; word-break stays
+// because it is the same answer in both.
+@mixin qmd-table-cells {
+  padding: 0.45em 0.85em;
+  line-height: 1.4;
+  word-break: normal;
+}
+
+// The header rule in the theme's primary, so tables sit in the same palette as
+// the headings above them.
+@mixin qmd-table-head {
+  border-bottom: 2px solid $qmd-primary;
+  color: $qmd-ink;
+  font-weight: $qmd-heading-weight;
+  white-space: nowrap;
+}
+
+// Hairlines between rows rather than a box around every cell: the rule exists
+// to let the eye track across a row, and a full grid competes with the data.
+//
+// $qmd-rule-axis and not $qmd-rule-grid. The grid rule is derived at the
+// lightest step in the set -- it is for gridlines BEHIND a plot, where it has to
+// disappear -- and a row separator read from the back of a room is a different
+// job. The axis rule is the next step up and is still well short of anything
+// that competes with the numbers.
+@mixin qmd-table-rows {
+  border-top: 1px solid $qmd-rule-axis;
+  border-bottom: none;
+}
+
+// A visible focus ring that does not depend on the browser default, which
+// Bootstrap and reveal.js both suppress in places. Two colours so the ring
+// stays visible against both the page and a primary-filled surface.
+@mixin qmd-focus-ring {
+  outline: 3px solid $qmd-primary;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px $qmd-background;
+}

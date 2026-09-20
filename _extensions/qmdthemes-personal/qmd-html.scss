@@ -1,0 +1,488 @@
+// Report chrome.
+//
+// Merged from Wealth/quarto-assets/theme.scss (tabset nav, links, DataTables
+// and plotly responsiveness, narrow-viewport heading scale),
+// Website/styles.css (viewport safeguards, responsive media, code and maths,
+// listing and grid behaviour) and PPP/quarto-assets/theme.scss (the Bootstrap
+// variables).
+//
+// Not carried across: `$selection-bg: ligthen($link-color, 25%)` from
+// PPP/theme.scss. The function name is misspelt, so the declaration has never
+// compiled and the property has never been set -- there is no behaviour here to
+// preserve, only a line that looks like behaviour.
+
+/*-- scss:defaults --*/
+
+// Where the @font-face rules in _qmd-typography.scss look for the bundled
+// files. Quarto resolves a theme file's url() against the OUTPUT, and for html
+// the compiled stylesheet is inlined into a document sitting next to
+// _extensions/, so the extension directory is reachable directly. revealjs puts
+// its CSS five levels down and needs a prefix -- see qmd-revealjs.scss.
+$qmd-font-path: "#{$qmd-ext-dir}/fonts" !default;
+
+// Bootstrap's variables, pointed at the theme. Everything Quarto styles through
+// Bootstrap -- buttons, callouts, the navbar, code blocks -- follows from these
+// without needing a rule of its own further down.
+$body-bg: $qmd-background !default;
+$body-color: $qmd-ink !default;
+$primary: $qmd-primary !default;
+$secondary: $qmd-secondary !default;
+$border-color: $qmd-rule-grid !default;
+
+$link-color: $qmd-link !default;
+$link-hover-color: $qmd-link !default;
+$link-decoration: underline !default;
+
+$toc-color: $qmd-primary !default;
+$toc-active-border: $qmd-primary !default;
+
+// Quarto tints code blocks by shifting the body background by this alpha. The
+// negative value darkens; PPP/theme.scss's -0.7 is retained.
+$code-block-bg-alpha: -0.7 !default;
+$code-color: $qmd-ink !default;
+
+$blockquote-border-color: $qmd-accent-rule !default;
+
+// The brand mark above the title on a standalone page.
+//
+// 2.5rem is 40px, which is baylor.png's native height -- all 20 copies found on
+// disk are byte-identical 214x40 and no vector exists, so anything taller is an
+// upscale that reads soft on a hidpi screen (plan.md section 4.5). The personal
+// mark is an SVG and would take any height, but both themes use the same figure
+// so the two cannot drift.
+//
+// This is a PAGE height and stands on its own; the reveal corner logo is a
+// slide-unit measurement and comes from $qmd-slide-logo-height instead. The two
+// were the same number while a slide was measured in rem, and are not any more.
+//
+// A document whose mark is a different shape overrides this -- a lockup three
+// times the aspect ratio of the university wordmark sets its third line at
+// about 5px here, and wants roughly 3.5rem. That is what the !default is for.
+$qmd-brand-header-height: 2.5rem !default;
+
+/*-- scss:rules --*/
+
+// ---------------------------------------------------------------------------
+// The standalone-page brand header
+// ---------------------------------------------------------------------------
+// brand-header.html puts the mark above the title on a page that has no navbar
+// to carry it -- which is every single-document render, as opposed to a website
+// where Quarto's own navbar does the job.
+//
+// The sizing used to live in a <style> block inside brand-header.html itself.
+// It is here instead so the two themes cannot drift apart on it, and so it is
+// one overridable variable: baylor.png is 214x40 and every copy on disk is
+// byte-identical, so the default caps it at a height where 214px still reads
+// crisply rather than upscaled into softness.
+.qmd-brand-header {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 1.5rem 0;
+
+  // !important is load-bearing, not decoration. The responsive safeguard further
+  // down carries `main img { height: auto !important }` so a figure can never
+  // blow out the column, and the header sits inside <main> -- so without a
+  // matching !important here the mark renders at the SVG's intrinsic size, which
+  // for TRlogo.svg is enormous. With both marked, specificity decides and
+  // .qmd-brand-header img (class + element) beats main img (two elements).
+  img {
+    height: $qmd-brand-header-height !important;
+    width: auto !important;
+    max-width: 100%;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tabsets
+// ---------------------------------------------------------------------------
+// Pills, matching the deck.
+//
+// reveal.js styles its own tabset navigation as rounded pills and html did not:
+// it carried Wealth/theme.scss's flat top-edge rule, which is a perfectly good
+// design and the wrong one HERE, because the two formats then disagree about
+// what a tabset looks like. The package's whole claim is that html and revealjs
+// share a vocabulary, so the two are reconciled rather than left to differ --
+// and the pill is the one that survives being the odd element on a page of
+// prose.
+//
+// The active pill is FILLED, and its text colour is $qmd-on-primary rather than
+// a guess: that token is computed in R against the actual primary, which is what
+// makes this legible for Baylor green and for the personal navy without either
+// being special-cased.
+//
+// The focus suppression in the original is not carried. It cleared both the
+// outline and the box-shadow with !important on :focus-visible, which leaves a
+// keyboard user unable to see which tab they are on; _qmd-a11y.scss puts the
+// ring back.
+.nav-tabs {
+  border-bottom: 1px solid $qmd-rule-grid;
+  gap: 0.35rem;
+  padding-bottom: 0.4rem;
+
+  .nav-item .nav-link {
+    color: $qmd-ink-secondary;
+    background-color: transparent;
+    font-family: $qmd-font-headings;
+    font-size: 0.95em;
+    line-height: 1.3;
+    padding: 0.35em 0.95em;
+    border: 1px solid transparent;
+    // A pill rather than a rounded rectangle: the radius is larger than the
+    // element can use, so it resolves to a full semicircle at each end and
+    // stays one whatever the label length or font size.
+    border-radius: 999px;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease;
+
+    &:hover {
+      color: $qmd-primary;
+      background-color: qmd-tint($qmd-primary, 10%);
+      border-color: qmd-tint($qmd-primary, 25%);
+    }
+
+    &.active {
+      color: $qmd-on-primary;
+      background-color: $qmd-primary;
+      border-color: $qmd-primary;
+      font-weight: $qmd-heading-weight;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Table of contents (always present on right)
+// ---------------------------------------------------------------------------
+// The sidebar has to STICK, not just exist. Forcing it visible was half the
+// job: it scrolled away with the body, so on any document longer than a screen
+// the TOC was gone exactly when it became useful.
+//
+// position: sticky needs three things together, and missing any one of them
+// fails silently -- a top offset to stick at, a max-height so a long TOC cannot
+// grow past the viewport and take the stickiness with it, and its own
+// overflow-y so it scrolls internally instead of pushing the page.
+#quarto-margin-sidebar {
+  @media (min-width: 992px) {
+    display: block !important;
+    visibility: visible !important;
+    position: sticky;
+    top: 0;
+    // Quarto's article layout is a CSS grid and a grid item is stretched to the
+    // full height of its row by default -- which leaves a sticky item no room to
+    // move inside its own area, so it looks like sticky is being ignored.
+    // Aligning to the start lets it be shorter than the track.
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    // Room for the scrollbar the overflow can produce, so the entries do not
+    // shift sideways when one appears.
+    scrollbar-gutter: stable;
+    padding-top: 1rem;
+  }
+}
+
+#TOC,
+.sidebar nav[role="doc-toc"],
+.margin-sidebar nav[role="doc-toc"] {
+  display: block;
+  opacity: 1;
+
+  h2#toc-title {
+    font-family: $qmd-font-headings;
+    font-size: 0.9em;
+    font-weight: $qmd-heading-weight;
+    color: $qmd-primary;
+    margin-bottom: 0.5em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid $qmd-rule-grid;
+    padding-bottom: 0.25em;
+  }
+
+  ul {
+    padding-left: 0.75em;
+    list-style: none;
+  }
+
+  li {
+    margin-bottom: 0.25em;
+  }
+
+  a {
+    color: $qmd-ink-secondary;
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    padding-left: 0.4em;
+    transition: color 0.15s ease, border-left-color 0.15s ease;
+
+    &:hover {
+      color: $qmd-primary;
+      background-color: transparent;
+      text-decoration: underline;
+    }
+
+    &.active {
+      color: $qmd-primary;
+      font-weight: $qmd-heading-weight;
+      border-left-color: $qmd-primary;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Headings
+// ---------------------------------------------------------------------------
+// A rule under the top-level headings, which is what gives a long report its
+// visible section structure when scrolling past.
+h1, .title {
+  font-size: $qmd-h1-size;
+}
+
+h1:not(.title) {
+  padding-bottom: 0.2em;
+  border-bottom: 2px solid $qmd-accent-rule;
+}
+
+h2 {
+  font-size: $qmd-h2-size;
+  padding-bottom: 0.15em;
+  border-bottom: 1px solid $qmd-rule-grid;
+}
+
+h3 { font-size: $qmd-h3-size; }
+h4 { font-size: $qmd-h4-size; }
+h5 { font-size: $qmd-h5-size; }
+h6 { font-size: $qmd-h6-size; }
+
+// ---------------------------------------------------------------------------
+// Callouts
+// ---------------------------------------------------------------------------
+// Quarto colours callouts from its own fixed palette, which has no relation to
+// either theme. The note callout is the general-purpose one and is brought into
+// the theme; the semantic ones (warning, important, caution) keep Quarto's
+// colours on purpose, because those colours are the meaning.
+.callout.callout-style-default {
+  border-left-width: 4px;
+  border-radius: 6px;
+}
+
+.callout-note {
+  border-left-color: $qmd-primary !important;
+
+  .callout-icon::before { background-color: $qmd-primary; }
+
+  &.callout-style-default > .callout-header {
+    background-color: qmd-tint($qmd-primary, 8%);
+    color: $qmd-ink;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Figures and code
+// ---------------------------------------------------------------------------
+figcaption,
+.figure-caption,
+.quarto-figure figcaption {
+  font-size: 0.85em;
+  color: $qmd-ink-secondary;
+  text-align: left;
+}
+
+// The vertical rule is what tells a long code block apart from its output at a
+// glance, without a fill that would fight the syntax highlighting.
+div.sourceCode {
+  border-left: 3px solid qmd-tint($qmd-primary, 30%);
+  border-radius: 4px;
+}
+
+// ---------------------------------------------------------------------------
+// Viewport safeguards
+// ---------------------------------------------------------------------------
+// From Website/styles.css. A single wide element -- a table, a plotly widget, a
+// long equation -- otherwise makes the entire page scroll sideways, which on a
+// phone means every line of body text is clipped.
+html, body {
+  max-width: 100vw;
+  // `clip`, not `hidden`, and the difference is the whole sticky TOC.
+  //
+  // overflow-x: hidden makes the element a SCROLL CONTAINER, and it does so in
+  // BOTH axes -- the other axis computes to `auto`, not `visible`, because the
+  // spec does not allow one axis to be visible while the other is hidden. Every
+  // position: sticky descendant then measures itself against body instead of
+  // the viewport, and since body is exactly as tall as its content it never
+  // scrolls, so sticky never engages and the sidebar scrolls away with the page.
+  //
+  // overflow-x: clip crops identically and does NOT create a scroll container,
+  // so the safeguard from Website/styles.css survives and the TOC still sticks.
+  overflow-x: clip;
+}
+
+*, ::before, ::after {
+  box-sizing: border-box;
+}
+
+// Wide content scrolls INSIDE its own container instead.
+.cell-output-display,
+.table-responsive,
+.quarto-table,
+main table:not(.info-table table) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1rem;
+}
+
+.Reactable,
+.rt-table {
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+img, svg, video, canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+.cell-output-display img,
+.cell-output-display svg,
+.quarto-figure img,
+main img {
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+.html-widget,
+.plotly,
+.js-plotly-plot,
+.plot-container,
+.svg-container {
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+pre,
+pre.sourceCode,
+.cell-output pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+  word-wrap: normal;
+  -webkit-overflow-scrolling: touch;
+}
+
+// Inline code may break mid-token to avoid overflowing; a code BLOCK may not,
+// because a broken line there is a different program.
+code { word-break: break-word; }
+pre code { word-break: normal; }
+
+// Display maths is a single unbreakable box and is the most common cause of a
+// sideways page.
+.MathJax_Display,
+.math.display,
+.mjx-chtml[display="true"],
+.mjx-container[jax="CHTML"][display="true"] {
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  display: block !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+// ---------------------------------------------------------------------------
+// Narrow viewports
+// ---------------------------------------------------------------------------
+@media (max-width: 991px) {
+  #quarto-content {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    max-width: 100% !important;
+  }
+
+  // The margin column has nowhere to go at this width and would otherwise
+  // squeeze the body text to a few words a line.
+  #quarto-margin-sidebar {
+    display: none !important;
+  }
+
+  main.content {
+    max-width: 100% !important;
+  }
+
+  .panel-tabset .nav-tabs { flex-wrap: wrap !important; }
+
+  .panel-tabset .nav-link {
+    padding: 0.4rem 0.6rem !important;
+    font-size: 0.9rem !important;
+  }
+}
+
+@media (max-width: 768px) {
+  body {
+    font-size: 0.95rem;
+  }
+
+  // The heading scale compresses rather than each level dropping
+  // independently, so the hierarchy still reads.
+  h1, .title { font-size: 1.6rem !important; }
+  h2 { font-size: 1.35rem !important; }
+  h3 { font-size: 1.15rem !important; }
+  h4 { font-size: 1.05rem !important; }
+
+  .dataTables_wrapper,
+  .knitr-table-wrapper,
+  div.cell-output-display {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table.dataTable,
+  table.table {
+    width: 100% !important;
+    font-size: 0.85rem !important;
+  }
+
+  .html-widget, .plotly, .js-plotly-plot, .svg-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  .def, .callout {
+    width: 100% !important;
+    padding: 10px 12px !important;
+    margin: 0.8rem 0 !important;
+  }
+
+  // Listings stack rather than sitting side by side.
+  .quarto-grid-item {
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  .quarto-grid-item .card-img-top {
+    height: auto !important;
+    max-height: 180px !important;
+    object-fit: cover;
+  }
+
+  .quarto-post { flex-direction: column !important; }
+
+  .quarto-post .thumbnail {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-bottom: 0.75rem;
+  }
+}
+
+@media (max-width: 576px) {
+  h1, .title { font-size: 1.4rem !important; }
+  h2 { font-size: 1.2rem !important; }
+  h3 { font-size: 1.1rem !important; }
+  .navbar-brand { font-size: 1.1rem !important; }
+}
