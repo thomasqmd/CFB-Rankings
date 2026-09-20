@@ -1,17 +1,19 @@
 ---
 title: "CFB Bayesian Ranking Engine"
 subtitle: "4-Pipeline Performance Matrix: Actual vs Expected × Discrete vs Margin"
-author: "Antigravity Quantitative Analytics"
+author: "Thomas Reinke"
 date: today
 format:
-  revealjs:
+  qmdthemes-personal-revealjs:
+    logo: ../../logos/TRlogo.svg
     slide-number: c/t
     preview-links: auto
     transition: fade
-    chalkboard: true
-    embed-resources: true
-    width: 1600
-    height: 900
+    embed-resources: false
+---
+
+# Theoretical Motivation
+
 ---
 
 ## Executive Overview
@@ -38,8 +40,8 @@ format:
 
 | Granularity \ Domain | **Actual (Scoreboard Realized)** | **Expected (Play EPA Dominance)** |
 | :--- | :--- | :--- |
-| **Discrete (Game Resumes)** | **Pipeline 1: WLD (θ)**<br>Ordered Logit $\{L, OTL, OTW, W\}$ | **Pipeline 3: XWLD (ω)**<br>Ordered Logit on Post-Game Win Expectancy |
-| **Continuous (Margins)** | **Pipeline 2: PD (δ)**<br>Robust Student-$t$ on Point Differential | **Pipeline 4: XPD (α)**<br>Robust Student-$t$ on Net Play EPA |
+| **Discrete (Game Resumes)** | **Pipeline 1: WLD ($\theta$)**<br>Ordered Logit $\{L, OTL, OTW, W\}$ | **Pipeline 3: XWLD ($\omega$)**<br>Ordered Logit on Post-Game Win Expectancy |
+| **Continuous (Margins)** | **Pipeline 2: PD ($\delta$)**<br>Robust Student-$t$ on Point Differential | **Pipeline 4: XPD ($\alpha$)**<br>Robust Student-$t$ on Net Play EPA |
 
 $$\text{Composite Index} = w_{\text{wld}} \Phi(Z_\theta) + w_{\text{pd}} \Phi(Z_\delta) + w_{\text{xwld}} \Phi(Z_\omega) + w_{\text{xpd}} \Phi(Z_\alpha)$$
 
@@ -54,6 +56,10 @@ $$\text{Composite Index} = w_{\text{wld}} \Phi(Z_\theta) + w_{\text{pd}} \Phi(Z_
 * **Failure of flat priors:**
   * Top FCS teams can inflate via internal transitive cycles without proper regularization.
 * **Our Solution:** Hierarchical Bayesian shrinkage.
+
+---
+
+# The 4-Pipeline Performance Matrix
 
 ---
 
@@ -109,6 +115,10 @@ $$\text{XPD}_k \sim \text{Student-}t\left(\nu_{\text{xpd}}, \, \alpha_{\text{hom
 
 ---
 
+# Sparse Graph Shrinkage & Schedule Equity
+
+---
+
 ## Hierarchical FCS Regularization
 
 To connect the sparse graph without arbitrary penalty downweighting:
@@ -154,6 +164,10 @@ Recent theoretical advances formalize non-asymptotic behavior on sparse graphs:
 * Establishes convergence rates under irregular comparison topologies ($p \ll n$).
 * Verifies that hierarchical Gaussian shrinkage enforces spectral gap stability.
 * Confirms uniform consistency over dynamic ranges when anchor sets are identifiability-constrained.
+
+---
+
+# Computational Architecture & Quality Control
 
 ---
 

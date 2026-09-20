@@ -8,6 +8,13 @@
 library(targets)
 library(tarchetypes)
 
+# Ensure ~/.Renviron is loaded and sanitize any surrounding quotes
+if (file.exists("~/.Renviron")) readRenviron("~/.Renviron")
+if (file.exists(".Renviron")) readRenviron(".Renviron")
+if (nzchar(Sys.getenv("CFBD_API_KEY", ""))) {
+  Sys.setenv(CFBD_API_KEY = gsub('^["\']|["\']$', '', Sys.getenv("CFBD_API_KEY")))
+}
+
 # Set target pipeline options
 tar_option_set(
   packages = c(
@@ -32,11 +39,10 @@ tar_source("R")
 
 # Pipeline Target Graph Definition
 list(
-  # 1. Season & Week tracker
+  # 1. Season & Week tracker (runs once, caches result, skips on subsequent runs)
   tar_target(
     name = current_season_info,
-    command = get_latest_cfb_week(),
-    cue = tar_cue(mode = "always")
+    command = get_latest_cfb_week(season = 2024)
   ),
   
   # 2. Sync analytical store (DuckDB)
@@ -220,18 +226,21 @@ list(
   # 15. Quarto Weekly Briefing Report
   tar_quarto(
     name = render_weekly_briefing,
-    path = "docs/reports/weekly_briefing.qmd"
+    path = "docs/reports/weekly_briefing.qmd",
+    quiet = FALSE
   ),
   
   # 16. Quarto Season Retrospective Report
   tar_quarto(
     name = render_season_retro,
-    path = "docs/reports/season_retro.qmd"
+    path = "docs/reports/season_retro.qmd",
+    quiet = FALSE
   ),
   
   # 17. Revealjs Methodology Presentation
   tar_quarto(
     name = render_methodology_presentation,
-    path = "docs/presentation/methodology.qmd"
+    path = "docs/presentation/methodology.qmd",
+    quiet = FALSE
   )
 )

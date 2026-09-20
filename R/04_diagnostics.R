@@ -22,9 +22,17 @@ evaluate_mcmc_health <- function(fit, model_name = "Model", strict_halt = FALSE)
   ebfmi_values <- numeric(0)
   
   if (inherits(fit, "CmdStanMCMC")) {
-    sampler_diag <- fit$sampler_diagnostics()
-    num_divergences <- sum(sampler_diag[, , "divergent__"])
-    ebfmi_values <- fit$ebfmi()
+    diag_summary <- tryCatch(fit$diagnostic_summary(quiet = TRUE), error = function(e) NULL)
+    if (!is.null(diag_summary)) {
+      num_divergences <- sum(diag_summary$num_divergent, na.rm = TRUE)
+      ebfmi_values <- diag_summary$ebfmi
+    } else {
+      sampler_diag <- tryCatch(fit$sampler_diagnostics(), error = function(e) NULL)
+      if (!is.null(sampler_diag) && "divergent__" %in% dimnames(sampler_diag)[[3]]) {
+        num_divergences <- sum(sampler_diag[, , "divergent__"], na.rm = TRUE)
+      }
+      ebfmi_values <- numeric(0)
+    }
   } else if (inherits(fit, "stanfit")) {
     sampler_params <- rstan::get_sampler_params(fit, inc_warmup = FALSE)
     num_divergences <- sum(sapply(sampler_params, function(x) sum(x[, "divergent__"])))
@@ -38,7 +46,7 @@ evaluate_mcmc_health <- function(fit, model_name = "Model", strict_halt = FALSE)
   }
   
   # 2. Summarize posterior draws for R-hat and ESS
-  draws <- posterior::as_draws(fit)
+  draws <- tryCatch(fit$draws(), error = function(e) posterior::as_draws(fit))
   
   # Exclude log_lik and replicate draws to focus diagnostics on core structural parameters
   param_summary <- posterior::summarise_draws(
@@ -135,7 +143,8 @@ run_prior_sensitivity_sweep <- function(stan_data,
   
   # Extract baseline ratings (using variational / fast sampling for sweep efficiency)
   get_team_ratings <- function(data_mod) {
-    fit <- mod$variational(data = data_mod, seed = 123, iter = 4000, algorithm = "meanfield", show_messages = FALSE)
+    clean_data <- data_mod[names(data_mod) != "season"]
+    fit <- mod$variational(data = clean_data, seed = 123, iter = 4000, algorithm = "meanfield", show_messages = FALSE)
     draws <- posterior::as_draws_df(fit)
     param_cols <- grep(paste0("^", param_name, "\\["), names(draws), value = TRUE)
     medians <- sapply(param_cols, function(col) median(draws[[col]], na.rm = TRUE))

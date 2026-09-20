@@ -154,8 +154,19 @@ build_xpd_dataset <- function(con, season, team_lookup, filter_garbage_time = TR
   raw_pbp <- DBI::dbGetQuery(con, query)
   
   if (nrow(raw_pbp) == 0) {
-    message("Warning: No valid PBP EPA rows found. Returning empty XPD table.")
-    return(tibble::tibble())
+    message(sprintf("Warning: No valid PBP EPA rows found for season %d. Returning empty XPD table.", season))
+    return(tibble::tibble(
+      game_id = character(0),
+      home_team = character(0),
+      away_team = character(0),
+      neutral_site = integer(0),
+      home_epa_total = numeric(0),
+      away_epa_total = numeric(0),
+      home_net_epa = numeric(0),
+      total_plays = integer(0),
+      home_id = integer(0),
+      away_id = integer(0)
+    ))
   }
   
   # Apply garbage-time filter if requested (plays in 2nd half with margin > threshold)
@@ -167,10 +178,15 @@ build_xpd_dataset <- function(con, season, team_lookup, filter_garbage_time = TR
   
   # Aggregate net EPA per game
   game_xpd <- filtered_pbp |>
+    dplyr::mutate(
+      pos_clean = tolower(trimws(posteam)),
+      home_clean = tolower(trimws(home_team)),
+      away_clean = tolower(trimws(away_team))
+    ) |>
     dplyr::group_by(game_id, home_team, away_team, neutral_site) |>
     dplyr::summarize(
-      home_epa_total = sum(epa[posteam == home_team], na.rm = TRUE),
-      away_epa_total = sum(epa[posteam == away_team], na.rm = TRUE),
+      home_epa_total = sum(epa[pos_clean == home_clean], na.rm = TRUE),
+      away_epa_total = sum(epa[pos_clean == away_clean], na.rm = TRUE),
       home_net_epa = home_epa_total - away_epa_total,
       total_plays = n(),
       .groups = "drop"
@@ -196,7 +212,20 @@ build_xpd_dataset <- function(con, season, team_lookup, filter_garbage_time = TR
 #' @return Cleaned tibble of expected discrete game outcomes
 build_xwld_dataset <- function(xpd_df, team_lookup) {
   if (nrow(xpd_df) == 0) {
-    return(tibble::tibble())
+    return(tibble::tibble(
+      game_id = character(0),
+      home_team = character(0),
+      away_team = character(0),
+      neutral_site = integer(0),
+      home_epa_total = numeric(0),
+      away_epa_total = numeric(0),
+      home_net_epa = numeric(0),
+      total_plays = integer(0),
+      home_id = integer(0),
+      away_id = integer(0),
+      pgwe = numeric(0),
+      outcome = integer(0)
+    ))
   }
   
   # Calculate post-game win expectancy (PGWE) from net EPA:
@@ -235,16 +264,24 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   xpd_df <- build_xpd_dataset(con, season, team_lookup, filter_garbage_time = filter_garbage_time)
   xwld_df <- build_xwld_dataset(xpd_df, team_lookup)
   
+  # Validate that modeling datasets contain games and plays before constructing Stan inputs
+  if (nrow(wld_df) == 0) {
+    stop(sprintf("Cannot construct Stan datasets: 0 completed games found for season %d. Ensure the season has completed games.", season))
+  }
+  if (nrow(xpd_df) == 0) {
+    stop(sprintf("Cannot construct Stan datasets: 0 play-by-play EPA records found for season %d in DuckDB. Ensure DuckDB has synced PBP data for this season.", season))
+  }
+  
   # 1. Stan data for Pipeline 1: WLD (Ordered Logit Actual Outcomes)
   stan_data_wld <- list(
     season = as.integer(season),
-    N_games = nrow(wld_df),
-    N_teams = nrow(team_lookup),
-    home_team = wld_df$home_id,
-    away_team = wld_df$away_id,
-    neutral_site = wld_df$neutral_site,
-    outcome = wld_df$outcome,
-    team_subdivision = team_lookup$subdivision_id,
+    N_games = as.integer(nrow(wld_df)),
+    N_teams = as.integer(nrow(team_lookup)),
+    home_team = as.integer(wld_df$home_id),
+    away_team = as.integer(wld_df$away_id),
+    neutral_site = as.integer(wld_df$neutral_site),
+    outcome = as.integer(wld_df$outcome),
+    team_subdivision = as.integer(team_lookup$subdivision_id),
     prior_mu_fcs_mean = -1.5,
     prior_mu_fcs_sd = 0.5,
     prior_sigma_rate = 1.0,
@@ -255,13 +292,13 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   # 2. Stan data for Pipeline 2: PD (Robust Student-t Actual Point Differential)
   stan_data_pd <- list(
     season = as.integer(season),
-    N_games = nrow(pd_df),
-    N_teams = nrow(team_lookup),
-    home_team = pd_df$home_id,
-    away_team = pd_df$away_id,
-    neutral_site = pd_df$neutral_site,
+    N_games = as.integer(nrow(pd_df)),
+    N_teams = as.integer(nrow(team_lookup)),
+    home_team = as.integer(pd_df$home_id),
+    away_team = as.integer(pd_df$away_id),
+    neutral_site = as.integer(pd_df$neutral_site),
     pd = as.numeric(pd_df$point_diff),
-    team_subdivision = team_lookup$subdivision_id,
+    team_subdivision = as.integer(team_lookup$subdivision_id),
     prior_xi_fcs_mean = -24.0,
     prior_xi_fcs_sd = 3.0,
     prior_omega_rate = 0.1,
@@ -272,13 +309,13 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   # 3. Stan data for Pipeline 3: XWLD (Ordered Logit Expected Outcomes)
   stan_data_xwld <- list(
     season = as.integer(season),
-    N_games = nrow(xwld_df),
-    N_teams = nrow(team_lookup),
-    home_team = xwld_df$home_id,
-    away_team = xwld_df$away_id,
-    neutral_site = xwld_df$neutral_site,
-    outcome = xwld_df$outcome,
-    team_subdivision = team_lookup$subdivision_id,
+    N_games = as.integer(nrow(xwld_df)),
+    N_teams = as.integer(nrow(team_lookup)),
+    home_team = as.integer(xwld_df$home_id),
+    away_team = as.integer(xwld_df$away_id),
+    neutral_site = as.integer(xwld_df$neutral_site),
+    outcome = as.integer(xwld_df$outcome),
+    team_subdivision = as.integer(team_lookup$subdivision_id),
     prior_mu_fcs_mean = -1.5,
     prior_mu_fcs_sd = 0.5,
     prior_sigma_rate = 1.0,
@@ -289,13 +326,13 @@ transform_all_pipelines <- function(season, db_path = "data/cfb.duckdb", filter_
   # 4. Stan data for Pipeline 4: XPD (Robust Student-t Net EPA Differential)
   stan_data_xpd <- list(
     season = as.integer(season),
-    N_games = nrow(xpd_df),
-    N_teams = nrow(team_lookup),
-    home_team = xpd_df$home_id,
-    away_team = xpd_df$away_id,
-    neutral_site = xpd_df$neutral_site,
+    N_games = as.integer(nrow(xpd_df)),
+    N_teams = as.integer(nrow(team_lookup)),
+    home_team = as.integer(xpd_df$home_id),
+    away_team = as.integer(xpd_df$away_id),
+    neutral_site = as.integer(xpd_df$neutral_site),
     xpd = as.numeric(xpd_df$home_net_epa),
-    team_subdivision = team_lookup$subdivision_id,
+    team_subdivision = as.integer(team_lookup$subdivision_id),
     prior_xi_fcs_mean = -21.0,
     prior_xi_fcs_sd = 3.0,
     prior_omega_rate = 0.1,

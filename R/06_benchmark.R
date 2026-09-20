@@ -164,13 +164,13 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
   # Outliers: Most underrated and overrated by AP relative to Bayes resume
   most_underrated <- comparison_df |>
     dplyr::filter(rank_composite <= 25) |>
-    dplyr::arrange(desc(ap_delta)) |>
-    dplyr::head(5)
+    dplyr::arrange(dplyr::desc(ap_delta)) |>
+    dplyr::slice_head(n = 5)
   
   most_overrated <- comparison_df |>
     dplyr::filter(!is.na(rank_ap), rank_ap <= 25) |>
     dplyr::arrange(ap_delta) |>
-    dplyr::head(5)
+    dplyr::slice_head(n = 5)
   
   benchmark_metrics <- tibble::tibble(
     Benchmark = c("Colley Matrix", "AP Top 25"),

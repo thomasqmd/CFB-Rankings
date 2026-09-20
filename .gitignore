@@ -2,6 +2,8 @@
 .Rhistory
 .RData
 .Ruserdata
+.Renviron
+.env*
 .Rproj.user/
 
 # Targets workflow store
@@ -43,3 +45,6 @@ docs/**/*.pdf
 .DS_Store
 Thumbs.db
 .agents
+
+/.quarto/
+**/*.quarto_ipynb

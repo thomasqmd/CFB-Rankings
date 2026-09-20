@@ -61,10 +61,10 @@ color:
   primary: navy
   secondary: series-2-teal
 
-logo:
-  small: logos/TRlogo.svg
-  medium: logos/TRlogo.svg
-  large: logos/T.png
+# logo:
+#   small: logos/TRlogo.svg
+#   medium: logos/TRlogo.svg
+#   large: logos/T.png
 
 typography:
   base:
