@@ -172,44 +172,45 @@ function updateScheduleFooter(season, table, team, conf, summaryData) {
       if (tfoot) footerCells = tfoot.querySelectorAll('th');
     }
   }
-  if (!footerCells || footerCells.length < 10) return;
+  if (!footerCells || footerCells.length < 11) return;
 
   if (team !== 'All' && summaryData) {
     var pdSign = summaryData.totalPD > 0 ? '+' : '';
     var xpdSign = summaryData.totalXPD > 0 ? '+' : '';
-    var xpdStr = summaryData.hasEPA ? (xpdSign + summaryData.totalXPD.toFixed(1)) : 'N/A';
+    var xpdStr = summaryData.hasXPD ? (xpdSign + summaryData.totalXPD.toFixed(1)) : 'N/A';
+    var schedBadge = summaryData.scheduled > 0 ? (' <span style="font-size:0.78rem; color:#64748b; font-weight:normal;">(' + summaryData.scheduled + ' to play)</span>') : '';
 
-    footerCells[0].innerHTML = '<div style="font-weight:700; color:#303e4e; font-size:0.92rem;">' + team + ' Season Totals</div>';
+    footerCells[0].innerHTML = '<div style="font-weight:700; color:#303e4e; font-size:0.92rem;">' + team + ' Season Totals' + schedBadge + '</div>';
     footerCells[0].style.textAlign = 'left';
-    for (var i = 1; i <= 5; i++) {
+    for (var i = 1; i <= 6; i++) {
       footerCells[i].innerHTML = '';
     }
-    footerCells[6].innerHTML = '<div style="font-size:0.68rem; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:2px;">Record</div><span class="badge" style="background:#303e4e; font-size:0.85rem; padding:0.25rem 0.5rem;">' + summaryData.wins + '-' + summaryData.losses + '</span>';
-    footerCells[6].style.textAlign = 'center';
-
-    footerCells[7].innerHTML = '<div style="font-size:0.68rem; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:2px;">Point Diff</div><span class="badge" style="background:#3a6ea5; font-size:0.85rem; padding:0.25rem 0.5rem;">' + pdSign + summaryData.totalPD + '</span>';
+    footerCells[7].innerHTML = '<div style="font-size:0.68rem; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:2px;">Record</div><span class="badge" style="background:#303e4e; font-size:0.85rem; padding:0.25rem 0.5rem;">' + summaryData.wins + '-' + summaryData.losses + '</span>';
     footerCells[7].style.textAlign = 'center';
 
-    footerCells[8].innerHTML = '<div style="font-size:0.68rem; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:2px;">xRecord</div><span class="badge" style="background:#0f9a7d; font-size:0.85rem; padding:0.25rem 0.5rem;">' + summaryData.xwins + '-' + summaryData.xlosses + '</span>';
+    footerCells[8].innerHTML = '<div style="font-size:0.68rem; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:2px;">Point Diff</div><span class="badge" style="background:#3a6ea5; font-size:0.85rem; padding:0.25rem 0.5rem;">' + pdSign + summaryData.totalPD + '</span>';
     footerCells[8].style.textAlign = 'center';
 
-    footerCells[9].innerHTML = '<div style="font-size:0.68rem; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:2px;">Exp. Diff (XPD)</div><span class="badge" style="background:#d1622a; font-size:0.85rem; padding:0.25rem 0.5rem;">' + xpdStr + '</span>';
+    footerCells[9].innerHTML = '<div style="font-size:0.68rem; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:2px;">xRecord</div><span class="badge" style="background:#0f9a7d; font-size:0.85rem; padding:0.25rem 0.5rem;">' + summaryData.xwins + '-' + summaryData.xlosses + '</span>';
     footerCells[9].style.textAlign = 'center';
+
+    footerCells[10].innerHTML = '<div style="font-size:0.68rem; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:2px;">Exp. Diff (XPD)</div><span class="badge" style="background:#d1622a; font-size:0.85rem; padding:0.25rem 0.5rem;">' + xpdStr + '</span>';
+    footerCells[10].style.textAlign = 'center';
   } else {
     var label = conf !== 'All' ? ('Conference: ' + conf + ' (Select a team for season totals)') : 'All Teams (Select a team for season totals)';
     footerCells[0].innerHTML = '<div style="color:#64748b; font-size:0.85rem; font-style:italic;">' + label + '</div>';
     footerCells[0].style.textAlign = 'left';
-    for (var j = 1; j <= 5; j++) {
+    for (var j = 1; j <= 6; j++) {
       footerCells[j].innerHTML = '';
     }
-    footerCells[6].innerHTML = '-';
-    footerCells[6].style.textAlign = 'center';
     footerCells[7].innerHTML = '-';
     footerCells[7].style.textAlign = 'center';
     footerCells[8].innerHTML = '-';
     footerCells[8].style.textAlign = 'center';
     footerCells[9].innerHTML = '-';
     footerCells[9].style.textAlign = 'center';
+    footerCells[10].innerHTML = '-';
+    footerCells[10].style.textAlign = 'center';
   }
 }
 
@@ -233,13 +234,14 @@ function updateScheduleFilter(season) {
   if (team !== 'All') {
     filtered = fullData.filter(function(row) { return row[0] === team; });
 
-    var wins = 0, losses = 0, xwins = 0, xlosses = 0, totalPD = 0, totalXPD = 0, hasEPA = false;
+    var wins = 0, losses = 0, scheduled = 0, xwins = 0, xlosses = 0, totalPD = 0, totalXPD = 0, hasXPD = false;
     filtered.forEach(function(row) {
-      if (row[6] === 'W') wins++;
-      else if (row[6] === 'L') losses++;
+      if (row[7] === 'W') wins++;
+      else if (row[7] === 'L') losses++;
+      else if (row[7] === 'Scheduled') scheduled++;
 
-      if (row[7] && row[7].indexOf('-') !== -1) {
-        var pts = row[7].split('-');
+      if (row[8] && row[8] !== '-' && row[8].indexOf('-') !== -1) {
+        var pts = row[8].split('-');
         var pFor = parseInt(pts[0], 10);
         var pAgainst = parseInt(pts[1], 10);
         if (!isNaN(pFor) && !isNaN(pAgainst)) {
@@ -247,14 +249,14 @@ function updateScheduleFilter(season) {
         }
       }
 
-      if (row[8] === 'W') xwins++;
-      else if (row[8] === 'L') xlosses++;
+      if (row[9] === 'W') xwins++;
+      else if (row[9] === 'L') xlosses++;
 
-      if (row[9] && row[9] !== '-') {
-        var epaVal = parseFloat(row[9]);
-        if (!isNaN(epaVal)) {
-          totalXPD += epaVal;
-          hasEPA = true;
+      if (row[10] && row[10] !== '-') {
+        var xpdVal = parseFloat(row[10]);
+        if (!isNaN(xpdVal)) {
+          totalXPD += xpdVal;
+          hasXPD = true;
         }
       }
     });
@@ -262,11 +264,12 @@ function updateScheduleFilter(season) {
     summaryData = {
       wins: wins,
       losses: losses,
+      scheduled: scheduled,
       xwins: xwins,
       xlosses: xlosses,
       totalPD: totalPD,
       totalXPD: totalXPD,
-      hasEPA: hasEPA
+      hasXPD: hasXPD
     };
   } else if (conf !== 'All') {
     filtered = fullData.filter(function(row) { return row[1] === conf; });
@@ -462,8 +465,14 @@ build_season_bundle <- function(yr, hist_df, live_c = NULL, live_b = NULL) {
     comp_df$record[is.na(comp_df$record) | !nzchar(comp_df$record)] <- "-"
     
     if (!is.null(bench_tbl) && nrow(bench_tbl) > 0) {
+      if (!"record" %in% names(bench_tbl) && all(c("wins", "losses") %in% names(bench_tbl))) {
+        bench_tbl$record <- paste0(bench_tbl$wins, "-", bench_tbl$losses)
+      }
+      if (!"colley_delta" %in% names(bench_tbl) && all(c("rank_colley", "rank_composite") %in% names(bench_tbl))) {
+        bench_tbl$colley_delta <- as.integer(bench_tbl$rank_colley - bench_tbl$rank_composite)
+      }
       cols_add <- bench_tbl |>
-        dplyr::select(team, dplyr::any_of(c("rank_colley", "colley_rating", "rank_ap", "ap_points", "ap_delta", "rank_cbs", "cbs_delta")))
+        dplyr::select(team, dplyr::any_of(c("rank_colley", "colley_rating", "colley_delta", "rank_ap", "ap_points", "ap_delta", "rank_cbs", "cbs_delta")))
       side_by_side <- comp_df |>
         dplyr::left_join(cols_add, by = "team") |>
         dplyr::arrange(rank_composite)
@@ -472,6 +481,7 @@ build_season_bundle <- function(yr, hist_df, live_c = NULL, live_b = NULL) {
         dplyr::mutate(
           rank_colley = rank_composite,
           colley_rating = round(composite_index, 3),
+          colley_delta = 0L,
           rank_ap = NA_integer_,
           ap_delta = NA_integer_,
           rank_cbs = NA_integer_,
@@ -489,29 +499,31 @@ build_season_bundle <- function(yr, hist_df, live_c = NULL, live_b = NULL) {
       side_by_side = side_by_side,
       composite = comp_df,
       underrated = if (!is.null(live_b) && !is.null(live_b$most_underrated) && nrow(live_b$most_underrated) > 0) {
-        live_b$most_underrated
+        live_b$most_underrated |> dplyr::slice_head(n = 10)
       } else {
         side_by_side |>
           dplyr::mutate(ap_delta_calc = ifelse(is.na(ap_delta), 30L - rank_composite, ap_delta)) |>
           dplyr::filter(ap_delta_calc > 0) |>
           dplyr::arrange(desc(ap_delta_calc)) |>
-          dplyr::slice(1:5) |>
+          dplyr::slice_head(n = 10) |>
           dplyr::transmute(team, rank_composite, rank_ap, ap_delta = as.integer(ap_delta_calc))
       },
       overrated = if (!is.null(live_b) && !is.null(live_b$most_overrated) && nrow(live_b$most_overrated) > 0) {
-        live_b$most_overrated
+        live_b$most_overrated |> dplyr::slice_head(n = 10)
       } else {
         side_by_side |>
           dplyr::filter(!is.na(rank_ap), ap_delta < 0) |>
           dplyr::arrange(ap_delta) |>
-          dplyr::slice(1:5) |>
+          dplyr::slice_head(n = 10) |>
           dplyr::select(team, rank_composite, rank_ap, ap_delta)
       },
       comparison_table = if (!is.null(bench_tbl)) bench_tbl else side_by_side
     ))
   }
   
-  yr_data <- hist_df |> dplyr::filter(season == as.integer(yr))
+  yr_data <- hist_df |>
+    dplyr::filter(season == as.integer(yr)) |>
+    dplyr::filter(is.na(division) | tolower(division) == "fbs")
   if (nrow(yr_data) == 0) return(NULL)
   
   yr_data <- yr_data |> dplyr::arrange(desc(wins), desc(avg_margin))
@@ -582,35 +594,44 @@ build_season_bundle <- function(yr, hist_df, live_c = NULL, live_b = NULL) {
     margin_luck = as.integer(r_xp - r_p),
     rank_colley = as.integer(r_colley),
     colley_rating = colley_rat,
+    colley_delta = as.integer(r_colley - r_comp),
     rank_ap = as.integer(r_ap),
-    ap_delta = as.integer(ap_del)
+    ap_delta = as.integer(ap_del),
+    rank_cbs = NA_integer_,
+    cbs_delta = NA_integer_
   ) |> dplyr::arrange(rank_composite)
   
   underrated <- comp_df |> 
     dplyr::mutate(ap_delta_calc = ifelse(is.na(ap_delta), 30L - rank_composite, ap_delta)) |>
     dplyr::filter(ap_delta_calc > 0) |> 
     dplyr::arrange(desc(ap_delta_calc)) |> 
-    dplyr::slice(1:5) |> 
-    dplyr::transmute(team, rank_composite, rank_ap, ap_delta = as.integer(ap_delta_calc))
+    dplyr::slice_head(n = 10) |> 
+    dplyr::transmute(team, conference, record, rank_composite, rank_ap, ap_delta = as.integer(ap_delta_calc), rank_cbs = NA_integer_, cbs_delta = NA_integer_, theta_median, delta_median, alpha_median)
   
   overrated <- comp_df |> 
     dplyr::filter(!is.na(rank_ap), ap_delta < 0) |> 
     dplyr::arrange(ap_delta) |> 
-    dplyr::slice(1:5) |> 
-    dplyr::select(team, rank_composite, rank_ap, ap_delta)
+    dplyr::slice_head(n = 10) |> 
+    dplyr::transmute(team, conference, record, rank_composite, rank_ap, ap_delta, rank_cbs = NA_integer_, cbs_delta = NA_integer_, theta_median, delta_median, alpha_median)
   
   bench_tbl <- comp_df |>
     dplyr::transmute(
       team = team,
+      conference = conference,
+      record = record,
       rank_composite = rank_composite,
       wins = yr_data$wins,
       losses = yr_data$losses,
       colley_rating = colley_rating,
       rank_colley = rank_colley,
+      colley_delta = colley_delta,
       rank_ap = rank_ap,
       ap_delta = ap_delta,
       rank_cbs = NA_integer_,
-      cbs_delta = NA_integer_
+      cbs_delta = NA_integer_,
+      theta_median = theta_median,
+      delta_median = delta_median,
+      alpha_median = alpha_median
     )
   
   return(list(
@@ -685,7 +706,7 @@ for (s in valid_seasons) {
   <li><span class="badge" style="background:#6b4fb2;">15%</span> <strong>SB (Opp)</strong>: Defeated Opponent Quality</li>
   <li><span class="badge" style="background:#a8820a;">5%</span> <strong>SOS (BH)</strong>: Schedule Strength</li>
   <li class="fw-bold text-secondary text-uppercase" style="font-size: 0.7rem; margin-top: 4px;">Expected Performance (xSOR):</li>
-  <li><span class="badge" style="background:#d1622a;">25%</span> <strong>XPD (α)</strong>: Net Play EPA</li>
+  <li><span class="badge" style="background:#d1622a;">25%</span> <strong>XPD (α)</strong>: Expected Point Differential (Drive XP)</li>
   <li><span class="badge" style="background:#3a6ea5;">18%</span> <strong>PD (δ)</strong>: Point Margin</li>
   <li><span class="badge" style="background:#0f9a7d;">12%</span> <strong>XWLD (ω)</strong>: Exp. W/L</li>
 </ul>
@@ -887,46 +908,215 @@ htmltools::tagList(
 render_quadrant_chart <- function(s_bundle, s) {
   quad_df <- s_bundle$composite |>
     dplyr::filter(subdivision_id == 1L) |>
-    dplyr::slice(1:25)
+    dplyr::mutate(
+      conf_tier = dplyr::case_when(
+        conference %in% c("SEC", "Big Ten", "ACC", "Big 12") ~ "Power 4",
+        conference %in% c("Mountain West", "American Athletic", "AAC", "Sun Belt", "Mid-American", "MAC", "Conference USA", "C-USA") ~ "Group of 5",
+        TRUE ~ "Pac-12 / Ind"
+      ),
+      conf_tier = factor(conf_tier, levels = c("Power 4", "Group of 5", "Pac-12 / Ind")),
+      conference = factor(conference, levels = c(
+        "SEC", "Big Ten", "ACC", "Big 12",
+        "American Athletic", "Mountain West", "Sun Belt", "Mid-American", "Conference USA",
+        "AAC", "MAC", "C-USA",
+        "Pac-12", "FBS Independents", "Independent"
+      ))
+    )
   
-  med_th <- median(quad_df$theta_median)
-  med_al <- median(quad_df$alpha_median)
+  med_th <- median(quad_df$theta_median, na.rm = TRUE)
+  med_al <- median(quad_df$alpha_median, na.rm = TRUE)
+
+  # Deterministically calculate axis limits so corner quadrant badges never overlap points
+  th_vals <- quad_df$theta_median[!is.na(quad_df$theta_median)]
+  al_vals <- quad_df$alpha_median[!is.na(quad_df$alpha_median)]
+
+  th_min <- if (length(th_vals)) min(th_vals) else -2.5
+  th_max <- if (length(th_vals)) max(th_vals) else 2.5
+  th_rng <- th_max - th_min
+  if (th_rng == 0) th_rng <- 1
+
+  al_min <- if (length(al_vals)) min(al_vals) else -20
+  al_max <- if (length(al_vals)) max(al_vals) else 25
+  al_rng <- al_max - al_min
+  if (al_rng == 0) al_rng <- 1
+
+  # Expanding x by 18% and y by 24% guarantees:
+  # 1) Top points sit at ~81% plot height, strictly below the top corner badges (at y >= 0.89)
+  # 2) Bottom points sit at ~19% plot height, strictly above the bottom corner badges (at y <= 0.11)
+  # 3) Extreme resume teams sit comfortably inside horizontal bounds
+  x_limits <- c(th_min - 0.18 * th_rng, th_max + 0.18 * th_rng)
+  y_limits <- c(al_min - 0.24 * al_rng, al_max + 0.24 * al_rng)
+
+  conf_palette <- c(
+    "Big Ten"           = "#303e4e",
+    "SEC"               = "#3a6ea5",
+    "ACC"               = "#d1622a",
+    "Big 12"            = "#6b4fb2",
+    "Pac-12"            = "#c1393f",
+    "Mountain West"     = "#0f9a7d",
+    "American Athletic" = "#a8820a",
+    "AAC"               = "#a8820a",
+    "Sun Belt"          = "#e27d4c",
+    "Mid-American"      = "#5188c4",
+    "MAC"               = "#5188c4",
+    "Conference USA"    = "#7d9c33",
+    "C-USA"             = "#7d9c33",
+    "FBS Independents"  = "#64748b",
+    "Independent"       = "#64748b"
+  )
   
+  rec_str <- if ("record" %in% names(quad_df)) quad_df$record else "-"
+  rec_str[is.na(rec_str) | !nzchar(rec_str)] <- "-"
+
   p <- ggplot(quad_df, aes(
     x = theta_median, 
     y = alpha_median, 
-    text = sprintf("<b>%s</b> (#%d)<br>Conference: %s<br>WLD θ: %.2f<br>XPD α: %.1f pts<br>Point Margin δ: +%.1f<br>Outcome Luck: %+d spots", 
-                   team, rank_composite, conference, theta_median, alpha_median, delta_median, outcome_luck),
-    color = conference
+    color = conference,
+    shape = conf_tier,
+    text = sprintf(
+      "<b>%s</b> (#%d)<br>Tier: %s | %s (%s)<br>Resume Ability (θ): %+.2f (#%d)<br>Play Dominance (α): %+.1f pts (#%d)<br>Point Margin (δ): %+.1f<br>Outcome Luck: %+d spots", 
+      team, rank_composite, conf_tier, conference, rec_str,
+      theta_median, rank_wld, alpha_median, rank_xpd, delta_median, outcome_luck
+    )
   )) +
-    geom_vline(xintercept = med_th, linetype = "dashed", color = "#c3c2b7", linewidth = 0.6) +
-    geom_hline(yintercept = med_al, linetype = "dashed", color = "#c3c2b7", linewidth = 0.6) +
-    geom_point(aes(size = pmax(2, delta_median)), alpha = 0.85) +
-    geom_text(aes(label = team), vjust = -1.1, size = 3, fontface = "bold", check_overlap = TRUE, show.legend = FALSE) +
-    scale_color_manual(values = c(
-      "Big Ten" = c_navy, "SEC" = c_blue, "ACC" = c_orange, "Big 12" = c_violet,
-      "Mountain West" = c_teal, "AAC" = c_ochre, "Independent" = c_green
-    ), na.value = "#64748b") +
-    scale_size_continuous(range = c(3, 8), guide = "none") +
-    annotate("text", x = max(quad_df$theta_median) * 0.95, y = max(quad_df$alpha_median) * 0.95, 
-             label = "DOMINANT & DESERVING\n(High Resume + High EPA)", fontface = "bold", color = "#0f9a7d", size = 3, hjust = 1) +
-    annotate("text", x = min(quad_df$theta_median) * 1.1, y = max(quad_df$alpha_median) * 0.95, 
-             label = "UNLUCKY POWERHOUSES\n(Elite EPA, Tough Schedule)", fontface = "bold", color = "#3a6ea5", size = 3, hjust = 0) +
-    annotate("text", x = max(quad_df$theta_median) * 0.95, y = min(quad_df$alpha_median) * 1.1, 
-             label = "RESUME CONTENDERS\n(Gritty Wins, Lower Margin)", fontface = "bold", color = "#d1622a", size = 3, hjust = 1) +
-    annotate("text", x = min(quad_df$theta_median) * 1.1, y = min(quad_df$alpha_median) * 1.1, 
-             label = "VULNERABLE CONTENDERS\n(Lower Efficiency & Resume)", fontface = "bold", color = "#c1393f", size = 3, hjust = 0) +
+    geom_vline(xintercept = med_th, linetype = "dashed", color = "#94a3b8", linewidth = 0.6) +
+    geom_hline(yintercept = med_al, linetype = "dashed", color = "#94a3b8", linewidth = 0.6) +
+    geom_point(aes(size = pmax(2, delta_median)), alpha = 0.76) +
+    scale_shape_manual(values = c("Power 4" = 16, "Group of 5" = 18, "Pac-12 / Ind" = 15)) +
+    scale_color_manual(values = conf_palette, na.value = "#64748b") +
+    scale_size_continuous(range = c(2.5, 7.5), guide = "none") +
+    scale_x_continuous(limits = x_limits, expand = c(0, 0)) +
+    scale_y_continuous(limits = y_limits, expand = c(0, 0)) +
     labs(
-      x = "Resume Ability (θ)",
-      y = "Play Efficiency (α)",
-      color = "Conference"
+      x = "Resume Ability (θ) — Ordered Logit Latent Rating",
+      y = "Play Dominance (α) — Expected Point Differential (XPD)",
+      color = "Conference",
+      shape = "Tier"
+    ) +
+    guides(
+      color = guide_legend(nrow = 3, byrow = TRUE),
+      shape = guide_legend(nrow = 3, byrow = TRUE)
     ) +
     theme_minimal(base_family = "sans") +
     theme(
       legend.position = "bottom",
       panel.grid.minor = element_blank()
     )
-  plotly::ggplotly(p, tooltip = "text")
+
+  pl <- plotly::ggplotly(p, tooltip = "text")
+
+  p4_confs <- c("SEC", "Big Ten", "ACC", "Big 12")
+  g5_confs <- c("American Athletic", "Mountain West", "Sun Belt", "Mid-American", "Conference USA", "AAC", "MAC", "C-USA")
+  p12_ind_confs <- c("Pac-12", "FBS Independents", "Independent")
+  all_known_confs <- c(p4_confs, g5_confs, p12_ind_confs)
+
+  for (i in seq_along(pl$x$data)) {
+    raw_name <- pl$x$data[[i]]$name
+    if (is.null(raw_name) || !nzchar(raw_name)) next
+
+    # Strip surrounding parentheses, e.g. "(Power 4,SEC)" or "(SEC,Power 4)"
+    clean_str <- gsub("^[\\(]+|[\\)]+$", "", raw_name)
+    parts <- trimws(strsplit(clean_str, ",")[[1]])
+
+    # Match the conference name specifically
+    conf_name <- NULL
+    for (cand in parts) {
+      if (cand %in% all_known_confs) {
+        conf_name <- cand
+        break
+      }
+    }
+    if (is.null(conf_name)) {
+      non_tier <- parts[!parts %in% c("Power 4", "Group of 5", "Pac-12 / Ind", "Pac-12 & Ind")]
+      conf_name <- if (length(non_tier) > 0) non_tier[1] else parts[1]
+    }
+
+    pl$x$data[[i]]$name <- conf_name
+    pl$x$data[[i]]$legendgroup <- conf_name
+
+    if (conf_name %in% p4_confs) {
+      pl$x$data[[i]]$legend <- "legend"
+    } else if (conf_name %in% g5_confs) {
+      pl$x$data[[i]]$legend <- "legend2"
+    } else {
+      pl$x$data[[i]]$legend <- "legend3"
+    }
+  }
+
+  pl$x$layout$margin$b <- 135
+  pl$x$layout$legend <- list(
+    orientation = "h",
+    x = 0.5,
+    xanchor = "center",
+    y = -0.15,
+    yanchor = "top",
+    title = list(text = "<b>Power 4:</b> ", font = list(size = 11, color = "#1e293b")),
+    font = list(size = 10)
+  )
+  pl$x$layout$legend2 <- list(
+    orientation = "h",
+    x = 0.5,
+    xanchor = "center",
+    y = -0.23,
+    yanchor = "top",
+    title = list(text = "<b>Group of 5:</b> ", font = list(size = 11, color = "#1e293b")),
+    font = list(size = 10)
+  )
+  pl$x$layout$legend3 <- list(
+    orientation = "h",
+    x = 0.5,
+    xanchor = "center",
+    y = -0.31,
+    yanchor = "top",
+    title = list(text = "<b>Pac-12 & Ind:</b> ", font = list(size = 11, color = "#1e293b")),
+    font = list(size = 10)
+  )
+
+  quadrant_labels <- list(
+    list(
+      x = 0.985, y = 0.985, xref = "paper", yref = "paper",
+      xanchor = "right", yanchor = "top", showarrow = FALSE,
+      text = "<b style='color:#0f9a7d;font-size:11px;'>DOMINANT &amp; DESERVING</b><br><span style='color:#64748b;font-size:9px;'>High Resume (θ) + High Dominance (α)</span>",
+      align = "right",
+      bgcolor = "rgba(255, 255, 255, 0.85)",
+      bordercolor = "#cbd5e1",
+      borderwidth = 1,
+      borderpad = 4
+    ),
+    list(
+      x = 0.015, y = 0.985, xref = "paper", yref = "paper",
+      xanchor = "left", yanchor = "top", showarrow = FALSE,
+      text = "<b style='color:#3a6ea5;font-size:11px;'>UNLUCKY POWERHOUSES</b><br><span style='color:#64748b;font-size:9px;'>Elite Dominance (α), Tough Schedule (θ)</span>",
+      align = "left",
+      bgcolor = "rgba(255, 255, 255, 0.85)",
+      bordercolor = "#cbd5e1",
+      borderwidth = 1,
+      borderpad = 4
+    ),
+    list(
+      x = 0.985, y = 0.015, xref = "paper", yref = "paper",
+      xanchor = "right", yanchor = "bottom", showarrow = FALSE,
+      text = "<b style='color:#d1622a;font-size:11px;'>RESUME CONTENDERS</b><br><span style='color:#64748b;font-size:9px;'>High Resume (θ), Lower Dominance (α)</span>",
+      align = "right",
+      bgcolor = "rgba(255, 255, 255, 0.85)",
+      bordercolor = "#cbd5e1",
+      borderwidth = 1,
+      borderpad = 4
+    ),
+    list(
+      x = 0.015, y = 0.015, xref = "paper", yref = "paper",
+      xanchor = "left", yanchor = "bottom", showarrow = FALSE,
+      text = "<b style='color:#c1393f;font-size:11px;'>DEVELOPING / VULNERABLE</b><br><span style='color:#64748b;font-size:9px;'>Lower Dominance (α) &amp; Resume (θ)</span>",
+      align = "left",
+      bgcolor = "rgba(255, 255, 255, 0.85)",
+      bordercolor = "#cbd5e1",
+      borderwidth = 1,
+      borderpad = 4
+    )
+  )
+  pl$x$layout$annotations <- c(pl$x$layout$annotations, quadrant_labels)
+
+  pl
 }
 
 htmltools::tagList(
@@ -949,8 +1139,8 @@ render_luck_table <- function(s_bundle, s) {
       `WLD Rank` = rank_wld,
       `XWLD Rank` = rank_xwld,
       `Outcome Luck (Δ)` = outcome_luck,
-      `Net EPA (α)` = sprintf("+%.1f", alpha_median),
-      `Point Margin (δ)` = sprintf("+%.1f", delta_median)
+      `Play Dominance (α)` = sprintf("%+.1f", alpha_median),
+      `Point Margin (δ)` = sprintf("%+.1f", delta_median)
     )
 
   DT::datatable(
@@ -979,19 +1169,164 @@ htmltools::tagList(
 )
 ```
 
-# Poll & Benchmark Divergence
+# Poll Divergence
 
-## Row {height=50%}
+## Row {height=14%}
+
+```{r}
+#| echo: false
+render_poll_kpi_banner <- function(s_bundle, s, is_active) {
+  b <- s_bundle
+  bench_tbl <- b$comparison_table
+  n_teams <- if (!is.null(bench_tbl)) nrow(bench_tbl) else 138L
+  
+  colley_rho <- if (!is.null(bench_tbl) && "rank_colley" %in% names(bench_tbl)) {
+    sprintf("%.3f", round(cor(bench_tbl$rank_composite, bench_tbl$rank_colley, method = "spearman"), 3))
+  } else "N/A"
+  
+  ap_rho <- if (!is.null(bench_tbl) && "rank_ap" %in% names(bench_tbl)) {
+    ap_sub <- bench_tbl |> dplyr::filter(!is.na(rank_ap))
+    if (nrow(ap_sub) >= 15) sprintf("%.3f", round(cor(ap_sub$rank_composite, ap_sub$rank_ap, method = "spearman"), 3)) else "N/A"
+  } else "N/A"
+  
+  cbs_rho <- if (!is.null(bench_tbl) && "rank_cbs" %in% names(bench_tbl)) {
+    cbs_sub <- bench_tbl |> dplyr::filter(!is.na(rank_cbs))
+    if (nrow(cbs_sub) >= 25) sprintf("%.3f", round(cor(cbs_sub$rank_composite, cbs_sub$rank_cbs, method = "spearman"), 3)) else "N/A"
+  } else "N/A"
+
+  cbs_sub_txt <- if (cbs_rho != "N/A") sprintf("Spearman ρ = %s", cbs_rho) else "Full FBS Alignment"
+
+  season_txt <- paste0("Season ", s, " ", if (is_active) paste0("(Week ", season_info$week, ")") else "(Concluded)")
+
+  htmltools::div(
+    class = paste0("year-panel year-panel-", s),
+    style = paste0(if (is_active) "display: block;" else "display: none;", " width: 100%;"),
+    htmltools::tags$table(
+      style = "width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 0.5rem;",
+      htmltools::tags$tbody(
+        htmltools::tags$tr(
+          kpi_card("#303e4e", "#475b72", "FBS Scope", sprintf("%d Programs", n_teams), season_txt),
+          kpi_card("#d1622a", "#e27d4c", "Colley Alignment", sprintf("Spearman ρ = %s", colley_rho), "Bias-Free Linear Baseline"),
+          kpi_card("#0f9a7d", "#14b896", "AP Poll Alignment", sprintf("Spearman ρ = %s", ap_rho), "Media Consensus Top 25"),
+          kpi_card("#3a6ea5", "#5188c4", "CBS 134 Alignment", cbs_sub_txt, "Division Media Benchmark")
+        )
+      )
+    )
+  )
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    render_poll_kpi_banner(season_bundles[[s]], s, as.integer(s) == active_season)
+  })
+)
+```
+
+## Row {height=86%}
+
+### Column {width=100%}
+
+```{r}
+#| title: "Consensus Alignment: Bayes vs. External Benchmarks (Colley, AP, CBS)"
+sketch_consensus <- htmltools::withTags(table(
+  class = 'display cell-border stripe hover compact',
+  thead(
+    tr(
+      th(colspan = 4, style = "text-align: center; border-right: 2px solid #303e4e; background-color: #f0f4f8;", "Team Profile"),
+      th(colspan = 2, style = "text-align: center; border-right: 2px solid #303e4e; background-color: #e2eaf2;", "Linear System Benchmark"),
+      th(colspan = 2, style = "text-align: center; border-right: 2px solid #303e4e; background-color: #f7f9fa;", "Media Consensus (AP)"),
+      th(colspan = 2, style = "text-align: center; background-color: #e2eaf2;", "Broad FBS Media Poll (CBS)")
+    ),
+    tr(
+      th("Bayes Rank"), th("Team"), th("Conference"), th("Record"),
+      th("Colley Rank"), th("Colley Δ"),
+      th("AP Rank"), th("AP Δ"),
+      th("CBS Rank"), th("CBS Δ")
+    )
+  )
+))
+
+render_consensus_table <- function(s_bundle, s) {
+  bench_tbl <- s_bundle$comparison_table
+  if (is.null(bench_tbl) || nrow(bench_tbl) == 0) {
+    return(htmltools::tags$div(class = "alert alert-secondary p-3", "No benchmark comparison data available."))
+  }
+
+  has_cbs <- "rank_cbs" %in% names(bench_tbl) && any(!is.na(bench_tbl$rank_cbs))
+
+  display_df <- bench_tbl |>
+    dplyr::transmute(
+      `Bayes Rank` = rank_composite,
+      Team = team,
+      Conference = if ("conference" %in% names(bench_tbl)) conference else "-",
+      Record = if ("record" %in% names(bench_tbl)) record else if (all(c("wins", "losses") %in% names(bench_tbl))) paste0(wins, "-", losses) else "-",
+      `Colley Rank` = rank_colley,
+      `Colley Δ` = if ("colley_delta" %in% names(bench_tbl)) colley_delta else as.integer(rank_colley - rank_composite),
+      `AP Rank` = ifelse(is.na(rank_ap), "NR", as.character(rank_ap)),
+      `AP Δ` = ifelse(is.na(ap_delta), "-", sprintf("%+d", ap_delta)),
+      `CBS Rank` = if (has_cbs) ifelse(is.na(rank_cbs), "NR", as.character(rank_cbs)) else "-",
+      `CBS Δ` = if (has_cbs) ifelse(is.na(cbs_delta), "-", sprintf("%+d", cbs_delta)) else "-"
+    ) |>
+    dplyr::arrange(`Bayes Rank`)
+
+  DT::datatable(
+    display_df,
+    elementId = paste0("consensus-table-", s),
+    container = sketch_consensus,
+    options = list(
+      pageLength = 25,
+      lengthMenu = list(c(25, 50, 100, -1), c("25", "50", "100", "All")),
+      dom = "lftip",
+      order = list(list(0, "asc")),
+      columnDefs = list(
+        list(className = "dt-center", targets = c(0, 2, 3, 4, 5, 6, 7, 8, 9)),
+        list(className = "dt-left", targets = 1)
+      )
+    ),
+    rownames = FALSE,
+    class = "cell-border stripe hover compact"
+  ) |>
+    DT::formatStyle(
+      "Colley Δ",
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    ) |>
+    DT::formatStyle(
+      "AP Δ",
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    ) |>
+    DT::formatStyle(
+      "CBS Δ",
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    )
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    year_panel(s, as.integer(s) == active_season, render_consensus_table(b, s))
+  })
+)
+```
+
+<!--
+# Over & Underrated
+
+## Row {height=45%}
 
 ### Column {width=50%}
 
 ```{r}
-#| title: "Most Underrated Programs (Bayes Rank > AP Poll)"
+#| eval: false
+#| title: "Top Underrated Programs (Bayes Rank > AP Poll)"
 render_underrated_chart <- function(s_bundle, s) {
   underrated <- s_bundle$underrated
   if (!is.null(underrated) && nrow(underrated) > 0 && any(underrated$ap_delta > 0, na.rm = TRUE)) {
     plot_df <- underrated |>
       dplyr::filter(!is.na(ap_delta), ap_delta > 0) |>
+      dplyr::slice_head(n = 10) |>
       dplyr::mutate(
         ap_lbl = ifelse(is.na(rank_ap), "NR (30+)", paste0("#", rank_ap)),
         lbl_text = sprintf("+%d spots (Bayes #%d vs AP %s)", ap_delta, rank_composite, ap_lbl)
@@ -1008,7 +1343,7 @@ render_underrated_chart <- function(s_bundle, s) {
   } else {
     htmltools::tags$div(
       class = "alert alert-secondary text-muted my-3 p-3",
-      "No underrated programs identified relative to AP Poll for this season. See the Colley Matrix benchmark below."
+      "No underrated programs identified relative to AP Poll for this season."
     )
   }
 }
@@ -1024,12 +1359,14 @@ htmltools::tagList(
 ### Column {width=50%}
 
 ```{r}
-#| title: "Most Overrated Programs (AP Poll > Bayes Rank)"
+#| eval: false
+#| title: "Top Overrated Programs (AP Poll > Bayes Rank)"
 render_overrated_chart <- function(s_bundle, s) {
   overrated <- s_bundle$overrated
   if (!is.null(overrated) && nrow(overrated) > 0 && any(overrated$ap_delta < 0, na.rm = TRUE)) {
     plot_df <- overrated |>
       dplyr::filter(!is.na(ap_delta), ap_delta < 0) |>
+      dplyr::slice_head(n = 10) |>
       dplyr::mutate(
         abs_delta = abs(ap_delta),
         ap_lbl = ifelse(is.na(rank_ap), "NR", paste0("#", rank_ap)),
@@ -1047,7 +1384,7 @@ render_overrated_chart <- function(s_bundle, s) {
   } else {
     htmltools::tags$div(
       class = "alert alert-secondary text-muted my-3 p-3",
-      "No overrated programs identified relative to AP Poll for this season. See the Colley Matrix benchmark below."
+      "No overrated programs identified relative to AP Poll for this season."
     )
   }
 }
@@ -1060,62 +1397,150 @@ htmltools::tagList(
 )
 ```
 
-## Row {height=50%}
+## Row {height=55%}
 
-### Column {width=100%}
+### Column {width=50%}
 
 ```{r}
-#| title: "Consensus Alignment: Bayes vs. External Benchmarks (Colley, AP, CBS)"
-render_consensus_table <- function(s_bundle, s) {
+#| eval: false
+#| title: "Underrated Programs Detailed Breakdown"
+render_underrated_table <- function(s_bundle, s) {
   bench_tbl <- s_bundle$comparison_table
-  if (!is.null(bench_tbl) && nrow(bench_tbl) > 0) {
-    has_cbs <- "rank_cbs" %in% names(bench_tbl) && any(!is.na(bench_tbl$rank_cbs))
-    display_df <- if (has_cbs) {
-      bench_tbl |>
-        dplyr::slice(1:25) |>
-        dplyr::transmute(
-          Team = team,
-          `Bayes Rank` = rank_composite,
-          `Colley Rank` = rank_colley,
-          `Colley Rating` = round(colley_rating, 3),
-          `Record (W-L)` = if ("record" %in% names(bench_tbl)) record else if (all(c("wins", "losses") %in% names(bench_tbl))) paste0(wins, "-", losses) else "-",
-          `AP Rank` = ifelse(is.na(rank_ap), "NR", as.character(rank_ap)),
-          `AP Divergence` = ifelse(is.na(rank_ap), "-", sprintf("%+d", ap_delta)),
-          `CBS Rank` = ifelse(is.na(rank_cbs), "NR", as.character(rank_cbs)),
-          `CBS Divergence` = ifelse(is.na(cbs_delta), "-", sprintf("%+d", cbs_delta))
-        )
-    } else {
-      bench_tbl |>
-        dplyr::slice(1:25) |>
-        dplyr::transmute(
-          Team = team,
-          `Bayes Rank` = rank_composite,
-          `Colley Rank` = rank_colley,
-          `Colley Rating` = round(colley_rating, 3),
-          `Record (W-L)` = if ("record" %in% names(bench_tbl)) record else if (all(c("wins", "losses") %in% names(bench_tbl))) paste0(wins, "-", losses) else "-",
-          `AP Rank` = ifelse(is.na(rank_ap), "NR", as.character(rank_ap)),
-          `AP Divergence` = ifelse(is.na(rank_ap), "-", sprintf("%+d", ap_delta))
-        )
-    }
-    DT::datatable(
-      display_df,
-      elementId = paste0("consensus-table-", s),
-      options = list(pageLength = 8, dom = "tp"),
-      rownames = FALSE,
-      class = "cell-border stripe compact"
-    )
-  } else {
-    htmltools::tags$div(class = "alert alert-secondary p-3", "No benchmark comparison data available.")
+  if (is.null(bench_tbl) || nrow(bench_tbl) == 0) {
+    return(htmltools::tags$div(class = "alert alert-secondary p-3", "No data available."))
   }
+
+  has_cbs <- "cbs_delta" %in% names(bench_tbl) && any(!is.na(bench_tbl$cbs_delta))
+
+  df_under <- bench_tbl |>
+    dplyr::filter((!is.na(ap_delta) & ap_delta > 0) | (is.na(rank_ap) & rank_composite <= 25)) |>
+    dplyr::arrange(desc(ap_delta), rank_composite)
+
+  if (nrow(df_under) == 0) {
+    return(htmltools::tags$div(class = "alert alert-secondary text-muted my-3 p-3", "No underrated programs identified for this season."))
+  }
+
+  display_df <- df_under |>
+    dplyr::transmute(
+      Team = team,
+      Conf = if ("conference" %in% names(df_under)) conference else "-",
+      Record = if ("record" %in% names(df_under)) record else if (all(c("wins", "losses") %in% names(df_under))) paste0(wins, "-", losses) else "-",
+      `Bayes` = rank_composite,
+      `AP` = ifelse(is.na(rank_ap), "NR", as.character(rank_ap)),
+      `AP Δ` = ifelse(is.na(ap_delta), "-", sprintf("%+d", ap_delta)),
+      `CBS` = if (has_cbs) ifelse(is.na(rank_cbs), "NR", as.character(rank_cbs)) else "-",
+      `CBS Δ` = if (has_cbs) ifelse(is.na(cbs_delta), "-", sprintf("%+d", cbs_delta)) else "-",
+      `Play Dominance (α)` = if ("alpha_median" %in% names(df_under)) sprintf("%+.1f", alpha_median) else "-",
+      `Margin (δ)` = if ("delta_median" %in% names(df_under)) sprintf("%+.1f", delta_median) else "-"
+    )
+
+  DT::datatable(
+    display_df,
+    elementId = paste0("underrated-table-", s),
+    options = list(
+      pageLength = 10,
+      lengthMenu = list(c(10, 25, -1), c("10", "25", "All")),
+      dom = "lftp",
+      order = list(list(3, "asc")),
+      columnDefs = list(
+        list(className = "dt-center", targets = c(1, 2, 3, 4, 5, 6, 7, 8, 9)),
+        list(className = "dt-left", targets = 0)
+      )
+    ),
+    rownames = FALSE,
+    class = "cell-border stripe hover compact"
+  ) |>
+    DT::formatStyle(
+      "AP Δ",
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    ) |>
+    DT::formatStyle(
+      "CBS Δ",
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    )
 }
 
 htmltools::tagList(
   lapply(valid_seasons, function(s) {
     b <- season_bundles[[s]]
-    year_panel(s, as.integer(s) == active_season, render_consensus_table(b, s))
+    year_panel(s, as.integer(s) == active_season, render_underrated_table(b, s))
   })
 )
 ```
+
+### Column {width=50%}
+
+```{r}
+#| eval: false
+#| title: "Overrated Programs Detailed Breakdown"
+render_overrated_table <- function(s_bundle, s) {
+  bench_tbl <- s_bundle$comparison_table
+  if (is.null(bench_tbl) || nrow(bench_tbl) == 0) {
+    return(htmltools::tags$div(class = "alert alert-secondary p-3", "No data available."))
+  }
+
+  has_cbs <- "cbs_delta" %in% names(bench_tbl) && any(!is.na(bench_tbl$cbs_delta))
+
+  df_over <- bench_tbl |>
+    dplyr::filter(!is.na(rank_ap), !is.na(ap_delta), ap_delta < 0) |>
+    dplyr::arrange(ap_delta)
+
+  if (nrow(df_over) == 0) {
+    return(htmltools::tags$div(class = "alert alert-secondary text-muted my-3 p-3", "No overrated programs identified for this season."))
+  }
+
+  display_df <- df_over |>
+    dplyr::transmute(
+      Team = team,
+      Conf = if ("conference" %in% names(df_over)) conference else "-",
+      Record = if ("record" %in% names(df_over)) record else if (all(c("wins", "losses") %in% names(df_over))) paste0(wins, "-", losses) else "-",
+      `Bayes` = rank_composite,
+      `AP` = as.character(rank_ap),
+      `AP Δ` = sprintf("%+d", ap_delta),
+      `CBS` = if (has_cbs) ifelse(is.na(rank_cbs), "NR", as.character(rank_cbs)) else "-",
+      `CBS Δ` = if (has_cbs) ifelse(is.na(cbs_delta), "-", sprintf("%+d", cbs_delta)) else "-",
+      `Play Dominance (α)` = if ("alpha_median" %in% names(df_over)) sprintf("%+.1f", alpha_median) else "-",
+      `Margin (δ)` = if ("delta_median" %in% names(df_over)) sprintf("%+.1f", delta_median) else "-"
+    )
+
+  DT::datatable(
+    display_df,
+    elementId = paste0("overrated-table-", s),
+    options = list(
+      pageLength = 10,
+      lengthMenu = list(c(10, 25, -1), c("10", "25", "All")),
+      dom = "lftp",
+      order = list(list(5, "asc")),
+      columnDefs = list(
+        list(className = "dt-center", targets = c(1, 2, 3, 4, 5, 6, 7, 8, 9)),
+        list(className = "dt-left", targets = 0)
+      )
+    ),
+    rownames = FALSE,
+    class = "cell-border stripe hover compact"
+  ) |>
+    DT::formatStyle(
+      "AP Δ",
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    ) |>
+    DT::formatStyle(
+      "CBS Δ",
+      color = styleInterval(c(-0.5, 0.5), c("#c1393f", "#52514e", "#0f9a7d")),
+      fontWeight = "bold"
+    )
+}
+
+htmltools::tagList(
+  lapply(valid_seasons, function(s) {
+    b <- season_bundles[[s]]
+    year_panel(s, as.integer(s) == active_season, render_overrated_table(b, s))
+  })
+)
+```
+-->
 
 # Team Schedule
 
@@ -1199,27 +1624,27 @@ htmltools::tagList(
 ### Column {width=100%}
 
 ```{r}
-#| title: "Team-by-Team Schedule: Actual vs. EPA-Expected Result"
+#| title: "Team-by-Team Schedule: Actual vs. Expected Margin (XPD)"
 render_schedule_table <- function(log_df, s) {
   yr_data <- log_df |> dplyr::filter(season == as.integer(s))
   if (nrow(yr_data) == 0) {
     return(htmltools::tags$div(class = "alert alert-secondary m-3", "No per-game schedule data available for this season."))
   }
 
-  # Pre-sorted by (team, week_sort) in get_team_game_log(), so postseason/bowl rows
-  # already land after every regular-season week for the same team.
+  # Pre-sorted by (team, week_sort, start_date) in get_team_game_log()
   display_df <- yr_data |>
     dplyr::transmute(
       Team = team,
       Conference = conference,
+      Date = ifelse(!is.na(start_date) & nzchar(start_date), format(as.Date(substr(start_date, 1, 10)), "%b %d"), "-"),
       Week = ifelse(is.na(week_label), paste("Week", week), week_label),
       Opponent = opponent,
       `Opp Conf` = opponent_conference,
       Loc = location,
       Result = result,
-      Score = paste0(team_points, "-", opp_points),
-      `Exp. Result` = ifelse(is.na(expected_result), "-", expected_result),
-      `Net EPA (Exp. Margin)` = ifelse(is.na(net_epa), "-", sprintf("%+.2f", net_epa))
+      Score = ifelse(is.na(team_points) | is.na(opp_points), "-", paste0(team_points, "-", opp_points)),
+      `Exp. Result` = ifelse(is.na(expected_result) | expected_result == "", "-", expected_result),
+      `Exp. Margin (XPD)` = ifelse(is.na(net_epa), "-", sprintf("%+.1f", net_epa))
     )
 
   sketch_sched <- htmltools::withTags(table(
@@ -1228,6 +1653,7 @@ render_schedule_table <- function(log_df, s) {
       tr(
         th("Team"),
         th("Conference"),
+        th("Date"),
         th("Week"),
         th("Opponent"),
         th("Opp Conf"),
@@ -1235,13 +1661,14 @@ render_schedule_table <- function(log_df, s) {
         th("Result"),
         th("Score"),
         th("Exp. Result"),
-        th("Net EPA (Exp. Margin)")
+        th("Exp. Margin (XPD)")
       )
     ),
     tfoot(
       tr(
         class = "schedule-summary-row",
         th("Season Totals", style = "text-align: left;"),
+        th(""),
         th(""),
         th(""),
         th(""),
@@ -1265,9 +1692,9 @@ render_schedule_table <- function(log_df, s) {
       dom = "lftip",
       order = list(list(0, "asc")),
       columnDefs = list(
-        list(orderable = FALSE, targets = 2),
-        list(className = "dt-center", targets = c(2, 5, 6, 7, 8, 9)),
-        list(className = "dt-left", targets = c(0, 1, 3, 4))
+        list(orderable = FALSE, targets = c(2, 3)),
+        list(className = "dt-center", targets = c(2, 3, 6, 7, 8, 9, 10)),
+        list(className = "dt-left", targets = c(0, 1, 4, 5))
       )
     ),
     # DT's callback runs once this specific table is actually ready, which is the only
@@ -1283,12 +1710,12 @@ render_schedule_table <- function(log_df, s) {
   ) |>
     DT::formatStyle(
       "Result",
-      color = styleEqual(c("W", "L"), c("#0f9a7d", "#c1393f")),
+      color = styleEqual(c("W", "L", "Scheduled", "Cancelled"), c("#0f9a7d", "#c1393f", "#3a6ea5", "#64748b")),
       fontWeight = "bold"
     ) |>
     DT::formatStyle(
       "Exp. Result",
-      color = styleEqual(c("W", "L"), c("#0f9a7d", "#c1393f")),
+      color = styleEqual(c("W", "L", "-"), c("#0f9a7d", "#c1393f", "#64748b")),
       fontWeight = "bold"
     )
 }

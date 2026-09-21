@@ -806,7 +806,7 @@ get_team_game_log <- function(db_path = "data/cfb.duckdb", min_season = 2013,
         %s
       FROM schedules s
       %s
-      WHERE s.season >= %d AND s.home_points IS NOT NULL AND s.away_points IS NOT NULL
+      WHERE s.season >= %d AND s.home_team IS NOT NULL AND s.away_team IS NOT NULL
     ),
     games_home AS (
       SELECT
@@ -838,6 +838,8 @@ get_team_game_log <- function(db_path = "data/cfb.duckdb", min_season = 2013,
 
   if (nrow(res) == 0) return(tibble::tibble())
 
+  max_s <- max(res$season, na.rm = TRUE)
+
   # CFBD numbers postseason (bowl/CFP) games starting again from week 1, which otherwise
   # collides with the season's real Week 1 game and, since every postseason game shares
   # week 1, ties all bowl/CFP games together too. Give postseason rows a distinct label
@@ -852,13 +854,21 @@ get_team_game_log <- function(db_path = "data/cfb.duckdb", min_season = 2013,
         TRUE ~ paste("Week", week)
       ),
       week_sort = ifelse(is_postseason, 9000L, week),
-      result = ifelse(team_points > opp_points, "W", "L"),
-      margin = as.integer(team_points - opp_points),
+      is_played = !is.na(team_points) & !is.na(opp_points),
+      result = dplyr::case_when(
+        !is_played & season < max_s ~ "Cancelled",
+        !is_played ~ "Scheduled",
+        team_points > opp_points ~ "W",
+        team_points < opp_points ~ "L",
+        TRUE ~ "T"
+      ),
+      margin = ifelse(is_played, as.integer(team_points - opp_points), NA_integer_),
       team_epa = round(team_epa, 2),
       opp_epa = round(opp_epa, 2),
       net_epa = round(team_epa - opp_epa, 2),
       expected_result = dplyr::case_when(
-        is.na(net_epa) ~ NA_character_,
+        !is_played ~ "-",
+        is.na(net_epa) ~ "-",
         net_epa > 0 ~ "W",
         net_epa < 0 ~ "L",
         TRUE ~ "-"

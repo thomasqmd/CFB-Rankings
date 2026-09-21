@@ -322,6 +322,7 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
     dplyr::left_join(cbs_clean, by = "team_clean") |>
     dplyr::select(-team_clean) |>
     dplyr::mutate(
+      colley_delta = as.integer(rank_colley - rank_composite),
       rank_ap_imputed = ifelse(is.na(rank_ap), 30L, rank_ap), # Unranked mapped to 30 for delta calc
       ap_delta = as.integer(rank_ap_imputed - rank_composite), # Positive = Ranked higher by Bayes than AP (AP underrated)
       cbs_delta = ifelse(is.na(rank_cbs), NA_integer_, as.integer(rank_cbs - rank_composite))
@@ -360,12 +361,12 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
   most_underrated <- comparison_df |>
     dplyr::filter(ap_delta > 0) |>
     dplyr::arrange(dplyr::desc(ap_delta)) |>
-    dplyr::slice_head(n = 5)
+    dplyr::slice_head(n = 10)
   
   most_overrated <- comparison_df |>
     dplyr::filter(!is.na(rank_ap), ap_delta < 0) |>
     dplyr::arrange(ap_delta) |>
-    dplyr::slice_head(n = 5)
+    dplyr::slice_head(n = 10)
   
   bench_rows <- list(
     tibble::tibble(Benchmark = "Colley Matrix", Spearman_Rho = spearman_colley, Kendall_Tau = kendall_colley, Top25_Jaccard = jaccard_colley),
