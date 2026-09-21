@@ -104,9 +104,9 @@ where $w_{k, i} \in \{3: \text{W}, 2: \text{OTW}, 1: \text{OTL}, 0: \text{L}\}$.
 - **Buchholz (Strength of Schedule) Score:**
 $$\text{BH}_i = \sum_{k \in \text{Games}(i)} \text{logit}^{-1}(\theta_{\text{opp}[k]})$$
 
-- **4-Pipeline Composite Index:**
-$$\text{Index}_i = w_1 \Phi(Z_{\theta_i}) + w_2 \Phi(Z_{\delta_i}) + w_3 \Phi(Z_{\omega_i}) + w_4 \Phi(Z_{\alpha_i})$$
-Default weights: $w_1 = 0.35$ (WLD Resume), $w_2 = 0.25$ (PD Margin), $w_3 = 0.15$ (XWLD Exp W/L), $w_4 = 0.25$ (XPD Net EPA).
+- **Composite Index (Fusing Pipelines + Traditional Opponent Quality):**
+$$\text{Index}_i = w_1 \Phi(Z_{\theta_i}) + w_2 \Phi(Z_{\text{SB}_i}) + w_3 \Phi(Z_{\alpha_i}) + w_4 \Phi(Z_{\delta_i}) + w_5 \Phi(Z_{\omega_i}) + w_6 \Phi(Z_{\text{BH}_i})$$
+Default weights (55% Resume / 45% xResume): $w_1 = 0.20$ (WLD Resume), $w_2 = 0.15$ (Sonneborn–Berger Opponent Quality), $w_3 = 0.30$ (XPD Drive $xP$), $w_4 = 0.15$ (PD Margin), $w_5 = 0.15$ (XWLD Exp W/L), $w_6 = 0.05$ (Buchholz SOS).
 
 ---
 

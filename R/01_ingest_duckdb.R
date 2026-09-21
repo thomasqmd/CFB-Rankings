@@ -17,6 +17,59 @@ if (nzchar(Sys.getenv("CFBD_API_KEY", ""))) {
 }
 has_cfbd <- nzchar(Sys.getenv("CFBD_API_KEY", ""))
 
+#' Normalize team names to canonical forms to reconcile differences across schedules, PBP, and polls
+#' @param team Character vector of team names
+#' @return Character vector of canonical team names
+canonical_team_name <- function(team) {
+  if (is.null(team) || length(team) == 0) return(character(0))
+  t <- tolower(trimws(as.character(team)))
+  
+  # Strip punctuation, accents, and extra whitespace
+  t <- gsub("['`]", "", t)
+  t <- gsub("[.]", "", t)
+  t <- gsub("&", "and", t)
+  t <- gsub("\\s+", " ", t)
+  
+  dplyr::case_when(
+    (grepl("ole miss", t) | 
+     (grepl("mississippi", t) & !grepl("state|valley|southern", t)) | 
+     (grepl("rebels", t) & !grepl("unlv|nevada", t)) | 
+     t %in% c("miss", "um")) ~ "ole miss",
+    (grepl("charlotte", t) | t %in% c("clt", "char", "49ers")) ~ "charlotte",
+    (grepl("louisville", t) | t %in% c("lou", "lville", "cardinals")) ~ "louisville",
+    (grepl("lsu", t) | grepl("louisiana state", t)) ~ "lsu",
+    t %in% c("ul monroe", "louisiana monroe", "louisiana-monroe", "ul-monroe") ~ "ul monroe",
+    t %in% c("louisiana", "louisiana lafayette", "louisiana-lafayette", "ul lafayette", "ul-lafayette") ~ "louisiana",
+    t %in% c("miami", "miami (fl)", "miami fl", "miami (fla)", "miami fla", "miami hurricanes") ~ "miami",
+    t %in% c("miami (oh)", "miami oh", "miami (ohio)", "miami ohio", "miami redhawks", "miami university") ~ "miami (oh)",
+    t %in% c("hawaii", "hawai'i", "hawai i", "rainbow warriors") ~ "hawaii",
+    t %in% c("san jose state", "san jose st", "san josé state", "san josé st") ~ "san jose state",
+    t %in% c("southern miss", "southern mississippi", "so mississippi", "so miss") ~ "southern miss",
+    t %in% c("nc state", "north carolina state", "north carolina st", "nc st") ~ "nc state",
+    t %in% c("app state", "appalachian state", "appalachian st", "app st") ~ "app state",
+    t %in% c("sam houston", "sam houston state", "sam houston st") ~ "sam houston",
+    t %in% c("umass", "massachusetts") ~ "umass",
+    t %in% c("uconn", "connecticut") ~ "uconn",
+    t %in% c("fiu", "florida international") ~ "fiu",
+    t %in% c("fau", "florida atlantic") ~ "fau",
+    t %in% c("utep", "texas-el paso", "texas el paso") ~ "utep",
+    t %in% c("utsa", "texas-san antonio", "texas san antonio") ~ "utsa",
+    t %in% c("pitt", "pittsburgh") ~ "pitt",
+    t %in% c("ucf", "central florida") ~ "ucf",
+    t %in% c("usf", "south florida") ~ "usf",
+    t %in% c("smu", "southern methodist") ~ "smu",
+    t %in% c("tcu", "texas christian") ~ "tcu",
+    t %in% c("byu", "brigham young") ~ "byu",
+    t %in% c("army", "army west point", "army black knights") ~ "army",
+    t %in% c("navy", "navy midshipmen") ~ "navy",
+    t %in% c("middle tennessee", "middle tennessee state", "middle tennessee st", "mtsu") ~ "middle tennessee",
+    t %in% c("wku", "western kentucky") ~ "wku",
+    t %in% c("bowling green", "bowling green state", "bowling green st") ~ "bowling green",
+    t %in% c("san diego state", "san diego st", "sdsu") ~ "san diego state",
+    TRUE ~ t
+  )
+}
+
 #' Get or create DuckDB connection
 #' @param db_path Path to the DuckDB file
 #' @param read_only Logical indicating read-only access
@@ -124,9 +177,12 @@ resolve_completed_ap_week <- function(weekly_summary, now = Sys.time()) {
         if (completed_games == 0L) {
           FALSE
         } else {
-          # Check 1: Game completion threshold (>= 95% of scheduled games completed)
+          # Check 1: Game completion threshold
+          # A week is concluded if >= 60% of scheduled games are complete, OR if >= 20 games are complete
+          # (accommodates lower-tier/FCS games lacking timely score entries in external feeds)
           games_finished <- (completed_games >= total_games) || 
-                            (total_games > 0 && (completed_games / total_games) >= 0.95)
+                            (total_games > 0 && (completed_games / total_games) >= 0.60) ||
+                            (completed_games >= 20L)
           
           # Check 2: Expected AP Poll Release Time in Eastern Time
           dt_utc <- parse_iso(latest_start_date)
@@ -137,22 +193,21 @@ resolve_completed_ap_week <- function(weekly_summary, now = Sys.time()) {
             wday_val <- as.POSIXlt(game_date_et)$wday # 0=Sun, 1=Mon, ..., 6=Sat
             
             # Derive expected AP release date & time (14:00 ET = 2:00 PM Eastern)
+            # Monday game (e.g. Labor Day Monday) -> AP poll drops Tuesday 14:00 ET
+            # Sunday/Saturday slates -> AP poll drops Sunday 14:00 ET
             if (wday_val == 1L) {
-              # Monday game (e.g. Labor Day Monday) -> AP poll drops Tuesday 14:00 ET
               ap_date <- game_date_et + 1L
             } else if (wday_val == 0L) {
-              # Sunday game -> AP poll drops Monday 14:00 ET
-              ap_date <- game_date_et + 1L
+              ap_date <- game_date_et
             } else {
-              # Thursday/Friday/Saturday game -> AP poll drops Sunday 14:00 ET
               days_to_sun <- (7L - wday_val) %% 7L
               ap_date <- game_date_et + days_to_sun
             }
             
             ap_release_et <- as.POSIXct(paste0(as.character(ap_date), " 14:00:00"), tz = "America/New_York")
             
-            # Must satisfy BOTH: games are finished AND AP poll release time has passed
-            games_finished && (now_et >= ap_release_et)
+            # Eligible if games are finished and AP release time has arrived, OR if >= 25 games completed
+            (games_finished && (now_et >= ap_release_et)) || (completed_games >= 25L && now_et >= as.POSIXct(paste0(as.character(game_date_et), " 22:00:00"), tz = "America/New_York"))
           }
         }
       }
@@ -187,12 +242,17 @@ resolve_completed_ap_week <- function(weekly_summary, now = Sys.time()) {
   }
 }
 
-#' Determine the latest available season and week, checking local DuckDB first to prevent API fetches
+#' Determine the latest available season and week, checking date and DuckDB freshness
 #' @param season Optional season integer; defaults to latest available in DuckDB or calendar year
 #' @param db_path Optional path to DuckDB analytical store to check local cache first
 #' @param force_network Logical; if TRUE, forces query to cfbfastR network endpoints
-#' @return List with season and latest completed week
+#' @return List with season, latest completed week, and completed game count
 get_latest_cfb_week <- function(season = NULL, db_path = "data/cfb.duckdb", force_network = FALSE) {
+  curr_date <- Sys.Date()
+  curr_year <- as.integer(format(curr_date, "%Y"))
+  curr_month <- as.integer(format(curr_date, "%m"))
+  curr_active_season <- if (curr_month >= 8) curr_year else curr_year - 1L
+
   # 1. Check local DuckDB first to protect against unnecessary network / API requests
   if (!force_network && !is.null(db_path) && file.exists(db_path)) {
     local_info <- tryCatch({
@@ -204,35 +264,54 @@ get_latest_cfb_week <- function(season = NULL, db_path = "data/cfb.duckdb", forc
         if (length(seasons_avail) > 0) {
           target_seasons <- if (!is.null(season)) as.integer(season) else seasons_avail
           
-          for (s in target_seasons) {
-            weekly_df <- DBI::dbGetQuery(con, sprintf("
-              SELECT 
-                season,
-                week,
-                COUNT(*) as total_games,
-                COUNT(CASE WHEN home_points IS NOT NULL AND away_points IS NOT NULL THEN 1 END) as completed_games,
-                MAX(start_date) as latest_start_date
-              FROM schedules 
-              WHERE season = %d 
-              GROUP BY season, week 
-              ORDER BY week ASC
-            ", as.integer(s)))
-            
-            if (nrow(weekly_df) > 0 && sum(weekly_df$completed_games) > 0) {
-              res <- resolve_completed_ap_week(weekly_df)
-              if (!is.null(res$in_progress_week)) {
-                message(sprintf("[Season Tracker] Season %d Week %d is currently underway (AP Poll expected Sunday 14:00 ET). Evaluating latest concluded Week %d (%d games).",
-                                s, res$in_progress_week, res$week, res$n_completed_games))
-              } else {
-                message(sprintf("[Season Tracker] Using cached DuckDB state: season %d (week %d, %d completed games).",
-                                s, res$week, res$n_completed_games))
-              }
-              return(list(
-                season = as.integer(s),
-                week = as.integer(res$week),
-                n_completed_games = as.integer(res$n_completed_games)
-              ))
+          # Check if the active current season in DuckDB was synced today
+          is_active_stale <- FALSE
+          if (curr_active_season %in% target_seasons) {
+            last_sync_date <- if (DBI::dbExistsTable(con, "sync_metadata")) {
+              meta <- DBI::dbGetQuery(con, sprintf("SELECT last_sync FROM sync_metadata WHERE season = %d", curr_active_season))
+              if (nrow(meta) > 0 && !is.na(meta$last_sync[1])) as.Date(meta$last_sync[1]) else as.Date("1970-01-01")
+            } else {
+              as.Date("1970-01-01")
             }
+            if (last_sync_date < curr_date) {
+              is_active_stale <- TRUE
+            }
+          }
+
+          if (!is_active_stale) {
+            for (s in target_seasons) {
+              weekly_df <- DBI::dbGetQuery(con, sprintf("
+                SELECT 
+                  season,
+                  week,
+                  COUNT(*) as total_games,
+                  COUNT(CASE WHEN home_points IS NOT NULL AND away_points IS NOT NULL THEN 1 END) as completed_games,
+                  MAX(start_date) as latest_start_date
+                FROM schedules 
+                WHERE season = %d 
+                GROUP BY season, week 
+                ORDER BY week ASC
+              ", as.integer(s)))
+              
+              if (nrow(weekly_df) > 0 && sum(weekly_df$completed_games) > 0) {
+                res <- resolve_completed_ap_week(weekly_df)
+                if (!is.null(res$in_progress_week)) {
+                  message(sprintf("[Season Tracker] Season %d Week %d is currently underway (AP Poll expected Sunday 14:00 ET). Evaluating latest concluded Week %d (%d games).",
+                                  s, res$in_progress_week, res$week, res$n_completed_games))
+                } else {
+                  message(sprintf("[Season Tracker] Using cached DuckDB state: season %d (week %d, %d completed games).",
+                                  s, res$week, res$n_completed_games))
+                }
+                return(list(
+                  season = as.integer(s),
+                  week = as.integer(res$week),
+                  n_completed_games = as.integer(res$n_completed_games)
+                ))
+              }
+            }
+          } else {
+            message(sprintf("[Season Tracker] DuckDB for active season %d was last synced before today (%s < %s). Checking external network schedules...",
+                            curr_active_season, as.character(last_sync_date), as.character(curr_date)))
           }
         }
       }
@@ -242,15 +321,11 @@ get_latest_cfb_week <- function(season = NULL, db_path = "data/cfb.duckdb", forc
     if (!is.null(local_info)) return(local_info)
   }
 
-  # 2. Fall back to network discovery only if not in local store
+  # 2. Fall back to network discovery if not in local store or active season is stale
   if (!is.null(season)) {
     target_season <- as.integer(season)
   } else {
-    curr_date <- Sys.Date()
-    curr_year <- as.integer(format(curr_date, "%Y"))
-    curr_month <- as.integer(format(curr_date, "%m"))
-    candidate_season <- if (curr_month >= 8) curr_year else curr_year - 1
-    target_season <- candidate_season
+    target_season <- curr_active_season
   }
   
   message(sprintf("[Season Tracker] Querying external network schedules for season %d...", target_season))
@@ -391,8 +466,8 @@ ingest_pbp_data <- function(seasons, con) {
       period = as.integer(coalesce(if ("period" %in% names(pbp_raw)) pbp_raw$period else 1L, 1L)),
       clock_minutes = as.integer(coalesce(if (!is.na(clock_min_col)) pbp_raw[[clock_min_col]] else 0L, 0L)),
       clock_seconds = as.integer(coalesce(if (!is.na(clock_sec_col)) pbp_raw[[clock_sec_col]] else 0L, 0L)),
-      posteam = if (!is.na(pos_col)) as.character(pbp_raw[[pos_col]]) else NA_character_,
-      defteam = if (!is.na(def_col)) as.character(pbp_raw[[def_col]]) else NA_character_,
+      posteam = if (!is.na(pos_col)) canonical_team_name(pbp_raw[[pos_col]]) else NA_character_,
+      defteam = if (!is.na(def_col)) canonical_team_name(pbp_raw[[def_col]]) else NA_character_,
       down = as.integer(coalesce(if ("down" %in% names(pbp_raw)) pbp_raw$down else 1L, 1L)),
       distance = as.integer(coalesce(if ("distance" %in% names(pbp_raw)) pbp_raw$distance else 10L, 10L)),
       yards_to_goal = as.integer(coalesce(if ("yards_to_goal" %in% names(pbp_raw)) pbp_raw$yards_to_goal else 50L, 50L)),
@@ -450,10 +525,16 @@ list_duckdb_seasons <- function(db_path = "data/cfb.duckdb") {
 #' @param seasons Integer vector of seasons to sync (e.g. 2021:2024). If NULL, uses latest available.
 #' @param db_path File path to DuckDB
 #' @param full_refresh Logical to force re-fetch
+#' @param current_season_info Optional current season info list from get_latest_cfb_week
 #' @return Summary list of synced records
-pull_and_sync_duckdb <- function(seasons = NULL, db_path = "data/cfb.duckdb", full_refresh = FALSE) {
-  latest_info <- get_latest_cfb_week(if (length(seasons) > 0) max(seasons) else NULL, db_path = db_path)
-  target_seasons <- if (!is.null(seasons)) as.integer(seasons) else latest_info$season
+pull_and_sync_duckdb <- function(seasons = NULL, db_path = "data/cfb.duckdb", full_refresh = FALSE, current_season_info = NULL) {
+  target_seasons <- if (!is.null(seasons)) {
+    as.integer(seasons)
+  } else if (!is.null(current_season_info)) {
+    as.integer(current_season_info$season)
+  } else {
+    get_latest_cfb_week(db_path = db_path)$season
+  }
   
   con <- get_duckdb_connection(db_path, read_only = FALSE)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
@@ -481,8 +562,13 @@ pull_and_sync_duckdb <- function(seasons = NULL, db_path = "data/cfb.duckdb", fu
       # Data already present for a completed season -> strictly no API/network fetch
       FALSE
     } else {
-      # Current active season: only refresh if older than 24 hours
-      as.numeric(difftime(Sys.time(), metadata$last_sync[1], units = "hours")) > 24
+      # Current active season: refresh if last sync was before today,
+      # if >= 3 hours elapsed, or if current_season_info has more completed games than DuckDB
+      last_sync_time <- as.POSIXct(metadata$last_sync[1])
+      (as.Date(last_sync_time) < Sys.Date()) ||
+        (as.numeric(difftime(Sys.time(), last_sync_time, units = "hours")) >= 3) ||
+        (!is.null(current_season_info) && !is.null(current_season_info$n_completed_games) && 
+         current_season_info$n_completed_games > metadata$games_count[1])
     }
     
     if (needs_sync) {
@@ -505,6 +591,7 @@ pull_and_sync_duckdb <- function(seasons = NULL, db_path = "data/cfb.duckdb", fu
     }
   }
   
+  latest_info <- get_latest_cfb_week(if (length(target_seasons) > 0) max(target_seasons) else NULL, db_path = db_path)
   summary_stats <- DBI::dbGetQuery(con, "SELECT * FROM sync_metadata ORDER BY season DESC")
   return(list(
     db_path = db_path,
@@ -601,7 +688,8 @@ get_multi_season_records <- function(db_path = "data/cfb.duckdb", min_season = 2
 #' @return Tibble with one row per team per game: opponent, location, actual result/score,
 #'   and expected result/margin derived from cumulative net EPA
 get_team_game_log <- function(db_path = "data/cfb.duckdb", min_season = 2013,
-                               filter_garbage_time = TRUE, garbage_threshold = 28) {
+                               filter_garbage_time = TRUE, garbage_threshold = 28,
+                               version = "v5_drive_xg") {
   if (!file.exists(db_path)) return(tibble::tibble())
 
   con <- tryCatch(get_duckdb_connection(db_path, read_only = TRUE), error = function(e) NULL)
@@ -612,29 +700,101 @@ get_team_game_log <- function(db_path = "data/cfb.duckdb", min_season = 2013,
   has_pbp <- DBI::dbExistsTable(con, "pbp")
 
   if (has_pbp) {
-    garbage_clause <- if (filter_garbage_time) {
-      sprintf("AND NOT (p.period >= 3 AND ABS(p.home_score - p.away_score) > %d)", as.integer(garbage_threshold))
-    } else {
-      ""
-    }
     epa_join <- sprintf("
       LEFT JOIN (
-        SELECT
-          p.game_id,
-          SUM(CASE WHEN LOWER(TRIM(p.posteam)) = LOWER(TRIM(s2.home_team)) THEN p.epa ELSE 0 END) AS home_epa_total,
-          SUM(CASE WHEN LOWER(TRIM(p.posteam)) = LOWER(TRIM(s2.away_team)) THEN p.epa ELSE 0 END) AS away_epa_total,
-          COUNT(*) AS total_plays
-        FROM pbp p
-        JOIN schedules s2 ON p.game_id = s2.game_id
-        WHERE s2.season >= %d AND p.epa IS NOT NULL %s
-        GROUP BY p.game_id
-        HAVING COUNT(*) >= 40
+        WITH plays AS (
+          SELECT 
+            p.game_id, p.period, p.posteam, p.yards_to_goal, p.home_score, p.away_score,
+            s2.home_team, s2.away_team,
+            CASE 
+              WHEN LOWER(TRIM(p.posteam)) = LOWER(TRIM(s2.home_team))
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%miss%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%miss%%%%')
+                OR (LOWER(TRIM(s2.home_team)) = 'lsu' AND LOWER(TRIM(p.posteam)) LIKE '%%%%louisiana state%%%%')
+                OR (LOWER(TRIM(s2.home_team)) = 'louisiana state' AND LOWER(TRIM(p.posteam)) = 'lsu')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%appalachian%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%app%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%nc state%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%north carolina state%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%monroe%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%monroe%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%lafayette%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%louisiana%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%hawai%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%hawai%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%san jos%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%san jos%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%southern miss%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%southern miss%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%sam houston%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%sam houston%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%massachusetts%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%umass%%%%')
+                OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%connecticut%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%uconn%%%%')
+                OR (LOWER(TRIM(COALESCE(p.defteam, ''))) = LOWER(TRIM(s2.away_team)) AND LOWER(TRIM(COALESCE(p.posteam, ''))) != LOWER(TRIM(s2.away_team)))
+              THEN 1
+              WHEN LOWER(TRIM(p.posteam)) = LOWER(TRIM(s2.away_team))
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%miss%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%miss%%%%')
+                OR (LOWER(TRIM(s2.away_team)) = 'lsu' AND LOWER(TRIM(p.posteam)) LIKE '%%%%louisiana state%%%%')
+                OR (LOWER(TRIM(s2.away_team)) = 'louisiana state' AND LOWER(TRIM(p.posteam)) = 'lsu')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%appalachian%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%app%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%nc state%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%north carolina state%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%monroe%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%monroe%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%lafayette%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%louisiana%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%hawai%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%hawai%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%san jos%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%san jos%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%southern miss%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%southern miss%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%sam houston%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%sam houston%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%massachusetts%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%umass%%%%')
+                OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%connecticut%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%uconn%%%%')
+                OR (LOWER(TRIM(COALESCE(p.defteam, ''))) = LOWER(TRIM(s2.home_team)) AND LOWER(TRIM(COALESCE(p.posteam, ''))) != LOWER(TRIM(s2.home_team)))
+              THEN 2
+              ELSE 0
+            END as side,
+            p.play_id,
+            p.clock_minutes,
+            p.clock_seconds
+          FROM pbp p
+          JOIN schedules s2 ON p.game_id = s2.game_id
+          WHERE s2.season >= %d AND p.posteam IS NOT NULL AND p.yards_to_goal IS NOT NULL
+        ),
+        flagged AS (
+          SELECT *,
+            CASE WHEN LAG(side) OVER (PARTITION BY game_id ORDER BY period ASC, (COALESCE(clock_minutes, 0) * 60 + COALESCE(clock_seconds, 0)) DESC, CAST(play_id AS BIGINT) ASC) != side 
+                 OR LAG(side) OVER (PARTITION BY game_id ORDER BY period ASC, (COALESCE(clock_minutes, 0) * 60 + COALESCE(clock_seconds, 0)) DESC, CAST(play_id AS BIGINT) ASC) IS NULL 
+                 THEN 1 ELSE 0 END as new_drive
+          FROM plays
+          WHERE side > 0
+        ),
+        drives AS (
+          SELECT game_id, side,
+            SUM(new_drive) OVER (PARTITION BY game_id ORDER BY period ASC, (COALESCE(clock_minutes, 0) * 60 + COALESCE(clock_seconds, 0)) DESC, CAST(play_id AS BIGINT) ASC) as drive_id,
+            yards_to_goal, home_score, away_score
+          FROM flagged
+        ),
+        drive_summary AS (
+          SELECT game_id, side, drive_id,
+            MIN(yards_to_goal) as min_ytg,
+            MAX(CASE WHEN side = 1 THEN home_score ELSE away_score END) - 
+            MIN(CASE WHEN side = 1 THEN home_score ELSE away_score END) as pts_gained
+          FROM drives
+          GROUP BY game_id, side, drive_id
+        ),
+        drive_xp AS (
+          SELECT game_id, side,
+            CASE 
+              WHEN pts_gained >= 6 OR min_ytg = 0 THEN 7.0
+              WHEN pts_gained = 3 THEN GREATEST(3.0, 4.5 - 0.05 * min_ytg)
+              WHEN min_ytg <= 10 THEN 5.5 - 0.05 * min_ytg
+              WHEN min_ytg <= 25 THEN 4.5 - 0.067 * (min_ytg - 10)
+              WHEN min_ytg <= 40 THEN 3.5 - 0.10 * (min_ytg - 25)
+              WHEN min_ytg <= 60 THEN 2.0 - 0.075 * (min_ytg - 40)
+              ELSE 0.2
+            END as xp
+          FROM drive_summary
+        )
+        SELECT 
+          game_id,
+          ROUND(SUM(CASE WHEN side = 1 THEN xp ELSE 0 END), 2) as home_epa_total,
+          ROUND(SUM(CASE WHEN side = 2 THEN xp ELSE 0 END), 2) as away_epa_total
+        FROM drive_xp
+        GROUP BY game_id
       ) ge ON s.game_id = ge.game_id
-    ", as.integer(min_season), garbage_clause)
-    epa_select <- "ge.home_epa_total, ge.away_epa_total,"
+    ", as.integer(min_season))
+    epa_select <- "ge.home_epa_total, ge.away_epa_total"
   } else {
     epa_join <- ""
-    epa_select <- "CAST(NULL AS DOUBLE) AS home_epa_total, CAST(NULL AS DOUBLE) AS away_epa_total,"
+    epa_select <- "CAST(NULL AS DOUBLE) AS home_epa_total, CAST(NULL AS DOUBLE) AS away_epa_total"
   }
 
   q <- sprintf("

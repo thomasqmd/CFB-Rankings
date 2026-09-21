@@ -39,10 +39,14 @@ tar_source("R")
 
 # Pipeline Target Graph Definition
 list(
-  # 1. Target Seasons configuration & Week tracker (checks local DuckDB first)
+  # 1. Target Seasons configuration & Week tracker
+  # Always checks the current date and DuckDB freshness on every tar_make() run.
+  # If DuckDB for the active season is not up to date as of today's date,
+  # it queries the latest external schedule and determines the active week.
   tar_target(
     name = current_season_info,
-    command = get_latest_cfb_week(db_path = "data/cfb.duckdb")
+    command = get_latest_cfb_week(db_path = "data/cfb.duckdb"),
+    cue = tar_cue(mode = "always")
   ),
   
   # Multi-season historical sync vector: all seasons back to 2013/2014 (BCS finale & CFP era)
@@ -51,12 +55,14 @@ list(
     command = c(2013L:current_season_info$season)
   ),
   
-  # 2. Sync analytical store (DuckDB) across all historical and current seasons
+  # 2. Sync analytical store (DuckDB) across all historical and current seasons.
+  # Re-syncs DuckDB when current_season_info detects new games or a new week.
   tar_target(
     name = duckdb_sync,
     command = pull_and_sync_duckdb(
       seasons = active_seasons, 
-      db_path = "data/cfb.duckdb"
+      db_path = "data/cfb.duckdb",
+      current_season_info = current_season_info
     )
   ),
   
@@ -74,18 +80,20 @@ list(
     name = team_game_logs,
     command = get_team_game_log(
       db_path = duckdb_sync$db_path,
-      min_season = 2013
+      min_season = 2013,
+      version = "v5_drive_xg"
     )
   ),
 
-  # 3. Transform PBP & Schedules into 4 Modeling Datasets
+  # 3. Transform PBP & Schedules into 4 Modeling Datasets (re-evaluates with canonical EPA matching)
   tar_target(
     name = modeling_data,
     command = transform_all_pipelines(
       season = current_season_info$season,
       max_week = current_season_info$week,
       db_path = duckdb_sync$db_path,
-      filter_garbage_time = TRUE
+      filter_garbage_time = TRUE,
+      version = "v5_drive_xg"
     )
   ),
   
@@ -129,7 +137,7 @@ list(
       iter_warmup = 1000,
       iter_sampling = 1000,
       adapt_delta = 0.95,
-      warm_start = TRUE,
+      warm_start = FALSE,
       warm_start_warmup = 300
     )
   ),
@@ -144,7 +152,7 @@ list(
       iter_warmup = 1000,
       iter_sampling = 1000,
       adapt_delta = 0.95,
-      warm_start = TRUE,
+      warm_start = FALSE,
       warm_start_warmup = 300
     )
   ),
@@ -216,7 +224,8 @@ list(
       fit_xwld = fit_xwld,
       fit_xpd = fit_xpd,
       team_lookup = modeling_data$team_lookup,
-      weights = c(wld = 0.35, pd = 0.25, xwld = 0.15, xpd = 0.25)
+      wld_df = modeling_data$wld_df,
+      weights = c(wld = 0.20, sb = 0.15, pd = 0.15, sos = 0.05, xpd = 0.30, xwld = 0.15)
     )
   ),
   
@@ -233,8 +242,7 @@ list(
   tar_target(
     name = external_polls,
     command = fetch_external_polls(
-      season = current_season_info$season,
-      week = current_season_info$week
+      season = current_season_info$season
     )
   ),
 

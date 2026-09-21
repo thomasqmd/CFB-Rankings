@@ -96,7 +96,7 @@ if (has_targets) {
   p_om <- stats::pnorm(scale(om))
   p_al <- stats::pnorm(scale(al))
   
-  comp_idx <- round(0.35 * p_th + 0.25 * p_dl + 0.15 * p_om + 0.25 * p_al, 3)
+  comp_idx <- round(0.35 * p_th + 0.30 * p_al + 0.20 * p_dl + 0.15 * p_om, 3)
   r_comp <- rank(-comp_idx)
   r_w <- rank(-th)
   r_p <- rank(-dl)

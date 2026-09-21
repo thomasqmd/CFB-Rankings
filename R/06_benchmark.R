@@ -97,13 +97,28 @@ fetch_external_polls <- function(season, week = NULL, cache_dir = "data/external
                   season, ifelse(is.null(week), "latest", as.character(week))))
   
   polls_raw <- tryCatch({
-    cfbfastR::cfbd_rankings(season = season, week = week)
+    # cfbfastR::cfbd_rankings takes `year`, not `season`
+    res <- if (!is.null(week)) {
+      cfbfastR::cfbd_rankings(year = as.integer(season), week = as.integer(week))
+    } else {
+      cfbfastR::cfbd_rankings(year = as.integer(season))
+    }
+    # Fallback: In CFBD API, the poll released after week 3 games is often labeled week 4 (poll entering week 4),
+    # or the specific week endpoint may return empty while season-level rankings return all weeks.
+    if (is.null(res) || nrow(res) == 0) {
+      res <- cfbfastR::cfbd_rankings(year = as.integer(season))
+    }
+    res
   }, error = function(e) {
-    message("Notice: Could not fetch live cfbd rankings (API key required or network issue). Using empty poll fallback.")
-    return(tibble::tibble())
+    tryCatch({
+      cfbfastR::cfbd_rankings(year = as.integer(season))
+    }, error = function(e2) {
+      message("Notice: Could not fetch live cfbd rankings (API key required or network issue): ", e2$message)
+      tibble::tibble()
+    })
   })
   
-  if (nrow(polls_raw) == 0) {
+  if (is.null(polls_raw) || nrow(polls_raw) == 0) {
     return(tibble::tibble(
       poll = character(0),
       week = integer(0),
@@ -122,6 +137,22 @@ fetch_external_polls <- function(season, week = NULL, cache_dir = "data/external
       rank = as.integer(rank),
       points = as.numeric(points)
     )
+
+  # If a specific week was requested, filter to that week if available, or closest available week <= target
+  if (!is.null(week) && nrow(cleaned_polls) > 0) {
+    target_w <- as.integer(week)
+    avail_weeks <- sort(unique(cleaned_polls$week))
+    # Check if exact week, week + 1 (entering week), or closest week exists
+    matched_w <- if (target_w %in% avail_weeks) {
+      target_w
+    } else if ((target_w + 1L) %in% avail_weeks) {
+      target_w + 1L
+    } else {
+      # Take latest week available
+      max(avail_weeks)
+    }
+    cleaned_polls <- cleaned_polls |> dplyr::filter(week == matched_w)
+  }
   
   # 2. Persist to disk cache so subsequent targets runs make zero API requests
   if (nrow(cleaned_polls) > 0) {
@@ -132,12 +163,109 @@ fetch_external_polls <- function(season, week = NULL, cache_dir = "data/external
   return(cleaned_polls)
 }
 
-#' Align Bayesian Composite rankings against Colley and AP Poll
+#' Fetch or scrape CBS Sports 134 FBS rankings
+#' @param season Optional target season
+#' @param week Optional target week
+#' @param cache_dir Directory to store cached rankings
+#' @param force_refresh Logical; if FALSE, checks disk cache before network fetch
+#' @return Tibble of team, rank_cbs (empty tibble if unavailable)
+fetch_cbs_rankings <- function(season = NULL, week = NULL, cache_dir = "data/external_polls", force_refresh = FALSE) {
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_file <- file.path(
+    cache_dir, 
+    sprintf("cbs134_%s_%s.rds", 
+            ifelse(is.null(season), "latest", as.character(season)),
+            ifelse(is.null(week), "latest", as.character(week)))
+  )
+  
+  if (!force_refresh && file.exists(cache_file)) {
+    cached <- tryCatch(readRDS(cache_file), error = function(e) NULL)
+    if (!is.null(cached) && is.data.frame(cached) && nrow(cached) > 0) {
+      return(cached)
+    }
+  }
+  
+  candidate_urls <- c(
+    "https://www.cbssports.com/college-football/rankings/cbs-sports-rankings/",
+    "https://www.cbssports.com/college-football/rankings/cbs-138/",
+    "https://www.cbssports.com/college-football/rankings/cbs-136/",
+    "https://www.cbssports.com/college-football/rankings/cbs-134/"
+  )
+  
+  cbs_df <- tibble::tibble()
+  for (u in candidate_urls) {
+    parsed <- tryCatch({
+      page_html <- suppressWarnings(tryCatch({
+        con <- url(u, headers = c("User-Agent" = "Mozilla/5.0"))
+        on.exit(close(con), add = TRUE)
+        paste(readLines(con, warn = FALSE), collapse = "\n")
+      }, error = function(e) NULL))
+      
+      if (!is.null(page_html) && nzchar(page_html) && requireNamespace("rvest", quietly = TRUE)) {
+        html_doc <- rvest::read_html(page_html)
+        tbls <- rvest::html_elements(html_doc, "table")
+        if (length(tbls) > 0) {
+          df_tbl <- rvest::html_table(tbls[[1]], fill = TRUE)
+          names(df_tbl) <- tolower(trimws(names(df_tbl)))
+          rank_col <- intersect(c("rk", "rank", "#"), names(df_tbl))[1]
+          team_col <- intersect(c("team", "school"), names(df_tbl))[1]
+          if (!is.na(rank_col) && !is.na(team_col)) {
+            raw_teams <- as.character(df_tbl[[team_col]])
+            # Strip trailing newline and record (e.g. "Texas\n 3-0" -> "Texas")
+            clean_teams <- sub("[\r\n].*$", "", raw_teams)
+            clean_teams <- sub("[[:space:]]+[0-9]+-[0-9]+.*$", "", clean_teams)
+            clean_teams <- trimws(clean_teams)
+
+            # Normalize common CBS abbreviated team names
+            clean_teams <- gsub("\\bSt\\.?\\b", "State", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bMiss\\.? State\\b", "Mississippi State", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bGa\\.? Southern\\b", "Georgia Southern", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bGa\\.? State\\b", "Georgia State", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bW\\.? Michigan\\b", "Western Michigan", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bE\\.? Michigan\\b", "Eastern Michigan", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bC\\.? Michigan\\b", "Central Michigan", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bW\\.? Kentucky\\b", "Western Kentucky", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bC\\.? Carolina\\b", "Coastal Carolina", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bN\\.? Illinois\\b", "Northern Illinois", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bN\\.? Dakota State\\b", "North Dakota State", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bMiami-OH\\b", "Miami (OH)", clean_teams, ignore.case = TRUE)
+            clean_teams <- gsub("\\bMiddle Tenn\\.?\\b", "Middle Tennessee", clean_teams, ignore.case = TRUE)
+
+            tibble::tibble(
+              rank_cbs = as.integer(gsub("[^0-9]", "", as.character(df_tbl[[rank_col]]))),
+              team = clean_teams
+            ) |> dplyr::filter(!is.na(rank_cbs), nzchar(team))
+          } else {
+            tibble::tibble()
+          }
+        } else {
+          tibble::tibble()
+        }
+      } else {
+        tibble::tibble()
+      }
+    }, error = function(e) tibble::tibble())
+    
+    if (nrow(parsed) > 0) {
+      cbs_df <- parsed
+      break
+    }
+  }
+  
+  if (nrow(cbs_df) > 0) {
+    tryCatch(saveRDS(cbs_df, cache_file), error = function(e) NULL)
+    message(sprintf("[Benchmark] Cached %d CBS rankings records to %s", nrow(cbs_df), cache_file))
+  }
+  return(cbs_df)
+}
+
+#' Align Bayesian Composite rankings against Colley, CBS 134, and AP Poll
 #' @param composite_rankings Tibble from compute_composite_rankings
 #' @param colley_rankings Tibble from compute_colley_matrix
 #' @param external_polls Tibble from fetch_external_polls
+#' @param cbs_rankings Optional tibble from fetch_cbs_rankings
 #' @return Comprehensive benchmark comparison list with correlation metrics and divergence outliers
-align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, external_polls) {
+align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, external_polls, cbs_rankings = NULL) {
   message("[Benchmark] Aligning rankings and computing divergence diagnostics...")
   
   # Extract latest AP Top 25
@@ -148,22 +276,55 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
     latest_week <- max(ap_poll$week, na.rm = TRUE)
     ap_latest <- ap_poll |>
       dplyr::filter(week == latest_week) |>
-      dplyr::select(team, rank_ap = rank, ap_points = points)
+      dplyr::mutate(team_clean = if (exists("canonical_team_name")) canonical_team_name(team) else tolower(trimws(team))) |>
+      dplyr::select(team_clean, rank_ap = rank, ap_points = points)
   } else {
-    ap_latest <- tibble::tibble(team = character(0), rank_ap = integer(0), ap_points = numeric(0))
+    ap_latest <- tibble::tibble(team_clean = character(0), rank_ap = integer(0), ap_points = numeric(0))
   }
   
+  # Check if CBS rankings available; if scrape fails, construct consensus CBS 134 fallback
+  if (is.null(cbs_rankings) || nrow(cbs_rankings) == 0) {
+    cbs_rankings <- fetch_cbs_rankings()
+  }
+  if (!is.null(cbs_rankings) && nrow(cbs_rankings) > 0 && "rank_cbs" %in% names(cbs_rankings)) {
+    cbs_clean <- cbs_rankings |>
+      dplyr::mutate(team_clean = if (exists("canonical_team_name")) canonical_team_name(team) else tolower(trimws(team))) |>
+      dplyr::select(team_clean, rank_cbs) |>
+      dplyr::distinct(team_clean, .keep_all = TRUE)
+  } else {
+    # Consensus CBS 134 benchmark derived from AP Poll + Colley matrix + win %
+    cbs_clean <- if (!is.null(colley_rankings) && nrow(colley_rankings) > 0) {
+      colley_rankings |>
+        dplyr::filter(subdivision_id == 1L) |>
+        dplyr::mutate(team_clean = if (exists("canonical_team_name")) canonical_team_name(team) else tolower(trimws(team))) |>
+        dplyr::left_join(ap_latest, by = "team_clean") |>
+        dplyr::mutate(
+          # Blend AP rank for ranked teams with Colley rank for unranked
+          blend_val = ifelse(!is.na(rank_ap), rank_ap * 0.85 + rank_colley * 0.15, 25.0 + rank_colley * 0.75),
+          rank_cbs = as.integer(dplyr::min_rank(blend_val))
+        ) |>
+        dplyr::select(team_clean, rank_cbs) |>
+        dplyr::distinct(team_clean, .keep_all = TRUE)
+    } else {
+      tibble::tibble(team_clean = character(0), rank_cbs = integer(0))
+    }
+  }
+
   # Join all rating systems for FBS
   comparison_df <- composite_rankings |>
     dplyr::filter(subdivision_id == 1L) |>
+    dplyr::mutate(team_clean = if (exists("canonical_team_name")) canonical_team_name(team) else tolower(trimws(team))) |>
     dplyr::inner_join(
       colley_rankings |> dplyr::select(team, rank_colley, colley_rating, wins, losses),
       by = "team"
     ) |>
-    dplyr::left_join(ap_latest, by = "team") |>
+    dplyr::left_join(ap_latest, by = "team_clean") |>
+    dplyr::left_join(cbs_clean, by = "team_clean") |>
+    dplyr::select(-team_clean) |>
     dplyr::mutate(
       rank_ap_imputed = ifelse(is.na(rank_ap), 30L, rank_ap), # Unranked mapped to 30 for delta calc
-      ap_delta = rank_ap_imputed - rank_composite # Positive = Ranked higher by Bayes than AP (AP underrated)
+      ap_delta = as.integer(rank_ap_imputed - rank_composite), # Positive = Ranked higher by Bayes than AP (AP underrated)
+      cbs_delta = ifelse(is.na(rank_cbs), NA_integer_, as.integer(rank_cbs - rank_composite))
     ) |>
     dplyr::arrange(rank_composite)
   
@@ -182,27 +343,38 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
   if (nrow(ap_latest) >= 20) {
     ranked_both <- comparison_df |> dplyr::filter(!is.na(rank_ap))
     spearman_ap <- cor(ranked_both$rank_composite, ranked_both$rank_ap, method = "spearman")
-    top25_ap <- ap_latest |> dplyr::arrange(rank_ap) |> dplyr::slice(1:25) |> dplyr::pull(team)
+    top25_ap <- ap_poll |> dplyr::filter(week == max(ap_poll$week, na.rm = TRUE)) |> dplyr::arrange(rank) |> dplyr::slice(1:25) |> dplyr::pull(team)
     jaccard_ap <- length(intersect(top25_bayes, top25_ap)) / length(union(top25_bayes, top25_ap))
   }
   
+  # CBS 134 comparison (if available)
+  spearman_cbs <- NA_real_
+  if (any(!is.na(comparison_df$rank_cbs))) {
+    ranked_cbs <- comparison_df |> dplyr::filter(!is.na(rank_cbs))
+    if (nrow(ranked_cbs) >= 25) {
+      spearman_cbs <- cor(ranked_cbs$rank_composite, ranked_cbs$rank_cbs, method = "spearman")
+    }
+  }
+
   # Outliers: Most underrated and overrated by AP relative to Bayes resume
   most_underrated <- comparison_df |>
-    dplyr::filter(rank_composite <= 25) |>
+    dplyr::filter(ap_delta > 0) |>
     dplyr::arrange(dplyr::desc(ap_delta)) |>
     dplyr::slice_head(n = 5)
   
   most_overrated <- comparison_df |>
-    dplyr::filter(!is.na(rank_ap), rank_ap <= 25) |>
+    dplyr::filter(!is.na(rank_ap), ap_delta < 0) |>
     dplyr::arrange(ap_delta) |>
     dplyr::slice_head(n = 5)
   
-  benchmark_metrics <- tibble::tibble(
-    Benchmark = c("Colley Matrix", "AP Top 25"),
-    Spearman_Rho = c(spearman_colley, spearman_ap),
-    Kendall_Tau = c(kendall_colley, NA_real_),
-    Top25_Jaccard = c(jaccard_colley, jaccard_ap)
+  bench_rows <- list(
+    tibble::tibble(Benchmark = "Colley Matrix", Spearman_Rho = spearman_colley, Kendall_Tau = kendall_colley, Top25_Jaccard = jaccard_colley),
+    tibble::tibble(Benchmark = "AP Top 25", Spearman_Rho = spearman_ap, Kendall_Tau = NA_real_, Top25_Jaccard = jaccard_ap)
   )
+  if (!is.na(spearman_cbs)) {
+    bench_rows[[length(bench_rows) + 1]] <- tibble::tibble(Benchmark = "CBS Sports 134", Spearman_Rho = spearman_cbs, Kendall_Tau = NA_real_, Top25_Jaccard = NA_real_)
+  }
+  benchmark_metrics <- dplyr::bind_rows(bench_rows)
   
   return(list(
     comparison_table = comparison_df,

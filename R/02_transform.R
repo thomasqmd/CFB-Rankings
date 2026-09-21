@@ -11,6 +11,55 @@ library(dplyr)
 library(tidyr)
 library(stringr)
 
+if (!exists("canonical_team_name", mode = "function")) {
+  canonical_team_name <- function(team) {
+    if (is.null(team) || length(team) == 0) return(character(0))
+    t <- tolower(trimws(as.character(team)))
+    t <- gsub("['`]", "", t)
+    t <- gsub("[.]", "", t)
+    t <- gsub("&", "and", t)
+    t <- gsub("\\s+", " ", t)
+    dplyr::case_when(
+      (grepl("ole miss", t) | 
+       (grepl("mississippi", t) & !grepl("state|valley|southern", t)) | 
+       (grepl("rebels", t) & !grepl("unlv|nevada", t)) | 
+       t %in% c("miss", "um")) ~ "ole miss",
+      (grepl("charlotte", t) | t %in% c("clt", "char", "49ers")) ~ "charlotte",
+      (grepl("louisville", t) | t %in% c("lou", "lville", "cardinals")) ~ "louisville",
+      (grepl("lsu", t) | grepl("louisiana state", t)) ~ "lsu",
+      t %in% c("ul monroe", "louisiana monroe", "louisiana-monroe", "ul-monroe") ~ "ul monroe",
+      t %in% c("louisiana", "louisiana lafayette", "louisiana-lafayette", "ul lafayette", "ul-lafayette") ~ "louisiana",
+      t %in% c("miami", "miami (fl)", "miami fl", "miami (fla)", "miami fla", "miami hurricanes") ~ "miami",
+      t %in% c("miami (oh)", "miami oh", "miami (ohio)", "miami ohio", "miami redhawks", "miami university") ~ "miami (oh)",
+      t %in% c("hawaii", "hawai'i", "hawai i", "rainbow warriors") ~ "hawaii",
+      t %in% c("san jose state", "san jose st", "san josé state", "san josé st") ~ "san jose state",
+      t %in% c("southern miss", "southern mississippi", "so mississippi", "so miss") ~ "southern miss",
+      t %in% c("nc state", "north carolina state", "north carolina st", "nc st") ~ "nc state",
+      t %in% c("app state", "appalachian state", "appalachian st", "app st") ~ "app state",
+      t %in% c("sam houston", "sam houston state", "sam houston st") ~ "sam houston",
+      t %in% c("umass", "massachusetts") ~ "umass",
+      t %in% c("uconn", "connecticut") ~ "uconn",
+      t %in% c("fiu", "florida international") ~ "fiu",
+      t %in% c("fau", "florida atlantic") ~ "fau",
+      t %in% c("utep", "texas-el paso", "texas el paso") ~ "utep",
+      t %in% c("utsa", "texas-san antonio", "texas san antonio") ~ "utsa",
+      t %in% c("pitt", "pittsburgh") ~ "pitt",
+      t %in% c("ucf", "central florida") ~ "ucf",
+      t %in% c("usf", "south florida") ~ "usf",
+      t %in% c("smu", "southern methodist") ~ "smu",
+      t %in% c("tcu", "texas christian") ~ "tcu",
+      t %in% c("byu", "brigham young") ~ "byu",
+      t %in% c("army", "army west point", "army black knights") ~ "army",
+      t %in% c("navy", "navy midshipmen") ~ "navy",
+      t %in% c("middle tennessee", "middle tennessee state", "middle tennessee st", "mtsu") ~ "middle tennessee",
+      t %in% c("wku", "western kentucky") ~ "wku",
+      t %in% c("bowling green", "bowling green state", "bowling green st") ~ "bowling green",
+      t %in% c("san diego state", "san diego st", "sdsu") ~ "san diego state",
+      TRUE ~ t
+    )
+  }
+}
+
 #' Build master team lookup dictionary
 #' @param sched_df Cleaned schedules data frame
 #' @return Tibble of unique teams with integer IDs and division indicators (1=FBS, 2=FCS)
@@ -162,31 +211,109 @@ build_pd_dataset <- function(con, season, team_lookup, max_week = NULL) {
 #' @param garbage_threshold Absolute point threshold in 2nd half (default: 28 points)
 #' @return Cleaned tibble of game-level net EPA differential (XPD)
 build_xpd_dataset <- function(con, season, team_lookup, max_week = NULL, filter_garbage_time = TRUE, garbage_threshold = 28) {
-  # Query play-by-play joined with schedule metadata
-  query <- if (!is.null(max_week)) {
-    sprintf("
-      SELECT p.game_id, p.period, p.posteam, p.defteam, p.epa,
-             s.neutral_site, s.home_team, s.away_team,
-             abs(p.home_score - p.away_score) AS score_diff
-      FROM pbp p
-      JOIN schedules s ON p.game_id = s.game_id
-      WHERE s.season = %d AND s.week <= %d AND p.epa IS NOT NULL
-    ", season, as.integer(max_week))
-  } else {
-    sprintf("
-      SELECT p.game_id, p.period, p.posteam, p.defteam, p.epa,
-             s.neutral_site, s.home_team, s.away_team,
-             abs(p.home_score - p.away_score) AS score_diff
-      FROM pbp p
-      JOIN schedules s ON p.game_id = s.game_id
-      WHERE s.season = %d AND p.epa IS NOT NULL
-    ", season)
-  }
+  week_clause <- if (!is.null(max_week)) sprintf("AND s2.week <= %d", as.integer(max_week)) else ""
   
-  raw_pbp <- DBI::dbGetQuery(con, query)
+  query <- sprintf("
+    WITH plays AS (
+      SELECT 
+        p.game_id, p.period, p.posteam, p.yards_to_goal, p.home_score, p.away_score,
+        s2.home_team, s2.away_team, s2.neutral_site,
+        CASE 
+          WHEN LOWER(TRIM(p.posteam)) = LOWER(TRIM(s2.home_team))
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%miss%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%miss%%%%')
+            OR (LOWER(TRIM(s2.home_team)) = 'lsu' AND LOWER(TRIM(p.posteam)) LIKE '%%%%louisiana state%%%%')
+            OR (LOWER(TRIM(s2.home_team)) = 'louisiana state' AND LOWER(TRIM(p.posteam)) = 'lsu')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%appalachian%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%app%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%nc state%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%north carolina state%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%monroe%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%monroe%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%lafayette%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%louisiana%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%hawai%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%hawai%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%san jos%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%san jos%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%southern miss%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%southern miss%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%sam houston%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%sam houston%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%massachusetts%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%umass%%%%')
+            OR (LOWER(TRIM(s2.home_team)) LIKE '%%%%connecticut%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%uconn%%%%')
+            OR (LOWER(TRIM(COALESCE(p.defteam, ''))) = LOWER(TRIM(s2.away_team)) AND LOWER(TRIM(COALESCE(p.posteam, ''))) != LOWER(TRIM(s2.away_team)))
+          THEN 1
+          WHEN LOWER(TRIM(p.posteam)) = LOWER(TRIM(s2.away_team))
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%miss%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%miss%%%%')
+            OR (LOWER(TRIM(s2.away_team)) = 'lsu' AND LOWER(TRIM(p.posteam)) LIKE '%%%%louisiana state%%%%')
+            OR (LOWER(TRIM(s2.away_team)) = 'louisiana state' AND LOWER(TRIM(p.posteam)) = 'lsu')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%appalachian%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%app%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%nc state%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%north carolina state%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%monroe%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%monroe%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%lafayette%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%louisiana%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%hawai%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%hawai%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%san jos%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%san jos%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%southern miss%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%southern miss%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%sam houston%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%sam houston%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%massachusetts%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%umass%%%%')
+            OR (LOWER(TRIM(s2.away_team)) LIKE '%%%%connecticut%%%%' AND LOWER(TRIM(p.posteam)) LIKE '%%%%uconn%%%%')
+            OR (LOWER(TRIM(COALESCE(p.defteam, ''))) = LOWER(TRIM(s2.home_team)) AND LOWER(TRIM(COALESCE(p.posteam, ''))) != LOWER(TRIM(s2.home_team)))
+          THEN 2
+          ELSE 0
+        END as side,
+        p.play_id,
+        p.clock_minutes,
+        p.clock_seconds
+      FROM pbp p
+      JOIN schedules s2 ON p.game_id = s2.game_id
+      WHERE s2.season = %d %s AND p.posteam IS NOT NULL AND p.yards_to_goal IS NOT NULL
+    ),
+    flagged AS (
+      SELECT *,
+        CASE WHEN LAG(side) OVER (PARTITION BY game_id ORDER BY period ASC, (COALESCE(clock_minutes, 0) * 60 + COALESCE(clock_seconds, 0)) DESC, CAST(play_id AS BIGINT) ASC) != side 
+             OR LAG(side) OVER (PARTITION BY game_id ORDER BY period ASC, (COALESCE(clock_minutes, 0) * 60 + COALESCE(clock_seconds, 0)) DESC, CAST(play_id AS BIGINT) ASC) IS NULL 
+             THEN 1 ELSE 0 END as new_drive
+      FROM plays
+      WHERE side > 0
+    ),
+    drives AS (
+      SELECT game_id, side, home_team, away_team, neutral_site,
+        SUM(new_drive) OVER (PARTITION BY game_id ORDER BY period ASC, (COALESCE(clock_minutes, 0) * 60 + COALESCE(clock_seconds, 0)) DESC, CAST(play_id AS BIGINT) ASC) as drive_id,
+        yards_to_goal, home_score, away_score
+      FROM flagged
+    ),
+    drive_summary AS (
+      SELECT game_id, side, home_team, away_team, neutral_site, drive_id,
+        MIN(yards_to_goal) as min_ytg,
+        MAX(CASE WHEN side = 1 THEN home_score ELSE away_score END) - 
+        MIN(CASE WHEN side = 1 THEN home_score ELSE away_score END) as pts_gained,
+        COUNT(*) as drive_plays
+      FROM drives
+      GROUP BY game_id, side, home_team, away_team, neutral_site, drive_id
+    ),
+    drive_xp AS (
+      SELECT game_id, side, home_team, away_team, neutral_site, drive_plays,
+        CASE 
+          WHEN pts_gained >= 6 OR min_ytg = 0 THEN 7.0
+          WHEN pts_gained = 3 THEN GREATEST(3.0, 4.5 - 0.05 * min_ytg)
+          WHEN min_ytg <= 10 THEN 5.5 - 0.05 * min_ytg
+          WHEN min_ytg <= 25 THEN 4.5 - 0.067 * (min_ytg - 10)
+          WHEN min_ytg <= 40 THEN 3.5 - 0.10 * (min_ytg - 25)
+          WHEN min_ytg <= 60 THEN 2.0 - 0.075 * (min_ytg - 40)
+          ELSE 0.2
+        END as xp
+      FROM drive_summary
+    )
+    SELECT 
+      game_id,
+      home_team,
+      away_team,
+      neutral_site,
+      ROUND(SUM(CASE WHEN side = 1 THEN xp ELSE 0 END), 2) as home_epa_total,
+      ROUND(SUM(CASE WHEN side = 2 THEN xp ELSE 0 END), 2) as away_epa_total,
+      ROUND(SUM(CASE WHEN side = 1 THEN xp ELSE 0 END) - SUM(CASE WHEN side = 2 THEN xp ELSE 0 END), 2) as home_net_epa,
+      SUM(drive_plays) as total_plays
+    FROM drive_xp
+    GROUP BY game_id, home_team, away_team, neutral_site
+    HAVING SUM(drive_plays) >= 30
+  ", as.integer(season), week_clause)
   
-  if (nrow(raw_pbp) == 0) {
-    message(sprintf("Warning: No valid PBP EPA rows found for season %d. Returning empty XPD table.", season))
+  xpd_raw <- DBI::dbGetQuery(con, query)
+  
+  if (nrow(xpd_raw) == 0) {
+    message(sprintf("Warning: No valid Drive XP rows found for season %d. Returning empty XPD table.", season))
     return(tibble::tibble(
       game_id = character(0),
       home_team = character(0),
@@ -201,29 +328,7 @@ build_xpd_dataset <- function(con, season, team_lookup, max_week = NULL, filter_
     ))
   }
   
-  # Apply garbage-time filter if requested (plays in 2nd half with margin > threshold)
-  filtered_pbp <- raw_pbp
-  if (filter_garbage_time) {
-    filtered_pbp <- filtered_pbp |>
-      dplyr::filter(!(period >= 3 & score_diff > garbage_threshold))
-  }
-  
-  # Aggregate net EPA per game
-  game_xpd <- filtered_pbp |>
-    dplyr::mutate(
-      pos_clean = tolower(trimws(posteam)),
-      home_clean = tolower(trimws(home_team)),
-      away_clean = tolower(trimws(away_team))
-    ) |>
-    dplyr::group_by(game_id, home_team, away_team, neutral_site) |>
-    dplyr::summarize(
-      home_epa_total = sum(epa[pos_clean == home_clean], na.rm = TRUE),
-      away_epa_total = sum(epa[pos_clean == away_clean], na.rm = TRUE),
-      home_net_epa = home_epa_total - away_epa_total,
-      total_plays = n(),
-      .groups = "drop"
-    ) |>
-    dplyr::filter(total_plays >= 40) |> # Minimum plays for reliable sample
+  game_xpd <- xpd_raw |>
     dplyr::inner_join(
       team_lookup |> dplyr::select(home_team = team, home_id = team_id), 
       by = "home_team"
@@ -283,8 +388,9 @@ build_xwld_dataset <- function(xpd_df, team_lookup) {
 #' @param max_week Optional maximum week integer threshold to align with concluded weeks
 #' @param db_path File path to DuckDB
 #' @param filter_garbage_time Logical to filter garbage time in XPD
+#' @param version Semantic version tag to track schema and attribution changes
 #' @return Comprehensive list containing data frames, team lookup, and 4 Stan data lists
-transform_all_pipelines <- function(season, max_week = NULL, db_path = "data/cfb.duckdb", filter_garbage_time = TRUE) {
+transform_all_pipelines <- function(season, max_week = NULL, db_path = "data/cfb.duckdb", filter_garbage_time = TRUE, version = "v5_drive_xg") {
   con <- get_duckdb_connection(db_path, read_only = TRUE)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
   

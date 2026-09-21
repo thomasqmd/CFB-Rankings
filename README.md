@@ -46,14 +46,16 @@ To avoid conflating luck, finishing ability, and per-play efficiency, the engine
                   │                              │
                   └──────────────┬───────────────┘
                                  ▼
-              ┌─────────────────────────────────────┐
-              │    4-Pipeline Composite Rankings    │
-              │  w_wld*Φ(Z_θ) + w_pd*Φ(Z_δ) +       │
-              │  w_xwld*Φ(Z_ω) + w_xpd*Φ(Z_α)       │
-              │  Cross-Pipeline Luck Deltas:        │
-              │  - Outcome Luck: rank(ω) - rank(θ)  │
-              │  - Margin Luck:  rank(α) - rank(δ)  │
-              └─────────────────────────────────────┘
+               ┌─────────────────────────────────────┐
+               │     Unified Composite Rankings      │
+               │    Strength of Resume (SOR: 45%)    │
+               │  + Expected Resume (xSOR: 55%)      │
+               │                                     │
+               │  Cross-Pipeline Luck & Divergence:  │
+               │  - Resume Luck:  rank(xSOR)-rank(SOR)│
+               │  - Outcome Luck: rank(ω) - rank(θ)  │
+               │  - Margin Luck:  rank(α) - rank(δ)  │
+               └─────────────────────────────────────┘
 ```
 
 | Pipeline | Domain | Outcome Type | Likelihood Model | Latent Parameter |

@@ -149,7 +149,8 @@ compute_sonneborn_berger <- function(fit_wld, wld_df, team_lookup) {
 #' @param fit_xwld Fitted XWLD Stan model (or NULL)
 #' @param fit_xpd Fitted XPD Stan model (or NULL)
 #' @param team_lookup Master team lookup table
-#' @param weights Named numeric vector of weights for c(wld, pd, xwld, xpd)
+#' @param wld_df Optional game-level WLD tibble to apply direct head-to-head victory equity
+#' @param weights Named numeric vector of weights for c(wld, sb, pd, sos, xpd, xwld)
 #' @param lambda Optional legacy weighting parameter (if passed, sets wld/xpd balance)
 #' @return Comprehensive ranked tibble with all 4 pipelines and cross-pipeline divergence metrics
 compute_composite_rankings <- function(sb_ratings, 
@@ -157,9 +158,10 @@ compute_composite_rankings <- function(sb_ratings,
                                        fit_xwld = NULL, 
                                        fit_xpd = NULL, 
                                        team_lookup, 
-                                       weights = c(wld = 0.35, pd = 0.25, xwld = 0.15, xpd = 0.25),
+                                       wld_df = NULL,
+                                       weights = c(wld = 0.20, sb = 0.15, pd = 0.15, sos = 0.05, xpd = 0.30, xwld = 0.15),
                                        lambda = NULL) {
-  message("[Composite Index] Fusing 4 pipelines: WLD, PD, XWLD, and XPD...")
+  message("[Composite Index] Fusing WLD, SB (Opponent Strength), XPD, PD, XWLD, and SOS...")
   
   N_teams <- nrow(team_lookup)
   combined <- sb_ratings
@@ -220,25 +222,40 @@ compute_composite_rankings <- function(sb_ratings,
   
   # Handle legacy lambda parameter if explicitly passed
   if (!is.null(lambda)) {
-    # lambda controls Actual (WLD + PD) vs Expected (XWLD + XPD)
     actual_wt <- lambda
     exp_wt <- 1 - lambda
     weights <- c(
-      wld = actual_wt * 0.60,
-      pd = actual_wt * 0.40,
-      xwld = exp_wt * 0.40,
-      xpd = exp_wt * 0.60
+      wld = actual_wt * 0.40,
+      sb = actual_wt * 0.35,
+      sos = actual_wt * 0.10,
+      pd = actual_wt * 0.15,
+      xwld = exp_wt * 0.35,
+      xpd = exp_wt * 0.65
     )
+  }
+  
+  # If sb or sos not explicitly provided in weights, dynamically allocate from wld
+  if (!all(c("sb", "sos") %in% names(weights))) {
+    w_wld_total <- if ("wld" %in% names(weights)) weights[["wld"]] else 0.35
+    w_sb <- w_wld_total * 0.35
+    w_sos <- w_wld_total * 0.15
+    w_wld <- w_wld_total * 0.50
+    w_xpd <- if ("xpd" %in% names(weights)) weights[["xpd"]] else 0.25
+    w_pd <- if ("pd" %in% names(weights)) weights[["pd"]] else 0.18
+    w_xwld <- if ("xwld" %in% names(weights)) weights[["xwld"]] else 0.12
+    weights <- c(wld = w_wld, sb = w_sb, xpd = w_xpd, pd = w_pd, xwld = w_xwld, sos = w_sos)
   }
   
   # Normalize weights to sum to 1.0
   weights <- weights / sum(weights)
-  w_wld <- weights[["wld"]]
-  w_pd <- weights[["pd"]]
+  w_wld  <- weights[["wld"]]
+  w_sb   <- weights[["sb"]]
+  w_sos  <- weights[["sos"]]
+  w_xpd  <- weights[["xpd"]]
+  w_pd   <- weights[["pd"]]
   w_xwld <- weights[["xwld"]]
-  w_xpd <- weights[["xpd"]]
   
-  # Standardize all 4 latent metrics across FBS programs
+  # Standardize all latent metrics across FBS programs
   fbs_sub <- combined |> dplyr::filter(subdivision_id == 1L)
   
   theta_m <- mean(fbs_sub$theta_median, na.rm = TRUE)
@@ -253,6 +270,14 @@ compute_composite_rankings <- function(sb_ratings,
   alpha_m <- mean(fbs_sub$alpha_median, na.rm = TRUE)
   alpha_s <- sd(fbs_sub$alpha_median, na.rm = TRUE)
   
+  sb_m <- mean(fbs_sub$sb_score, na.rm = TRUE)
+  sb_s <- sd(fbs_sub$sb_score, na.rm = TRUE)
+  sb_s <- if (is.na(sb_s) || sb_s == 0) 1.0 else sb_s
+  
+  bh_m <- mean(fbs_sub$buchholz_sos, na.rm = TRUE)
+  bh_s <- sd(fbs_sub$buchholz_sos, na.rm = TRUE)
+  bh_s <- if (is.na(bh_s) || bh_s == 0) 1.0 else bh_s
+  
   final_rankings <- combined |>
     dplyr::mutate(
       # Standard normal CDF transformation Phi((x - mu) / sd)
@@ -260,18 +285,62 @@ compute_composite_rankings <- function(sb_ratings,
       z_delta = (delta_median - delta_m) / delta_s,
       z_omega = (omega_median - omega_m) / omega_s,
       z_alpha = (alpha_median - alpha_m) / alpha_s,
+      z_sb    = (sb_score - sb_m) / sb_s,
+      z_sos   = (buchholz_sos - bh_m) / bh_s,
       
       phi_theta = stats::pnorm(z_theta),
       phi_delta = stats::pnorm(z_delta),
       phi_omega = stats::pnorm(z_omega),
       phi_alpha = stats::pnorm(z_alpha),
+      phi_sb    = stats::pnorm(z_sb),
+      phi_sos   = stats::pnorm(z_sos),
       
-      # 4-Pipeline Composite Index
+      # 1. Strength of Resume (SOR): Actual on-field accomplishment against schedule
+      sor_index = (w_wld * phi_theta + w_sb * phi_sb + w_pd * phi_delta + w_sos * phi_sos) / 
+                  pmax(1e-6, w_wld + w_sb + w_pd + w_sos),
+      
+      # 2. Expected Strength of Resume (xSOR): Underlying down-by-down play efficiency
+      xsor_index = (w_xpd * phi_alpha + w_xwld * phi_omega) / 
+                   pmax(1e-6, w_xpd + w_xwld),
+
+      # 3. Composite Index: Synthesis of Strength of Resume (SOR) + Expected Strength of Resume (xSOR)
       composite_index = (w_wld * phi_theta) + 
+                        (w_sb * phi_sb) + 
+                        (w_sos * phi_sos) + 
+                        (w_xpd * phi_alpha) + 
                         (w_pd * phi_delta) + 
-                        (w_xwld * phi_omega) + 
-                        (w_xpd * phi_alpha)
-    ) |>
+                        (w_xwld * phi_omega)
+    )
+
+  # Direct Head-to-Head Victory Equity: Beating quality opponents head-to-head adds definitive tiebreak equity
+  if (!is.null(wld_df) && nrow(wld_df) > 0) {
+    theta_lookup <- setNames(final_rankings$phi_theta, final_rankings$team_id)
+    h2h_credit <- numeric(nrow(final_rankings))
+    
+    # 1=Away Win, 2=Away OT Win, 3=Home Win, 4=Home OT Win
+    home_w <- wld_df[wld_df$outcome %in% c(3L, 4L), ]
+    away_w <- wld_df[wld_df$outcome %in% c(1L, 2L), ]
+    
+    if (nrow(home_w) > 0) {
+      for (k in seq_len(nrow(home_w))) {
+        w_id <- home_w$home_id[k]
+        l_id <- home_w$away_id[k]
+        opp_qual <- if (as.character(l_id) %in% names(theta_lookup)) theta_lookup[[as.character(l_id)]] else 0.5
+        h2h_credit[w_id] <- h2h_credit[w_id] + 0.015 * opp_qual
+      }
+    }
+    if (nrow(away_w) > 0) {
+      for (k in seq_len(nrow(away_w))) {
+        w_id <- away_w$away_id[k]
+        l_id <- away_w$home_id[k]
+        opp_qual <- if (as.character(l_id) %in% names(theta_lookup)) theta_lookup[[as.character(l_id)]] else 0.5
+        h2h_credit[w_id] <- h2h_credit[w_id] + 0.020 * opp_qual # Higher reward for road victory
+      }
+    }
+    final_rankings$composite_index <- final_rankings$composite_index + h2h_credit
+  }
+
+  final_rankings <- final_rankings |>
     dplyr::arrange(desc(composite_index)) |>
     dplyr::mutate(
       rank_composite_overall = dplyr::row_number()
@@ -279,14 +348,17 @@ compute_composite_rankings <- function(sb_ratings,
     dplyr::group_by(subdivision_id) |>
     dplyr::mutate(
       rank_composite = dplyr::row_number(),
+      rank_sor = dplyr::min_rank(desc(sor_index)),
+      rank_xsor = dplyr::min_rank(desc(xsor_index)),
       rank_wld = dplyr::min_rank(desc(theta_median)),
+      rank_sb = dplyr::min_rank(desc(sb_score)),
       rank_pd = dplyr::min_rank(desc(delta_median)),
       rank_xwld = dplyr::min_rank(desc(omega_median)),
       rank_xpd = dplyr::min_rank(desc(alpha_median)),
-      rank_sb = dplyr::min_rank(desc(sb_score)),
       rank_buchholz = dplyr::min_rank(desc(buchholz_sos)),
       
-      # Cross-Pipeline Divergence Metrics (Positive = Actual outperforming Expected)
+      # Cross-Pipeline Divergence Metrics
+      resume_luck = rank_xsor - rank_sor,         # Positive = Actual resume outranks underlying play efficiency
       outcome_luck = rank_xwld - rank_wld,        # Positive = Team won more games than expected from play efficiency
       margin_luck = rank_xpd - rank_pd,          # Positive = Scoreboard margin outperformed expected EPA margin
       finish_factor = rank_pd - rank_wld,        # Positive = Clutch record outperforms point differential
