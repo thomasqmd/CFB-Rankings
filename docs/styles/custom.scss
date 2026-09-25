@@ -182,4 +182,21 @@ table.dataTable tfoot th {
   overflow: visible !important;
 }
 
+// No scrollbars around the schedule controls/profile row or the KPI banner rows: the Quarto card wrapping the
+// controls clips instead of scrolling (the controls are sized to fit the row)
+.card:has(.schedule-controls-card),
+.card:has(.schedule-controls-card) .card-body,
+.card:has(.schedule-controls-card) .cell-output-display,
+.card:has(.kpi-banner),
+.card:has(.kpi-banner) .card-body,
+.card:has(.kpi-banner) .cell-output-display {
+  overflow: hidden !important;
+}
 
+
+
+// No card "expand" (full-screen) buttons anywhere; backs up `expandable: false` in the YAML
+.bslib-full-screen-enter,
+.bslib-full-screen-exit {
+  display: none !important;
+}

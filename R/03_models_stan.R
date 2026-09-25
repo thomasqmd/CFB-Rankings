@@ -62,10 +62,13 @@ fit_stan_engine <- function(stan_data,
       }
       
       if (dim_match) {
+        # Metric/step-size adaptation still needs a real warmup even from good inits; below
+        # ~500 iterations the adapted metric is poor and ESS (especially lp__) collapses
+        effective_warmup <- max(warm_start_warmup, 500L)
         message(sprintf("[%s] Prior warm-start inits loaded from %s. Reducing warmup to %d iterations (from %d).",
-                        engine_label, init_file, warm_start_warmup, iter_warmup))
-        effective_init <- function() cached_inits
-        effective_warmup <- warm_start_warmup
+                        engine_label, init_file, effective_warmup, iter_warmup))
+        # Jitter per chain: identical starting points for every chain make R-hat meaningless
+        effective_init <- function(chain_id = 1) jitter_inits(cached_inits)
       } else {
         message(sprintf("[%s] Cached inits team dimension mismatch (teams changed). Proceeding with cold start.", engine_label))
       }
@@ -296,6 +299,30 @@ fit_xpd_model <- function(stan_data,
     warm_start_warmup = warm_start_warmup,
     fast_prototype = fast_prototype
   )
+}
+
+#' Perturb cached warm-start inits so each chain starts from a distinct, valid point
+#' @param inits Named list from extract_posterior_inits()
+#' @return Jittered init list respecting each parameter's Stan constraint
+jitter_inits <- function(inits) {
+  positive <- c("sigma_fbs", "sigma_fcs", "omega_fbs", "omega_fcs", "tau")
+  out <- inits
+  for (p in names(inits)) {
+    x <- inits[[p]]
+    n <- length(x)
+    out[[p]] <- if (grepl("_raw$", p)) {
+      x + stats::rnorm(n, 0, 0.3)
+    } else if (p %in% positive) {
+      x * exp(stats::rnorm(n, 0, 0.2))
+    } else if (p == "nu") {
+      2 + (x - 2) * exp(stats::rnorm(n, 0, 0.2))           # <lower=2>
+    } else if (p == "c") {
+      sort(x + stats::rnorm(n, 0, 0.1))                     # ordered[3]
+    } else {
+      x + stats::rnorm(n, 0, 0.1 * pmax(1, abs(x)))
+    }
+  }
+  out
 }
 
 #' Extract parameter medians to serve as warm-start initial values for subsequent weeks

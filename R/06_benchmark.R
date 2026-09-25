@@ -259,7 +259,7 @@ fetch_cbs_rankings <- function(season = NULL, week = NULL, cache_dir = "data/ext
   return(cbs_df)
 }
 
-#' Align Bayesian Composite rankings against Colley, CBS 134, and AP Poll
+#' Align Bayesian SOR Ranking against Colley, CBS 134, and AP Poll
 #' @param composite_rankings Tibble from compute_composite_rankings
 #' @param colley_rankings Tibble from compute_colley_matrix
 #' @param external_polls Tibble from fetch_external_polls
@@ -322,16 +322,16 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
     dplyr::left_join(cbs_clean, by = "team_clean") |>
     dplyr::select(-team_clean) |>
     dplyr::mutate(
-      colley_delta = as.integer(rank_colley - rank_composite),
+      colley_delta = as.integer(rank_colley - rank_sor),
       rank_ap_imputed = ifelse(is.na(rank_ap), 30L, rank_ap), # Unranked mapped to 30 for delta calc
-      ap_delta = as.integer(rank_ap_imputed - rank_composite), # Positive = Ranked higher by Bayes than AP (AP underrated)
-      cbs_delta = ifelse(is.na(rank_cbs), NA_integer_, as.integer(rank_cbs - rank_composite))
+      ap_delta = as.integer(rank_ap_imputed - rank_sor), # Positive = Ranked higher by Bayes than AP (AP underrated)
+      cbs_delta = ifelse(is.na(rank_cbs), NA_integer_, as.integer(rank_cbs - rank_sor))
     ) |>
-    dplyr::arrange(rank_composite)
+    dplyr::arrange(rank_sor)
   
   # Correlation diagnostics with Colley Matrix
-  spearman_colley <- cor(comparison_df$rank_composite, comparison_df$rank_colley, method = "spearman")
-  kendall_colley <- cor(comparison_df$rank_composite, comparison_df$rank_colley, method = "kendall")
+  spearman_colley <- cor(comparison_df$rank_sor, comparison_df$rank_colley, method = "spearman")
+  kendall_colley <- cor(comparison_df$rank_sor, comparison_df$rank_colley, method = "kendall")
   
   # Top 25 overlap
   top25_bayes <- comparison_df$team[1:25]
@@ -343,7 +343,7 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
   jaccard_ap <- NA_real_
   if (nrow(ap_latest) >= 20) {
     ranked_both <- comparison_df |> dplyr::filter(!is.na(rank_ap))
-    spearman_ap <- cor(ranked_both$rank_composite, ranked_both$rank_ap, method = "spearman")
+    spearman_ap <- cor(ranked_both$rank_sor, ranked_both$rank_ap, method = "spearman")
     top25_ap <- ap_poll |> dplyr::filter(week == max(ap_poll$week, na.rm = TRUE)) |> dplyr::arrange(rank) |> dplyr::slice(1:25) |> dplyr::pull(team)
     jaccard_ap <- length(intersect(top25_bayes, top25_ap)) / length(union(top25_bayes, top25_ap))
   }
@@ -353,7 +353,7 @@ align_and_benchmark_rankings <- function(composite_rankings, colley_rankings, ex
   if (any(!is.na(comparison_df$rank_cbs))) {
     ranked_cbs <- comparison_df |> dplyr::filter(!is.na(rank_cbs))
     if (nrow(ranked_cbs) >= 25) {
-      spearman_cbs <- cor(ranked_cbs$rank_composite, ranked_cbs$rank_cbs, method = "spearman")
+      spearman_cbs <- cor(ranked_cbs$rank_sor, ranked_cbs$rank_cbs, method = "spearman")
     }
   }
 

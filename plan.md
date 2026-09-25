@@ -8,6 +8,8 @@ Unlike predictive power ratings (e.g., ESPN SP+, ESPN FPI, Sagarin, standard Ken
 
 > *Given what occurred on the field across an entire season, what level of accomplishment did each team legitimately earn, when evaluated against the aggregate capability of its opponents?*
 
+That answer is the **Ranking (SOR)**. Alongside it, the engine publishes a separate **Power Ranking** that answers the predictive question (*who wins on a neutral field next week?*) from the expected-performance pipelines (XPD, XWLD), opponent-adjusted EPA/play, and realized margin. The two are kept separate: the Power Ranking never feeds the Ranking.
+
 The framework resolves schedule asymmetry by back-propagating schedule credit using end-of-season opponent performance, fusing tournament tie-breaking mathematics (Sonneborn–Berger and Buchholz/Solkoff metrics) with Bayesian hierarchical regression to account for structural disparities between FBS and FCS competition.
 
 ---
@@ -104,9 +106,13 @@ where $w_{k, i} \in \{3: \text{W}, 2: \text{OTW}, 1: \text{OTL}, 0: \text{L}\}$.
 - **Buchholz (Strength of Schedule) Score:**
 $$\text{BH}_i = \sum_{k \in \text{Games}(i)} \text{logit}^{-1}(\theta_{\text{opp}[k]})$$
 
-- **Composite Index (Fusing Pipelines + Traditional Opponent Quality):**
-$$\text{Index}_i = w_1 \Phi(Z_{\theta_i}) + w_2 \Phi(Z_{\text{SB}_i}) + w_3 \Phi(Z_{\alpha_i}) + w_4 \Phi(Z_{\delta_i}) + w_5 \Phi(Z_{\omega_i}) + w_6 \Phi(Z_{\text{BH}_i})$$
-Default weights (55% Resume / 45% xResume): $w_1 = 0.20$ (WLD Resume), $w_2 = 0.15$ (Sonneborn–Berger Opponent Quality), $w_3 = 0.30$ (XPD Drive $xP$), $w_4 = 0.15$ (PD Margin), $w_5 = 0.15$ (XWLD Exp W/L), $w_6 = 0.05$ (Buchholz SOS).
+- **Ranking: Strength of Resume (SOR, past performance):**
+$$\text{SOR}_i = w_1 \Phi(Z_{\theta_i}) + w_2 \Phi(Z_{\text{SB}_i}) + w_3 \Phi(Z_{\delta_i}) + w_4 \Phi(Z_{\text{BH}_i}) + \text{H2H}_i$$
+Default weights: $w_1 = 0.40$ (WLD Resume), $w_2 = 0.30$ (Sonneborn–Berger), $w_3 = 0.20$ (PD Margin), $w_4 = 0.10$ (Buchholz SOS). $\text{H2H}_i$ is a small credit for each win, scaled by the loser's $\Phi(Z_\theta)$ (road wins weighted higher).
+
+- **Power Ranking (future performance, neutral field):**
+$$P_i = v_1 Z_{\alpha_i} + v_2 Z_{\text{EPA}_i} + v_3 Z_{\omega_i} + v_4 Z_{\delta_i}, \qquad \text{PowerRating}_i = \tilde{P}_i \cdot \text{sd}_{\text{FBS}}(\delta)$$
+Default weights: $v_1 = 0.40$ (XPD), $v_2 = 0.25$ (opponent-adjusted net EPA/play), $v_3 = 0.20$ (XWLD), $v_4 = 0.15$ (PD). Blended linearly in $z$-space (not $\Phi$) so elite margins are not compressed; $\tilde{P}$ is $P$ restandardized over FBS. Because all inputs carry separate home-field terms, $\text{PowerRating}_A - \text{PowerRating}_B$ is the expected neutral-field point spread.
 
 ---
 
@@ -155,7 +161,7 @@ To protect against rate-limiting, redundant external calls, and downstream targe
     ├── 5. fit_wld, fit_pd, fit_xwld, fit_xpd (CmdStan MCMC with warm-start)
     ├── 6. diagnostics_wld, pd, xwld, xpd (R-hat <= 1.01, ESS >= 400, Div = 0)
     ├── 7. prior_sensitivity_wld (FCS hyperparameter perturbation grid)
-    ├── 8. sb_ratings & composite_rankings (Sonneborn-Berger & 4-way fusion)
+    ├── 8. sb_ratings, epa_ratings & composite_rankings (SOR Ranking + Power Ranking)
     ├── 9. colley_rankings & benchmark_comparison (AP, Coaches, CFP, Colley)
     ├── 10. render_dashboard (docs/dashboard.qmd -> 100% rankings-focused interactive explorer)
     ├── 11. render_season_retro (docs/reports/season_retro.qmd -> in-season and end-of-season rankings audit)

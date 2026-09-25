@@ -97,18 +97,24 @@ list(
     )
   ),
   
+  # 3b. Track Stan source files so editing a model re-runs its fit
+  tar_target(stan_file_wld,  "stan/wld_ordered_logit.stan",  format = "file"),
+  tar_target(stan_file_pd,   "stan/pd_student_t.stan",       format = "file"),
+  tar_target(stan_file_xwld, "stan/xwld_ordered_logit.stan", format = "file"),
+  tar_target(stan_file_xpd,  "stan/xpd_student_t.stan",      format = "file"),
+
   # 4. Fit Pipeline 1: WLD (Ordered Logit Actual Outcome Resume Engine)
   tar_target(
     name = fit_wld,
     command = fit_wld_model(
       stan_data = modeling_data$stan_data_wld,
-      stan_file = "stan/wld_ordered_logit.stan",
+      stan_file = stan_file_wld,
       chains = 4,
       iter_warmup = 1000,
-      iter_sampling = 1000,
+      iter_sampling = 2000,
       adapt_delta = 0.95,
       warm_start = TRUE,
-      warm_start_warmup = 300
+      warm_start_warmup = 500
     )
   ),
 
@@ -117,13 +123,13 @@ list(
     name = fit_pd,
     command = fit_pd_model(
       stan_data = modeling_data$stan_data_pd,
-      stan_file = "stan/pd_student_t.stan",
+      stan_file = stan_file_pd,
       chains = 4,
       iter_warmup = 1000,
-      iter_sampling = 1000,
+      iter_sampling = 2000,
       adapt_delta = 0.95,
       warm_start = TRUE,
-      warm_start_warmup = 300
+      warm_start_warmup = 500
     )
   ),
 
@@ -132,13 +138,13 @@ list(
     name = fit_xwld,
     command = fit_xwld_model(
       stan_data = modeling_data$stan_data_xwld,
-      stan_file = "stan/xwld_ordered_logit.stan",
+      stan_file = stan_file_xwld,
       chains = 4,
       iter_warmup = 1000,
-      iter_sampling = 1000,
+      iter_sampling = 2000,
       adapt_delta = 0.95,
       warm_start = FALSE,
-      warm_start_warmup = 300
+      warm_start_warmup = 500
     )
   ),
   
@@ -147,13 +153,13 @@ list(
     name = fit_xpd,
     command = fit_xpd_model(
       stan_data = modeling_data$stan_data_xpd,
-      stan_file = "stan/xpd_student_t.stan",
+      stan_file = stan_file_xpd,
       chains = 4,
       iter_warmup = 1000,
-      iter_sampling = 1000,
+      iter_sampling = 2000,
       adapt_delta = 0.95,
       warm_start = FALSE,
-      warm_start_warmup = 300
+      warm_start_warmup = 500
     )
   ),
   
@@ -199,7 +205,7 @@ list(
     name = prior_sensitivity_wld,
     command = run_prior_sensitivity_sweep(
       stan_data = modeling_data$stan_data_wld,
-      stan_file = "stan/wld_ordered_logit.stan",
+      stan_file = stan_file_wld,
       team_lookup = modeling_data$team_lookup,
       model_type = "wld"
     )
@@ -215,7 +221,22 @@ list(
     )
   ),
   
-  # 11. 4-Pipeline Composite Rankings (WLD + PD + XWLD + XPD Fusion)
+  # 10b. Opponent-adjusted net EPA/play (Power Ranking input)
+  tar_target(
+    name = epa_ratings,
+    command = compute_adjusted_epa(
+      epa_df = modeling_data$epa_df,
+      team_lookup = modeling_data$team_lookup
+    )
+  ),
+
+  # 10c. Home-field edge in points (PD model), used for projected scores of future games
+  tar_target(
+    name = home_field_pts,
+    command = extract_home_field_pts(fit_pd)
+  ),
+
+  # 11. Rankings: SOR Ranking (past performance) + Power Ranking (neutral-field strength)
   tar_target(
     name = composite_rankings,
     command = compute_composite_rankings(
@@ -225,7 +246,9 @@ list(
       fit_xpd = fit_xpd,
       team_lookup = modeling_data$team_lookup,
       wld_df = modeling_data$wld_df,
-      weights = c(wld = 0.20, sb = 0.15, pd = 0.15, sos = 0.05, xpd = 0.30, xwld = 0.15)
+      epa_ratings = epa_ratings,
+      sor_weights = c(wld = 0.40, sb = 0.30, pd = 0.20, sos = 0.10),
+      power_weights = c(xpd = 0.40, epa = 0.25, xwld = 0.20, pd = 0.15)
     )
   ),
   

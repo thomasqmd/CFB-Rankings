@@ -6,7 +6,10 @@
 
 ## 1. System Overview & Methodology
 
-The engine evaluates past accomplishment (**retrospective resume**) rather than predicting future point spreads. By constructing complete season directed multi-graphs $\mathcal{G} = (\mathcal{V}, \mathcal{E})$, it values wins, losses, and margins strictly through end-of-season opponent performance.
+The engine publishes two orderings:
+
+* **Ranking (SOR):** past accomplishment (**retrospective resume**). By constructing complete season directed multi-graphs $\mathcal{G} = (\mathcal{V}, \mathcal{E})$, it values wins, losses, and margins strictly through end-of-season opponent performance.
+* **Power Ranking:** predicted neutral-field strength going forward, built from expected-performance signals (XPD, opponent-adjusted EPA/play, XWLD) plus realized margin. `power_rating` is in points; `power_rating[A] - power_rating[B]` is the expected neutral-field spread.
 
 ### 1.1 The 2×2 Orthogonal Performance Matrix
 
@@ -47,12 +50,18 @@ To avoid conflating luck, finishing ability, and per-play efficiency, the engine
                   └──────────────┬───────────────┘
                                  ▼
                ┌─────────────────────────────────────┐
-               │     Unified Composite Rankings      │
-               │    Strength of Resume (SOR: 45%)    │
-               │  + Expected Resume (xSOR: 55%)      │
+               │  Ranking: Strength of Resume (SOR)  │
+               │  (past performance)                 │
+               │   WLD θ 40% + SB 30% + PD δ 20%     │
+               │   + Buchholz SOS 10%                │
+               │                                     │
+               │  Power Ranking (neutral field)      │
+               │   XPD α 40% + Adj. EPA/play 25%     │
+               │   + XWLD ω 20% + PD δ 15%           │
                │                                     │
                │  Cross-Pipeline Luck & Divergence:  │
-               │  - Resume Luck:  rank(xSOR)-rank(SOR)│
+               │  - Power Gap: rank(Pow)-rank(SOR)   │
+               │  - Resume Luck: rank(xSOR)-rank(SOR)│
                │  - Outcome Luck: rank(ω) - rank(θ)  │
                │  - Margin Luck:  rank(α) - rank(δ)  │
                └─────────────────────────────────────┘
@@ -84,6 +93,9 @@ To avoid conflating luck, finishing ability, and per-play efficiency, the engine
 
 * **Buchholz Schedule Strength:**
   $$\text{BH}_i = \sum_{k \in \text{Games}(i)} \text{logit}^{-1}(\theta_{\text{opp}[k]})$$
+
+* **Opponent-Adjusted EPA/Play (Power input):** ridge-regularized paired comparison on game-level net EPA/play
+  $$\text{EPA}^{\text{net}}_k = r_{\text{home}[k]} - r_{\text{away}[k]} + b_{\text{FCS}}(\text{fcs}_{\text{home}} - \text{fcs}_{\text{away}}) + h \cdot (1 - \text{neutral}_k) + \varepsilon_k$$
 
 * **Hierarchical FCS Shrinkage:**
   $$\theta_i \sim \mathcal{N}\left(\mu_{\text{sub}[i]}, \, \sigma^2_{\text{sub}[i]}\right), \quad \mu_{\text{FBS}} = 0 \quad (\text{Anchor}), \quad \mu_{\text{FCS}} \sim \mathcal{N}(-1.5, 0.5^2)$$

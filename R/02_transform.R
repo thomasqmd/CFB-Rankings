@@ -277,8 +277,9 @@ build_xpd_dataset <- function(con, season, team_lookup, max_week = NULL, filter_
     drive_summary AS (
       SELECT game_id, side, home_team, away_team, neutral_site, drive_id,
         MIN(yards_to_goal) as min_ytg,
-        MAX(CASE WHEN side = 1 THEN home_score ELSE away_score END) - 
-        MIN(CASE WHEN side = 1 THEN home_score ELSE away_score END) as pts_gained,
+        -- pbp.home_score holds the OFFENSE (pos_team) score at ingest, not the home team score,
+        -- so it is the right column for every drive regardless of which side has the ball
+        MAX(home_score) - MIN(home_score) as pts_gained,
         COUNT(*) as drive_plays
       FROM drives
       GROUP BY game_id, side, home_team, away_team, neutral_site, drive_id
@@ -383,6 +384,96 @@ build_xwld_dataset <- function(xpd_df, team_lookup) {
   return(xwld_df)
 }
 
+#' Aggregate raw play-by-play EPA into game-level per-play efficiency (Power Ranking input)
+#' Unlike XPD (drive-level expected points), this is the mean EPA (CFBD PPA) per offensive play
+#' for each side, so it measures down-to-down efficiency independent of pace and drive count.
+#' @param con Active DuckDB connection
+#' @param season Target season integer
+#' @param games_df Game-level tibble with game_id, home_team, away_team, home_id, away_id, neutral_site
+#' @param max_week Optional maximum week integer threshold
+#' @param filter_garbage_time Logical: drop 2nd-half plays when the margin exceeds garbage_threshold
+#' @param garbage_threshold Absolute point threshold in 2nd half (default: 28 points)
+#' @param min_plays Minimum offensive plays required from each side to keep a game
+#' @return Tibble of game-level EPA/play for home and away offenses and net EPA/play (home - away)
+build_epa_dataset <- function(con, season, games_df, max_week = NULL, filter_garbage_time = TRUE,
+                              garbage_threshold = 28, min_plays = 15) {
+  week_clause <- if (!is.null(max_week)) sprintf("AND s.week <= %d", as.integer(max_week)) else ""
+  garbage_clause <- if (filter_garbage_time) {
+    sprintf("AND NOT (p.period >= 3 AND ABS(COALESCE(p.home_score, 0) - COALESCE(p.away_score, 0)) > %d)",
+            as.integer(garbage_threshold))
+  } else ""
+
+  # Prefer CFBD's PPA: it is defined only on offensive scrimmage plays and tracks game margin
+  # (r ~ 0.93 in 2026). cfbfastR's own `epa` column degraded badly from 2025 on (r ~ 0.4 even on
+  # scrimmage plays), so it is only a fallback for seasons synced before ppa was stored.
+  n_ppa <- DBI::dbGetQuery(con, sprintf("
+    SELECT COUNT(p.ppa) AS n FROM pbp p JOIN schedules s ON p.game_id = s.game_id
+    WHERE s.season = %d %s
+  ", as.integer(season), week_clause))$n
+  if (isTRUE(n_ppa > 0)) {
+    value_col <- "p.ppa"
+    play_filter <- "AND p.ppa IS NOT NULL"
+  } else {
+    message(sprintf("[EPA] No PPA stored for season %d yet (re-sync to add it); falling back to cfbfastR epa.", season))
+    value_col <- "p.epa"
+    # Drop kickoffs (posteam there is the receiving team, not an offense)
+    play_filter <- "AND p.epa IS NOT NULL AND NOT (p.yards_to_goal = 65 AND p.down = 1 AND p.distance = 10)"
+  }
+
+  query <- sprintf("
+    SELECT p.game_id, p.posteam,
+           SUM(%s) AS off_epa,
+           COUNT(*)   AS off_plays
+    FROM pbp p
+    JOIN schedules s ON p.game_id = s.game_id
+    WHERE s.season = %d %s
+      AND p.posteam IS NOT NULL %s %s
+    GROUP BY p.game_id, p.posteam
+  ", value_col, as.integer(season), week_clause, play_filter, garbage_clause)
+
+  # pbp$posteam holds display names ("Alabama"); canonicalize both sides before matching
+  off_raw <- DBI::dbGetQuery(con, query) |>
+    dplyr::mutate(game_id = as.character(game_id), posteam = canonical_team_name(posteam))
+
+  empty <- tibble::tibble(
+    game_id = character(0), home_id = integer(0), away_id = integer(0), neutral_site = integer(0),
+    home_epa_pp = numeric(0), away_epa_pp = numeric(0), home_plays = integer(0), away_plays = integer(0),
+    net_epa_pp = numeric(0)
+  )
+  if (nrow(off_raw) == 0) {
+    message(sprintf("Warning: No play-level EPA found for season %d. Returning empty EPA table.", season))
+    return(empty)
+  }
+
+  # Schedule names are canonicalized the same way as posteam above
+  games <- games_df |>
+    dplyr::transmute(
+      game_id = as.character(game_id), home_id, away_id, neutral_site,
+      home_key = canonical_team_name(home_team),
+      away_key = canonical_team_name(away_team)
+    )
+
+  games |>
+    dplyr::inner_join(
+      off_raw |> dplyr::select(game_id, home_key = posteam, home_epa = off_epa, home_plays = off_plays),
+      by = c("game_id", "home_key")
+    ) |>
+    dplyr::inner_join(
+      off_raw |> dplyr::select(game_id, away_key = posteam, away_epa = off_epa, away_plays = off_plays),
+      by = c("game_id", "away_key")
+    ) |>
+    dplyr::filter(home_plays >= min_plays, away_plays >= min_plays) |>
+    dplyr::transmute(
+      game_id, home_id, away_id,
+      neutral_site = as.integer(neutral_site),
+      home_epa_pp = home_epa / home_plays,
+      away_epa_pp = away_epa / away_plays,
+      home_plays = as.integer(home_plays),
+      away_plays = as.integer(away_plays),
+      net_epa_pp = home_epa_pp - away_epa_pp
+    )
+}
+
 #' Coordinate transformation and package inputs for all 4 Stan models
 #' @param season Target season integer
 #' @param max_week Optional maximum week integer threshold to align with concluded weeks
@@ -407,7 +498,8 @@ transform_all_pipelines <- function(season, max_week = NULL, db_path = "data/cfb
   pd_df <- build_pd_dataset(con, season, team_lookup, max_week = max_week)
   xpd_df <- build_xpd_dataset(con, season, team_lookup, max_week = max_week, filter_garbage_time = filter_garbage_time)
   xwld_df <- build_xwld_dataset(xpd_df, team_lookup)
-  
+  epa_df <- build_epa_dataset(con, season, pd_df, max_week = max_week, filter_garbage_time = filter_garbage_time)
+
   # Validate that modeling datasets contain games and plays before constructing Stan inputs
   if (nrow(wld_df) == 0) {
     stop(sprintf("Cannot construct Stan datasets: 0 completed games found for season %d (week <= %s). Ensure the season has completed games.", 
@@ -494,6 +586,7 @@ transform_all_pipelines <- function(season, max_week = NULL, db_path = "data/cfb
     pd_df = pd_df,
     xwld_df = xwld_df,
     xpd_df = xpd_df,
+    epa_df = epa_df,
     stan_data_wld = stan_data_wld,
     stan_data_pd = stan_data_pd,
     stan_data_xwld = stan_data_xwld,

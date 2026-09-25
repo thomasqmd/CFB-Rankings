@@ -63,7 +63,7 @@ if (has_targets) {
   } else {
     composite <- composite |>
       dplyr::mutate(
-        rank_colley = rank_composite,
+        rank_colley = rank_sor,
         rank_ap = NA_integer_,
         ap_delta = NA_integer_
       )
@@ -95,16 +95,24 @@ if (has_targets) {
   p_dl <- stats::pnorm(scale(dl))
   p_om <- stats::pnorm(scale(om))
   p_al <- stats::pnorm(scale(al))
-  
-  comp_idx <- round(0.35 * p_th + 0.30 * p_al + 0.20 * p_dl + 0.15 * p_om, 3)
-  r_comp <- rank(-comp_idx)
+  ep <- round(al / 110 + rnorm(n, 0, 0.02), 3)
+
+  sor_idx <- round(0.55 * p_th + 0.25 * p_dl + 0.20 * pnorm(scale(seq(18.8, 9.1, length.out = n))), 3)
+  pw_z <- as.numeric(scale(0.40 * scale(al) + 0.25 * scale(ep) + 0.20 * scale(om) + 0.15 * scale(dl)))
+  r_comp <- rank(-sor_idx, ties.method = "first")
+  r_pow <- rank(-pw_z, ties.method = "first")
   r_w <- rank(-th)
   r_p <- rank(-dl)
   r_xw <- rank(-om)
   r_xp <- rank(-al)
-  
+
   composite <- tibble::tibble(
-    rank_composite = as.integer(r_comp),
+    rank_sor = as.integer(r_comp),
+    rank_power = as.integer(r_pow),
+    power_rating = round(pw_z * sd(dl), 1),
+    power_gap = as.integer(r_pow - r_comp),
+    epa_adj = ep,
+    rank_epa = as.integer(rank(-ep)),
     team = demo_teams,
     conference = demo_confs,
     subdivision_id = 1L,
@@ -113,7 +121,7 @@ if (has_targets) {
                "10-2", "9-3", "9-3", "10-2", "9-3",
                "9-3", "10-2", "10-2", "9-3", "11-1",
                "9-3", "9-3", "10-3", "10-2", "9-3"),
-    composite_index = comp_idx,
+    sor_index = sor_idx,
     theta_median = th,
     delta_median = dl,
     omega_median = om,
@@ -130,7 +138,7 @@ if (has_targets) {
     margin_luck = as.integer(r_xp - r_p),
     sb_score = round(seq(18.8, 9.1, length.out = n), 2),
     buchholz_sos = round(seq(8.5, 5.2, length.out = n), 2)
-  ) |> dplyr::arrange(rank_composite)
+  ) |> dplyr::arrange(rank_sor)
   
   demo_colley_ranks <- c(1, 3, 2, 5, 4, 8, 7, 6, 11, 10, 14, 15, 13, 12, 17, 16, 9, 18, 20, 19, 21, 23, 22, 24, 25)
   demo_ap_ranks <- c(1, 5, 2, 4, 8, 7, 6, 9, 12, 14, 15, 10, 11, 9, 16, 18, 17, 19, 23, 22, 20, 24, 25, NA, NA)
@@ -138,22 +146,22 @@ if (has_targets) {
   benchmark <- list(
     comparison_table = tibble::tibble(
       team = composite$team,
-      rank_composite = composite$rank_composite,
+      rank_sor = composite$rank_sor,
       wins = as.integer(sub("-.*", "", composite$record)),
       losses = as.integer(sub(".*-", "", composite$record)),
       colley_rating = round(seq(0.94, 0.52, length.out = n), 3),
       rank_colley = demo_colley_ranks,
       rank_ap = demo_ap_ranks
-    ) |> dplyr::mutate(ap_delta = ifelse(is.na(rank_ap), NA_integer_, rank_ap - rank_composite)),
+    ) |> dplyr::mutate(ap_delta = ifelse(is.na(rank_ap), NA_integer_, rank_ap - rank_sor)),
     most_underrated = tibble::tibble(
       team = c("Penn State", "Notre Dame", "SMU", "Ohio State", "Boise State"),
-      rank_composite = c(4, 5, 10, 6, 9),
+      rank_sor = c(4, 5, 10, 6, 9),
       rank_ap = c(6, 8, 14, 7, 12),
       ap_delta = c(2, 3, 4, 1, 3)
     ),
     most_overrated = tibble::tibble(
       team = c("Miami", "Alabama", "Clemson"),
-      rank_composite = c(14, 13, 12),
+      rank_sor = c(14, 13, 12),
       rank_ap = c(9, 11, 8),
       ap_delta = c(-5, -2, -4)
     )
@@ -174,10 +182,10 @@ Retrospective 4-pipeline Bayesian audit for **Season `r season_info$season`**, c
 
 ## 1. Executive Summary & Retrospective Philosophy
 
-This is a retrospective evaluative ranking, not a predictive power rating.
+The engine publishes two separate orderings:
 
-- **Predictive Power Ratings (e.g., SP+, FPI):** Forecast what would happen on a neutral field tomorrow.
-- **Retrospective Evaluative Rankings (This System):** Score what programs **earned given what occurred**, using posterior end-of-season opponent strength for schedule credit.
+- **Ranking (Strength of Resume, SOR):** Scores what programs **earned given what occurred**: the WLD resume ($\theta$), Sonneborn-Berger quality wins, realized point margin ($\delta$), and Buchholz schedule strength, all valued against posterior end-of-season opponent strength.
+- **Power Ranking:** Predicts how good a team is **right now on a neutral field**. It blends XPD drive efficiency ($\alpha$), opponent-adjusted net EPA/play, XWLD expected outcomes ($\omega$), and realized margin ($\delta$). The power rating is in points, so the difference between two teams is the expected neutral-field spread.
 
 Our 4-pipeline architecture decomposes team performance along two orthogonal dimensions:
 - **Actual (Scoreboard Realized) vs. Expected (Net EPA Play-by-Play)**
@@ -185,7 +193,7 @@ Our 4-pipeline architecture decomposes team performance along two orthogonal dim
 
 ---
 
-## 2. Complete 4-Pipeline Performance Matrix
+## 2. Ranking (SOR) & 4-Pipeline Performance Matrix
 
 ```{r}
 #| label: tbl-full-matrix
@@ -195,11 +203,12 @@ retro_table <- composite |>
   dplyr::filter(subdivision_id == 1L) |>
   dplyr::slice(1:25) |>
   dplyr::transmute(
-    Rank = rank_composite,
+    Rank = rank_sor,
     Team = team,
     Conf = conference,
     Record = record,
-    `Composite Index` = composite_index,
+    `SOR Index` = sor_index,
+    `Power Rank` = rank_power,
     `WLD θ (Resume)` = theta_median,
     `PD δ (Margin)` = delta_median,
     `XWLD ω (Exp W/L)` = omega_median,
@@ -214,15 +223,15 @@ retro_table <- composite |>
 gt::gt(retro_table, id = "tbl_retro_matrix") |>
   gt::tab_header(
     title = gt::md(sprintf("**FBS Top 25: Side-by-Side Unified Performance Matrix (Season %d)**", season_info$season)),
-    subtitle = sprintf("Season %d • Composite vs. Component Pipelines vs. External Benchmarks", season_info$season)
+    subtitle = sprintf("Season %d • SOR Ranking vs. Power Ranking vs. Component Pipelines vs. External Benchmarks", season_info$season)
   ) |>
-  gt::tab_spanner(label = "Composite Engine", columns = c(`Composite Index`)) |>
+  gt::tab_spanner(label = "Ranking (SOR)", columns = c(`SOR Index`, `Power Rank`)) |>
   gt::tab_spanner(label = "4 Component Latent Abilities (Parts)", columns = c(`WLD θ (Resume)`, `PD δ (Margin)`, `XWLD ω (Exp W/L)`, `XPD α (Net EPA)`)) |>
   gt::tab_spanner(label = "External Benchmarks", columns = c(`Colley`, `AP Poll`, `AP Δ`)) |>
   gt::tab_spanner(label = "Luck & Tie-Breaks", columns = c(`Outcome Luck`, `SB Score`)) |>
   gtExtras::gt_theme_538(quiet = TRUE) |>
   gt::data_color(
-    columns = `Composite Index`,
+    columns = `SOR Index`,
     palette = c(c_seq_1, c_navy)
   ) |>
   gt::fmt_number(
@@ -234,7 +243,7 @@ gt::gt(retro_table, id = "tbl_retro_matrix") |>
     decimals = 1
   ) |>
   gt::fmt_number(
-    columns = `Composite Index`,
+    columns = `SOR Index`,
     decimals = 3
   ) |>
   gt::tab_style(
@@ -245,7 +254,56 @@ gt::gt(retro_table, id = "tbl_retro_matrix") |>
 
 ---
 
-## 3. Resume Luck & Game Control Variance
+## 3. Power Ranking (Neutral-Field Strength)
+
+The Power Ranking predicts future performance on a neutral field. **Power Rating** is in points: Team A's rating minus Team B's is the expected neutral-field margin. **Power Gap** $= \text{Rank}_{\text{Power}} - \text{Rank}_{\text{SOR}}$. A positive gap means the resume ranks ahead of current strength (candidates to regress); a negative gap means a team is stronger than its resume shows.
+
+```{r}
+#| label: tbl-power-ranking
+#| tbl-cap: "Top 25 Programs by Power Ranking"
+#| echo: false
+power_table <- composite |>
+  dplyr::filter(subdivision_id == 1L) |>
+  dplyr::arrange(rank_power) |>
+  dplyr::slice(1:25) |>
+  dplyr::transmute(
+    `Power Rank` = rank_power,
+    Team = team,
+    Conf = conference,
+    Record = record,
+    `Power Rating` = power_rating,
+    `XPD α` = alpha_median,
+    `Adj. EPA/Play` = epa_adj,
+    `XWLD ω` = omega_median,
+    `PD δ` = delta_median,
+    `SOR Rank` = rank_sor,
+    `Power Gap` = power_gap
+  )
+
+gt::gt(power_table, id = "tbl_power_ranking") |>
+  gt::tab_header(
+    title = gt::md(sprintf("**FBS Top 25 Power Ranking (Season %d)**", season_info$season)),
+    subtitle = "Neutral-field strength from XPD, opponent-adjusted EPA/play, XWLD, and realized margin"
+  ) |>
+  gt::tab_spanner(label = "Power Inputs", columns = c(`XPD α`, `Adj. EPA/Play`, `XWLD ω`, `PD δ`)) |>
+  gt::tab_spanner(label = "vs. Ranking", columns = c(`SOR Rank`, `Power Gap`)) |>
+  gtExtras::gt_theme_538(quiet = TRUE) |>
+  gt::data_color(
+    columns = `Power Rating`,
+    palette = c(c_seq_1, c_orange)
+  ) |>
+  gt::fmt_number(columns = c(`Power Rating`, `XPD α`, `PD δ`), decimals = 1, force_sign = TRUE) |>
+  gt::fmt_number(columns = `Adj. EPA/Play`, decimals = 3, force_sign = TRUE) |>
+  gt::fmt_number(columns = `XWLD ω`, decimals = 2) |>
+  gt::tab_style(
+    style = gt::cell_text(weight = "bold"),
+    locations = gt::cells_body(columns = c(`Power Rank`, Team))
+  )
+```
+
+---
+
+## 4. Resume Luck & Game Control Variance
 
 **Outcome Luck ($\Delta = \text{Rank}_{\text{XWLD}} - \text{Rank}_{\text{WLD}}$)** compares a team's actual discrete rank (WLD) to its expected discrete rank based on net play EPA (XWLD):
 
@@ -276,7 +334,7 @@ plotly::ggplotly(p_luck)
 
 ---
 
-## 4. Schedule Difficulty & Opponent Quality Back-Propagation
+## 5. Schedule Difficulty & Opponent Quality Back-Propagation
 
 Games are valued against opponents' final posterior strength, translated into two classical tournament equity metrics:
 
@@ -296,7 +354,7 @@ sos_table <- composite |>
     Team = team,
     Conf = conference,
     Record = record,
-    `Bayes Composite Rank` = rank_composite,
+    `SOR Rank` = rank_sor,
     `Sonneborn-Berger Score` = sb_score,
     `Buchholz SOS Rating` = buchholz_sos,
     `WLD Resume (θ)` = theta_median,

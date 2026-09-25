@@ -52,7 +52,7 @@ model {
   omega_fbs ~ exponential(prior_omega_rate);
   omega_fcs ~ exponential(prior_omega_rate);
   beta_home ~ normal(prior_beta_home_mean, prior_beta_home_sd);
-  nu ~ gamma(2.0, 0.1);                            // Concentrates around 4-10
+  nu ~ gamma(2.0, 0.1);                            // Juarez-Steel default: mode 10, mean 20 (lets data choose tail weight)
   tau ~ exponential(0.1);
   alpha_raw ~ std_normal();
 

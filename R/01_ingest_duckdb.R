@@ -126,10 +126,15 @@ init_duckdb_schema <- function(con) {
       yards_to_goal INTEGER,
       epa DOUBLE,
       wpa DOUBLE,
-      home_score INTEGER,
-      away_score INTEGER
+      home_score INTEGER,   -- offense (pos_team) score, despite the name
+      away_score INTEGER,   -- defense (def_pos_team) score, despite the name
+      ppa DOUBLE,           -- CFBD predicted points added (offensive plays only)
+      play_type VARCHAR
     );
   ")
+  # Databases created before ppa/play_type existed: add them in place (older rows stay NULL)
+  DBI::dbExecute(con, "ALTER TABLE pbp ADD COLUMN IF NOT EXISTS ppa DOUBLE")
+  DBI::dbExecute(con, "ALTER TABLE pbp ADD COLUMN IF NOT EXISTS play_type VARCHAR")
 }
 
 #' Resolve the latest completed college football week aligned with the AP Poll release
@@ -458,6 +463,8 @@ ingest_pbp_data <- function(seasons, con) {
     home_score_col <- intersect(c("pos_team_score", "home_score"), names(pbp_raw))[1]
     away_score_col <- intersect(c("def_pos_team_score", "away_score"), names(pbp_raw))[1]
     wpa_col <- intersect(c("wpa", "wpa_model", "win_probability_added"), names(pbp_raw))[1]
+    ppa_col <- intersect(c("ppa", "predicted_points_added"), names(pbp_raw))[1]
+    play_type_col <- intersect(c("play_type", "type_text"), names(pbp_raw))[1]
     
     # Keep only plays with valid EPA to optimize storage
     pbp_clean <- tibble::tibble(
@@ -474,7 +481,9 @@ ingest_pbp_data <- function(seasons, con) {
       epa = as.numeric(pbp_raw[[epa_col]]),
       wpa = as.numeric(coalesce(if (!is.na(wpa_col)) pbp_raw[[wpa_col]] else 0.0, 0.0)),
       home_score = as.integer(coalesce(if (!is.na(home_score_col)) pbp_raw[[home_score_col]] else 0L, 0L)),
-      away_score = as.integer(coalesce(if (!is.na(away_score_col)) pbp_raw[[away_score_col]] else 0L, 0L))
+      away_score = as.integer(coalesce(if (!is.na(away_score_col)) pbp_raw[[away_score_col]] else 0L, 0L)),
+      ppa = if (!is.na(ppa_col)) as.numeric(pbp_raw[[ppa_col]]) else NA_real_,
+      play_type = if (!is.na(play_type_col)) as.character(pbp_raw[[play_type_col]]) else NA_character_
     ) |>
       dplyr::filter(!is.na(epa))
     
@@ -490,7 +499,7 @@ ingest_pbp_data <- function(seasons, con) {
     DBI::dbExecute(con, sprintf("
       DELETE FROM pbp WHERE game_id IN (SELECT game_id FROM schedules WHERE season = %d)
     ", s))
-    DBI::dbExecute(con, "INSERT INTO pbp SELECT * FROM temp_pbp")
+    DBI::dbExecute(con, "INSERT INTO pbp BY NAME SELECT * FROM temp_pbp")
     duckdb::duckdb_unregister(con, "temp_pbp")
     message(sprintf("[DuckDB] Successfully ingested %d plays with EPA for season %d.", nrow(pbp_clean), s))
   }
@@ -565,6 +574,11 @@ pull_and_sync_duckdb <- function(seasons = NULL, db_path = "data/cfb.duckdb", fu
       # Current active season: refresh if last sync was before today,
       # if >= 3 hours elapsed, or if current_season_info has more completed games than DuckDB
       last_sync_time <- as.POSIXct(metadata$last_sync[1])
+      # Plays synced before the ppa column existed need one re-fetch
+      missing_ppa <- s >= 2014 && DBI::dbGetQuery(con, sprintf("
+        SELECT COUNT(p.ppa) AS n FROM pbp p JOIN schedules sc ON p.game_id = sc.game_id WHERE sc.season = %d
+      ", s))$n == 0
+      missing_ppa ||
       (as.Date(last_sync_time) < Sys.Date()) ||
         (as.numeric(difftime(Sys.time(), last_sync_time, units = "hours")) >= 3) ||
         (!is.null(current_season_info) && !is.null(current_season_info$n_completed_games) && 
@@ -765,8 +779,9 @@ get_team_game_log <- function(db_path = "data/cfb.duckdb", min_season = 2013,
         drive_summary AS (
           SELECT game_id, side, drive_id,
             MIN(yards_to_goal) as min_ytg,
-            MAX(CASE WHEN side = 1 THEN home_score ELSE away_score END) - 
-            MIN(CASE WHEN side = 1 THEN home_score ELSE away_score END) as pts_gained
+            -- pbp.home_score holds the OFFENSE (pos_team) score at ingest, not the home team score,
+            -- so it is the right column for every drive regardless of which side has the ball
+            MAX(home_score) - MIN(home_score) as pts_gained
           FROM drives
           GROUP BY game_id, side, drive_id
         ),
