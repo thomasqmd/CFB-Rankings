@@ -1,6 +1,5 @@
 ---
-title: "CFB Bayesian Retrospective Rankings Dashboard"
-subtitle: "Single-Year Rankings (SOR) & Power Rankings, 2013–Present"
+title: "CFB Bayesian Rankings"
 author: "Thomas Reinke"
 date: today
 format:
@@ -606,7 +605,8 @@ build_season_bundle <- function(yr, hist_df, live_c = NULL, live_b = NULL) {
   r_colley <- rank(-colley_rat, ties.method = "first")
 
   ap_map <- get_historical_ap_top25(yr)
-  r_ap <- ap_map[yr_data$team]
+  # No poll found -> ap_map is NULL; keep one NA per team so the tibble below still builds
+  r_ap <- if (length(ap_map)) unname(ap_map[yr_data$team]) else rep(NA_integer_, N)
   ap_del <- ifelse(is.na(r_ap), NA_integer_, as.integer(r_ap - r_sor))
 
   comp_df <- tibble::tibble(
@@ -768,9 +768,7 @@ year_panel <- function(s, is_active, content) {
 }
 ```
 
-# {.sidebar}
-
-### Controls & Year Filter
+# {.sidebar width="270px"}
 
 ::: {.card .p-3 .mb-3 style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);"}
 <label for="global-year-selector" class="form-label fw-bold mb-1" style="color: #303e4e; font-size: 1rem;">
@@ -796,27 +794,20 @@ for (s in valid_seasons) {
 }
 ```
 </select>
-<div class="form-text text-muted mt-2" style="font-size: 0.8rem; line-height: 1.35;">
-  Switches all rankings and charts to the selected season.
-</div>
 :::
 
 ::: {.card .p-2 .mb-2 style="background: #f8fafc; border: 1px solid #e2e8f0; font-size: 0.8rem;"}
-<div class="fw-bold text-dark mb-1">Two Orderings:</div>
-<div class="small text-muted mb-2" style="font-size: 0.76rem; line-height: 1.25;">
-  <strong>Ranking</strong> = what a team has earned. <strong>Power</strong> = how it would fare on a neutral field next week.
-</div>
 <ul class="list-unstyled mb-0" style="line-height: 1.45;">
-  <li class="fw-bold text-secondary text-uppercase" style="font-size: 0.7rem; margin-top: 2px;">Ranking: Strength of Resume (SOR):</li>
-  <li><span class="badge" style="background:#303e4e;">40%</span> <strong>WLD (θ)</strong>: Discrete Resume</li>
-  <li><span class="badge" style="background:#6b4fb2;">30%</span> <strong>SB (Opp)</strong>: Defeated Opponent Quality</li>
-  <li><span class="badge" style="background:#3a6ea5;">20%</span> <strong>PD (δ)</strong>: Point Margin</li>
-  <li><span class="badge" style="background:#a8820a;">10%</span> <strong>SOS (BH)</strong>: Schedule Strength</li>
-  <li class="fw-bold text-secondary text-uppercase" style="font-size: 0.7rem; margin-top: 4px;">Power Ranking (Neutral Field):</li>
-  <li><span class="badge" style="background:#d1622a;">40%</span> <strong>XPD (α)</strong>: Expected Point Differential (Drive XP)</li>
-  <li><span class="badge" style="background:#c1393f;">25%</span> <strong>EPA/Play</strong>: Opponent-Adjusted Net EPA</li>
-  <li><span class="badge" style="background:#0f9a7d;">20%</span> <strong>XWLD (ω)</strong>: Exp. W/L</li>
-  <li><span class="badge" style="background:#3a6ea5;">15%</span> <strong>PD (δ)</strong>: Point Margin</li>
+  <li class="fw-bold text-secondary text-uppercase" style="font-size: 0.7rem; margin-top: 2px;">Ranking (SOR): what a team has earned</li>
+  <li><span class="badge" style="background:#303e4e;">40%</span> <strong>WLD (θ)</strong>: W/L resume</li>
+  <li><span class="badge" style="background:#6b4fb2;">30%</span> <strong>SB</strong>: quality of wins</li>
+  <li><span class="badge" style="background:#3a6ea5;">20%</span> <strong>PD (δ)</strong>: point margin</li>
+  <li><span class="badge" style="background:#a8820a;">10%</span> <strong>SOS</strong>: schedule strength</li>
+  <li class="fw-bold text-secondary text-uppercase" style="font-size: 0.7rem; margin-top: 4px;">Power: neutral-field strength</li>
+  <li><span class="badge" style="background:#d1622a;">40%</span> <strong>XPD (α)</strong>: expected margin</li>
+  <li><span class="badge" style="background:#c1393f;">25%</span> <strong>EPA/Play</strong>: opp-adjusted</li>
+  <li><span class="badge" style="background:#0f9a7d;">20%</span> <strong>XWLD (ω)</strong>: expected W/L</li>
+  <li><span class="badge" style="background:#3a6ea5;">15%</span> <strong>PD (δ)</strong>: point margin</li>
 </ul>
 :::
 
@@ -826,7 +817,7 @@ for (s in valid_seasons) {
 
 ```{r}
 #| echo: false
-kpi_card <- function(bg_from, bg_to, label, value, sub, value_style = NULL) {
+kpi_card <- function(bg_from, bg_to, label, value, sub = NULL, value_style = NULL) {
   htmltools::div(
     style = "min-width: 0;",
     htmltools::div(
@@ -834,7 +825,7 @@ kpi_card <- function(bg_from, bg_to, label, value, sub, value_style = NULL) {
       style = sprintf("background: linear-gradient(135deg, %s, %s); color: white; border-radius: 8px; line-height: 1.25;", bg_from, bg_to),
       htmltools::div(class = "text-uppercase small fw-bold text-white-50", style = "font-size: 0.68rem;", label),
       htmltools::div(class = "fw-bold", style = paste("font-size: clamp(0.85rem, 1.1vw, 1.02rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;", value_style), value),
-      htmltools::div(class = "small text-white-50", style = "font-size: 0.72rem;", sub)
+      if (!is.null(sub)) htmltools::div(class = "small text-white-50", style = "font-size: 0.72rem;", sub)
     )
   )
 }
@@ -851,7 +842,7 @@ render_kpi_banner <- function(s_bundle, s, is_active) {
   if (!"power_rating" %in% names(side_df)) side_df$power_rating <- NA_real_
   pow_top <- side_df |> dplyr::arrange(rank_power) |> dplyr::slice(1)
   pow_rc <- if ("record" %in% names(pow_top)) pow_top$record else "-"
-  pow_sub <- if (!is.na(pow_top$power_rating)) sprintf("Power Rating: %+.1f pts vs. avg FBS", pow_top$power_rating) else "Neutral-Field Strength"
+  pow_sub <- if (!is.na(pow_top$power_rating)) sprintf("%+.1f pts vs. avg FBS", pow_top$power_rating) else NULL
 
   # Max divergence between Ranking (SOR) and Power Ranking among either top 20
   div_row <- side_df |>
@@ -872,10 +863,10 @@ render_kpi_banner <- function(s_bundle, s, is_active) {
       class = "kpi-banner",
       style = "display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; width: 100%;",
       htmltools::tagList(
-          kpi_card("#303e4e", "#475b72", "Active Season Scope", season_txt, "Bayesian Standings"),
-          kpi_card("#0f9a7d", "#14b896", "#1 Ranked (SOR)", sprintf("%s (%s)", top_tm, top_rc), sprintf("SOR Score: %s", top_sc)),
+          kpi_card("#303e4e", "#475b72", "Season", season_txt),
+          kpi_card("#0f9a7d", "#14b896", "#1 Ranked (SOR)", sprintf("%s (%s)", top_tm, top_rc), sprintf("SOR %s", top_sc)),
           kpi_card("#d1622a", "#e27d4c", "#1 Power Ranking", sprintf("%s (%s)", pow_top$team, pow_rc), pow_sub),
-          kpi_card("#3a6ea5", "#5188c4", "Ranking vs. Power Divergence", div_txt, "Resume vs. Current Strength")
+          kpi_card("#3a6ea5", "#5188c4", "Biggest SOR vs. Power Gap", div_txt)
       )
     )
   )
@@ -893,7 +884,7 @@ htmltools::tagList(
 ### Column {width=100%}
 
 ```{r}
-#| title: "Rankings (SOR) with Power Ranking Side-by-Side"
+#| title: "Rankings (SOR) & Power"
 # Sketch for grouped two-tier table
 sketch_side <- htmltools::withTags(table(
   class = 'display multi-tier-table',
@@ -1014,7 +1005,7 @@ htmltools::tagList(
 ### Column {width=100%}
 
 ```{r}
-#| title: "Power Rankings: Neutral-Field Strength (Power Rating A − B = Expected Spread)"
+#| title: "Power Rankings (Rating A − B = Spread)"
 sketch_power <- htmltools::withTags(table(
   class = 'display multi-tier-table',
   thead(
@@ -1198,8 +1189,8 @@ render_quadrant_chart <- function(s_bundle, s) {
     scale_x_continuous(limits = x_limits, expand = c(0, 0)) +
     scale_y_continuous(limits = y_limits, expand = c(0, 0)) +
     labs(
-      x = "Resume Ability (θ) — Ordered Logit Latent Rating",
-      y = "Play Dominance (α) — Expected Point Differential (XPD)",
+      x = "Resume Ability (θ)",
+      y = "Play Dominance (α, XPD)",
       color = "Conference",
       shape = "Tier"
     ) +
@@ -1286,7 +1277,7 @@ render_quadrant_chart <- function(s_bundle, s) {
     list(
       x = 0.985, y = 0.985, xref = "paper", yref = "paper",
       xanchor = "right", yanchor = "top", showarrow = FALSE,
-      text = "<b style='color:#0f9a7d;font-size:11px;'>DOMINANT &amp; DESERVING</b><br><span style='color:#64748b;font-size:9px;'>High Resume (θ) + High Dominance (α)</span>",
+      text = "<b style='color:#0f9a7d;font-size:11px;'>DOMINANT &amp; DESERVING</b>",
       align = "right",
       bgcolor = "rgba(255, 255, 255, 0.85)",
       bordercolor = "#cbd5e1",
@@ -1296,7 +1287,7 @@ render_quadrant_chart <- function(s_bundle, s) {
     list(
       x = 0.015, y = 0.985, xref = "paper", yref = "paper",
       xanchor = "left", yanchor = "top", showarrow = FALSE,
-      text = "<b style='color:#3a6ea5;font-size:11px;'>UNLUCKY POWERHOUSES</b><br><span style='color:#64748b;font-size:9px;'>Elite Dominance (α), Tough Schedule (θ)</span>",
+      text = "<b style='color:#3a6ea5;font-size:11px;'>UNLUCKY POWERHOUSES</b>",
       align = "left",
       bgcolor = "rgba(255, 255, 255, 0.85)",
       bordercolor = "#cbd5e1",
@@ -1306,7 +1297,7 @@ render_quadrant_chart <- function(s_bundle, s) {
     list(
       x = 0.985, y = 0.015, xref = "paper", yref = "paper",
       xanchor = "right", yanchor = "bottom", showarrow = FALSE,
-      text = "<b style='color:#d1622a;font-size:11px;'>RESUME CONTENDERS</b><br><span style='color:#64748b;font-size:9px;'>High Resume (θ), Lower Dominance (α)</span>",
+      text = "<b style='color:#d1622a;font-size:11px;'>RESUME CONTENDERS</b>",
       align = "right",
       bgcolor = "rgba(255, 255, 255, 0.85)",
       bordercolor = "#cbd5e1",
@@ -1316,7 +1307,7 @@ render_quadrant_chart <- function(s_bundle, s) {
     list(
       x = 0.015, y = 0.015, xref = "paper", yref = "paper",
       xanchor = "left", yanchor = "bottom", showarrow = FALSE,
-      text = "<b style='color:#c1393f;font-size:11px;'>DEVELOPING / VULNERABLE</b><br><span style='color:#64748b;font-size:9px;'>Lower Dominance (α) &amp; Resume (θ)</span>",
+      text = "<b style='color:#c1393f;font-size:11px;'>DEVELOPING / VULNERABLE</b>",
       align = "left",
       bgcolor = "rgba(255, 255, 255, 0.85)",
       bordercolor = "#cbd5e1",
@@ -1340,7 +1331,7 @@ htmltools::tagList(
 ### Column {width=35%}
 
 ```{r}
-#| title: "Resume Luck & Finishing Margin Factor"
+#| title: "Resume Luck"
 render_luck_table <- function(s_bundle, s) {
   luck_df <- s_bundle$composite |>
     dplyr::filter(subdivision_id == 1L) |>
@@ -1404,9 +1395,7 @@ render_poll_kpi_banner <- function(s_bundle, s, is_active) {
     if (nrow(cbs_sub) >= 25) sprintf("%.3f", round(cor(cbs_sub$rank_sor, cbs_sub$rank_cbs, method = "spearman"), 3)) else "N/A"
   } else "N/A"
 
-  cbs_sub_txt <- if (cbs_rho != "N/A") sprintf("Spearman ρ = %s", cbs_rho) else "Full FBS Alignment"
-
-  season_txt <- paste0("Season ", s, " ", if (is_active) paste0("(Week ", season_info$week, ")") else "(Concluded)")
+    season_txt <- paste0("Season ", s, " ", if (is_active) paste0("(Week ", season_info$week, ")") else "(Concluded)")
 
   htmltools::div(
     class = paste0("year-panel year-panel-", s),
@@ -1417,10 +1406,10 @@ render_poll_kpi_banner <- function(s_bundle, s, is_active) {
       class = "kpi-banner",
       style = "display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; width: 100%;",
       htmltools::tagList(
-          kpi_card("#303e4e", "#475b72", "FBS Scope", sprintf("%d Programs", n_teams), season_txt),
-          kpi_card("#d1622a", "#e27d4c", "Colley Alignment", sprintf("Spearman ρ = %s", colley_rho), "Bias-Free Linear Baseline"),
-          kpi_card("#0f9a7d", "#14b896", "AP Poll Alignment", sprintf("Spearman ρ = %s", ap_rho), "Media Consensus Top 25"),
-          kpi_card("#3a6ea5", "#5188c4", "CBS 134 Alignment", cbs_sub_txt, "Division Media Benchmark")
+          kpi_card("#303e4e", "#475b72", "FBS Teams", n_teams, season_txt),
+          kpi_card("#d1622a", "#e27d4c", "Colley Alignment", sprintf("Spearman ρ = %s", colley_rho)),
+          kpi_card("#0f9a7d", "#14b896", "AP Top 25 Alignment", sprintf("Spearman ρ = %s", ap_rho)),
+          kpi_card("#3a6ea5", "#5188c4", "CBS 134 Alignment", sprintf("Spearman ρ = %s", cbs_rho))
       )
     )
   )
@@ -1438,7 +1427,7 @@ htmltools::tagList(
 ### Column {width=100%}
 
 ```{r}
-#| title: "Consensus Alignment: Ranking (SOR) vs. External Benchmarks (Colley, AP, CBS)"
+#| title: "SOR vs. Colley, AP & CBS"
 sketch_consensus <- htmltools::withTags(table(
   class = 'display cell-border stripe hover compact',
   thead(
@@ -1879,7 +1868,7 @@ htmltools::tagList(
 ### Column {width=100%}
 
 ```{r}
-#| title: "Team-by-Team Schedule: Opponent Strength, Actual vs. Expected Margin (XPD), and Projected Scores"
+#| title: "Schedule & Results"
 render_schedule_table <- function(log_df, s) {
   yr_data <- log_df |> dplyr::filter(season == as.integer(s))
   if (nrow(yr_data) == 0) {

@@ -2,6 +2,7 @@ project:
   title: "CFB Bayesian Ranking Engine"
   type: default
   brand: _brand.yml
+  execute-dir: project
   render:
     - "docs/dashboard.qmd"
     - "docs/reports/*.qmd"
