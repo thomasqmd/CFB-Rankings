@@ -1,220 +1,251 @@
-# College Football Retrospective Bayesian Ranking Engine: Architecture & Technical Specification
+# CFB Bayesian Rankings — Overhaul Plan
 
-## 1. Executive Summary & Core Philosophy
+Status: review completed 2026-09-26 against commit `c374378`; overhaul implemented the same day.
+The previous spec (4-pipeline WLD/PD/XWLD/XPD matrix + Φ-blended composites) is in git history.
 
-This project implements a comprehensive 4-pipeline Bayesian ranking system for NCAA College Football (CFB) spanning all FBS and connected FCS programs.
+Decisions: Resume benchmark = #12 FBS team; Colley is the record-only reference; seasons start
+at 2014; dashboard is Quarto + Observable JS.
 
-Unlike predictive power ratings (e.g., ESPN SP+, ESPN FPI, Sagarin, standard KenPom) that attempt to forecast future performance or hypothetical neutral-field point spreads, this engine operates strictly as a **retrospective evaluative ranking (Strength of Record / Quality of Past Achievement)**. It answers the fundamental question:
+Two published products, kept strictly separate:
 
-> *Given what occurred on the field across an entire season, what level of accomplishment did each team legitimately earn, when evaluated against the aggregate capability of its opponents?*
-
-That answer is the **Ranking (SOR)**. Alongside it, the engine publishes a separate **Power Ranking** that answers the predictive question (*who wins on a neutral field next week?*) from the expected-performance pipelines (XPD, XWLD), opponent-adjusted EPA/play, and realized margin. The two are kept separate: the Power Ranking never feeds the Ranking.
-
-The framework resolves schedule asymmetry by back-propagating schedule credit using end-of-season opponent performance, fusing tournament tie-breaking mathematics (Sonneborn–Berger and Buchholz/Solkoff metrics) with Bayesian hierarchical regression to account for structural disparities between FBS and FCS competition.
-
----
-
-## 2. Theoretical Architecture: The 2×2 Orthogonal Performance Matrix
-
-Every football matchup produces information along two distinct axes:
-- **Domain (Actual Realized vs. Expected Dominance):** Did the team win on the scoreboard, or did it dominate the down-to-down plays (net play Expected Points Added, EPA)?
-- **Granularity (Discrete Resume vs. Continuous Margin):** Did the team secure a discrete victory/defeat, or did it build a continuous scoring/efficiency differential?
-
-Mapping these axes produces our **4-Pipeline Performance Decomposition**:
-
-| Granularity \ Domain | **Actual Realized (Scoreboard)** | **Expected Dominance (Net EPA / Play)** |
+| Product | Question | Built from |
 | :--- | :--- | :--- |
-| **Discrete (Game Resumes)** | **Pipeline 1: WLD ($\theta$)**<br>Ordered logit on $\{L, OTL, OTW, W\}$ | **Pipeline 3: XWLD ($\omega$)**<br>Ordered logit on Post-Game Win Expectancy |
-| **Continuous (Margins)** | **Pipeline 2: PD ($\delta$)**<br>Robust Student-$t$ on score differentials | **Pipeline 4: XPD ($\alpha$)**<br>Robust Student-$t$ on cumulative net play EPA |
-
-Cross-pipeline comparisons directly isolate variance and game control:
-- **$\theta_i - \omega_i$ (Outcome Luck Factor):** Measures whether a team won more games than its per-play performance dictated (e.g., turnover luck, one-score game variance).
-- **$\delta_i - \alpha_i$ (Finishing / Margin Luck Factor):** Measures red-zone efficiency variance versus overall field dominance.
+| **Power rating** (points) | Who wins on a neutral field next week, and by how much? | One joint Bayesian model of scoreboard margin + opponent-adjusted efficiency |
+| **Resume ranking** | Given what happened, what did each team earn? | Actual W/L results valued against opponent strength (from the Power posterior) |
 
 ---
 
-## 3. Mathematical Formulations
+## A. Verified defects (fix regardless of redesign)
 
-### 3.1 Pipeline 1: WLD (Discrete Outcome Resume Engine)
-Models discrete game outcomes $Y_k \in \{1: \text{Regulation Loss}, 2: \text{OT Loss}, 3: \text{OT Win}, 4: \text{Regulation Win}\}$ via a cumulative ordered logit:
+Each item was reproduced against the current DuckDB / `_targets` store.
 
-$$\begin{aligned}
-Y_k &\sim \text{OrderedLogit}(\eta_k^{\text{wld}}, \mathbf{c}) \\
-\eta_k^{\text{wld}} &= \theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}} \cdot (1 - \text{neutral}_k)
-\end{aligned}$$
+- [x] **A1. Team-name matching corrupts EPA for any game with "miss" in both names.**
+  `R/02_transform.R:222-253` and `R/01_ingest_duckdb.R:723-755` use
+  `home LIKE '%miss%' AND posteam LIKE '%miss%'`, which also matches Missouri, Mississippi State,
+  Ole Miss, Southern Miss, Mississippi Valley State. Every play gets assigned to the home side, so
+  the whole game collapses into one drive: e.g. 2025 Missouri–Mississippi State, 2025 Egg Bowl,
+  2024 Mississippi State–Missouri all show `team_epa = 7, opp_epa = 0`. These games feed XPD/XWLD.
+  Fix: key everything on CFBD team IDs (`home_id`/`away_id`, `pos_team_id`/`offense_id`), store
+  one canonical name at ingest, delete the LIKE ladders.
+- [x] **A2. Overtime detection is a substring match on `notes`.** `str_detect(notes, "ot|...")`
+  matches "F**oot**ball", "C**ot**ton", "P**ot**ato", "Sc**oot**er's": every CFP game is coded OT,
+  and real OT games (notes are empty) are never detected. 2026 data has 0 OT wins and 1 "OT loss"
+  (TCU–UNC, Aer Lingus *College Football* Classic). Fix: derive OT from line scores
+  (`length(home_line_scores) > 4`) or CFBD game `periods`.
+- [x] **A3. SB and Buchholz are sums over games**, so schedule credit scales with games played.
+  USC is SOR #1 largely because it has 4 games vs 3 for everyone else (SB 5.83 vs ~4.2). Also
+  Michigan is SOR #7 with Power #62. Superseded by C2, but wrong as-is.
+- [x] **A4. AP poll cache never refreshes.** `fetch_external_polls(season)` caches to
+  `polls_<season>_latest.rds` and returns it forever; same for `cbs134_latest_latest.rds`.
+  Poll week is also not aligned to `max_week` (CFBD poll week *w+1* = poll after week *w* games).
+- [x] **A5. Fabricated "CBS 134" benchmark.** When scraping fails, `align_and_benchmark_rankings()`
+  blends AP + Colley and labels it "CBS Sports 134". Remove the fallback (drop CBS entirely; the
+  scrape is brittle and untracked by targets).
+- [x] **A6. Historical seasons in the dashboard are synthetic.** `build_season_bundle()` invents
+  θ/δ/ω/α from records plus `rnorm()` noise for every season except the current one, and there is
+  a further fully-random fallback generator (`docs/dashboard.qmd:414-457`). Fit real models for
+  every season (D1) and delete both generators.
+- [x] **A7. January games of a finished season can be frozen out.** `is_completed_season <- s < curr_year`
+  freezes season *s* on Jan 1 of *s+1*, before bowls/CFP finish. Freeze only after the national
+  championship (or e.g. Feb 1).
+- [x] **A8. Postseason week numbers collide with regular-season week 1.** Weekly summaries and
+  `week <= max_week` filters group on `week` alone. Add `week_seq` at ingest
+  (postseason = last regular week + 1) and use it everywhere.
+- [x] **A9. Week-resolution rules disagree with their docs** (docstring says ≥95% complete; code
+  uses ≥60% or ≥20 games, plus a ≥25-games-by-22:00 bypass). Pick one rule, document it, test it.
+- [x] **A10. XPD ignores `filter_garbage_time`** (parameter accepted, never used).
+- [x] **A11. Only FBS-involved games are ingested**, so FCS teams have 1–2 games and their ratings
+  are essentially the prior; ~90 FCS/D-II teams are lumped in one "FCS" tier. Ingest FCS schedules
+  (`division = "fcs"`), and put non-D1 opponents in a third tier (or one pooled node).
+- [x] **A12. Warm-start inits are a hidden side effect.** `data/inits/*.rds` is written outside
+  targets, so a fit depends on untracked disk state. Models are small: drop warm-starting.
+- [x] **A13. Prior-sensitivity sweep is mostly VI noise.** Meanfield ADVI with one seed per cell;
+  the grid column called `sigma_fcs` is actually the prior *sd of μ_FCS*. Only WLD is swept.
+- [x] **A14. Diagnostics never gate anything** (`strict_halt = FALSE` everywhere).
+- [x] **A15. Season label is wrong**: selector shows "2026-27"; CFB seasons are single-year.
 
-- $\theta_i$: Latent actual resume strength of team $i$.
-- $\mathbf{c} = (c_1, c_2, c_3)$ with $c_1 < c_2 < c_3$: Internal cutpoints separating outcome tiers.
-- $\gamma_{\text{home}} \sim \mathcal{N}(0.2, 0.1^2)$: Structural home-field advantage log-odds.
+## B. Methodology problems (why the current rankings aren't sound)
 
-### 3.2 Pipeline 2: PD (Scoreboard Point Differential Engine)
-Models scoreboard point margin $\Delta \text{Pts}_k = \text{Score}_{\text{home}} - \text{Score}_{\text{away}}$ using a robust Student-$t$ likelihood to temper extreme blowouts:
+- **B1. Ad-hoc weighting.** SOR = 0.40·Φ(zθ) + 0.30·Φ(zSB) + 0.20·Φ(zδ) + 0.10·Φ(zBH) + H2H;
+  Power = 0.40·zα + 0.25·zEPA + 0.20·zω + 0.15·zδ. No weight is estimated or validated.
+- **B2. Schedule is counted 3–4 times in SOR.** θ is already opponent-adjusted; SB re-adds opponent
+  quality; Buchholz rewards *playing* good teams regardless of result (a 0-12 SEC team gets SOS
+  credit); H2H adds it again.
+- **B3. XWLD is XPD discretized.** PGWE = logistic(0.15·net_xp) binned at 0.25/0.5/0.75 is a
+  monotone function of XPD with thresholds at ±7.3; the "OT" tiers are mislabelled. It adds no
+  information, only weight.
+- **B4. "XPD/EPA" isn't EPA.** It's a hand-coded drive value (7 for a TD, a step function of
+  min yards-to-goal otherwise) from possession changes inferred by clock ordering; TD drives score
+  actual points, so it correlates 0.88 with margin. Real CFBD PPA is already stored and is better.
+- **B5. The WLD ordered logit isn't symmetric.** Free cutpoints let c₂ ≠ 0, which acts as an
+  intercept confounded with the arbitrary home/away labelling on neutral sites; with OT categories
+  near-empty (A2) it is effectively a binary logit anyway. γ_home ~ N(0.2, 0.1²) is also tight
+  and low (CFB home edge is ≈0.3–0.4 logits).
+- **B6. `power_rating` is not a calibrated spread.** A re-standardized blend of correlated z-scores
+  multiplied by sd(δ) has no reason to equal points; projections then add PD's home edge to it.
+  Never checked against outcomes.
+- **B7. Posterior uncertainty is thrown away.** Everything is computed from posterior medians; no
+  rank intervals, no P(top-12).
+- **B8. Luck metrics are rank differences.** Rank gaps are non-linear (huge in the dense middle,
+  small at the top). Use wins/points.
+- **B9. No preseason information and no time dynamics.** Week-1–4 power ratings rest on 1–4 games;
+  a team's week-1 game counts the same as last week's in November.
+- **B10. No out-of-sample validation at all** (no backtest, no Vegas/SP+/FPI comparison, no PPC,
+  `log_lik` computed but unused).
+- **B11. Garbage-time rule is crude** (2nd half, |margin| > 28 in *offense–defense* score).
 
-$$\Delta \text{Pts}_k \sim \text{Student-}t\left(\nu_{\text{pd}}, \, \delta_{\text{home}[k]} - \delta_{\text{away}[k]} + \beta_{\text{home, pd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{pd}}^2\right)$$
+## C. Target methodology
 
-- $\delta_i$: Latent actual point differential rating.
-- $\nu_{\text{pd}} \sim \text{Gamma}(2, 0.1)$: Heavy-tailed degree of freedom ($\nu \approx 4\text{--}8$).
-- $\beta_{\text{home, pd}} \sim \mathcal{N}(2.8, 1.0^2)$: Realized home advantage in points.
+### C1. Power model (one Stan model, points scale) — replaces PD, XPD, XWLD, ridge EPA, Power blend
+- Latent strength `r[i]` in points. Two likelihoods per game sharing it:
+  - Scoreboard margin (regulation margin; OT games → 0): Student-t(ν, r_h − r_a + hfa·home, σ_m).
+  - Efficiency margin: net PPA/play × expected plays (or per-play with its own scale `λ`):
+    Normal(λ·(r_h − r_a + hfa·home), σ_e). The model learns how much to trust each via σ_m, σ_e —
+    no hand-set weights.
+  - Optional later: split into offense/defense ratings (gives projected scores directly).
+- Hierarchy: `r[i] ~ N(μ_conf[i], σ_team)`, `μ_conf ~ N(μ_tier, σ_conf)`, tiers FBS/FCS/non-D1,
+  FBS tier anchored at 0.
+- Preseason prior: `r[i] ~ N(ρ·r_prev[i], σ_pre)` from last season's final posterior (ρ, σ_pre fit
+  on history), new/transitioning teams fall back to conference mean. Recency via game-weight
+  decay or a weekly random walk `r[i,w] = r[i,w−1] + N(0, σ_drift)` (phase 2).
+- hfa: one parameter per season with a prior centred on the historical estimate (~2.5–3 pts);
+  zero on neutral sites.
+- Garbage time: standard thresholds (Q2 > 38, Q3 > 28, Q4 > 22) on true game score for the
+  efficiency likelihood.
+- Output per posterior draw: rating, neutral-field spread and win probability for any pair
+  (σ_game → P(win) = Φ(spread/σ_game)).
 
-### 3.3 Pipeline 3: XWLD (Expected Discrete Outcome Engine)
-Converts net play EPA into Post-Game Win Expectancy (PGWE) mapped to expected discrete outcome tiers $Y_k^{\text{exp}} \in \{1, 2, 3, 4\}$:
+### C2. Resume ranking — replaces WLD θ, SB, Buchholz, H2H, SOR blend
+- **Wins Above Benchmark (WAB)**, per posterior draw *s*:
+  `WAB_i = Σ_games (W_ik − P_s(benchmark team beats opp_k at that venue))`,
+  benchmark = the *b*-th best FBS team in draw *s* (b = 12 ≈ playoff bubble; configurable).
+  Additive, venue-aware, in units of wins, and opponent strength comes from the Power posterior.
+- Also report **SOR probability** (ESPN-style): P(benchmark team goes ≥ this record on this
+  schedule) via Poisson-binomial — useful as the secondary sort / tooltip.
+- Resume is W/L only (OT win = win). Margin stays in Power, not Resume.
+- Rank per draw → publish median rank, 80% interval, P(top 4), P(top 12).
+- SOS shown as a display column only: expected losses of the benchmark team vs. this schedule.
 
-$$\begin{aligned}
-Y_k^{\text{exp}} &\sim \text{OrderedLogit}(\eta_k^{\text{xwld}}, \mathbf{c}_{\text{xwld}}) \\
-\eta_k^{\text{xwld}} &= \omega_{\text{home}[k]} - \omega_{\text{away}[k]} + \gamma_{\text{home, xwld}} \cdot (1 - \text{neutral}_k)
-\end{aligned}$$
+### C3. Diagnostics & "luck" (all in interpretable units)
+- Expected wins = Σ P(team wins | its own rating); **Win luck = actual − expected wins**.
+- Close-game record (≤ 8 pts), **Resume vs. Power gap** = resume rank − power rank (display only).
 
-- $\omega_i$: Latent expected outcome strength (deserved wins).
+### C4. Validation (drives every tuning choice)
+- Rolling-origin backtest 2014–2025: fit through week *w*, predict week *w+1*.
+  Metrics: margin MAE/RMSE, Brier/log-loss on W/L, calibration curve, ATS vs. closing lines
+  (CFBD `lines`), compared with SP+/FPI/Elo from CFBD.
+- Use the backtest to set ρ, σ_pre, recency, garbage thresholds, benchmark b.
+- PPC (margin distribution, home win %, blowout frequency) and LOO for model comparison.
+- Sensitivity: `priorsense` power-scaling on all priors (or NUTS re-fits), not ADVI.
+- Gates: fail the run on R-hat/ESS/divergence breaches for the published fit.
 
-### 3.4 Pipeline 4: XPD (Expected Point Differential Engine)
-Computes game-level expected point differential ($\Delta \text{XP}_k$) directly from cumulative play-by-play Net EPA:
+### C5. Benchmarks
+- AP and CFP (aligned to the modelled week), Colley (pure record baseline), SP+/FPI/Elo.
+  Report rank correlation *and* the individual disagreements. No scraped or synthesized sources.
 
-$$\Delta \text{XP}_k = \sum_{p \in \text{Plays}_k} \text{EPA}_{p, \text{home}} - \sum_{p \in \text{Plays}_k} \text{EPA}_{p, \text{away}}$$
+## D. Pipeline / infrastructure
 
-$$\Delta \text{XP}_k \sim \text{Student-}t\left(\nu_{\text{xpd}}, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home, xpd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{xpd}}^2\right)$$
+- [x] **D1. Fit every season** with targets dynamic branching (`pattern = map(season)`), and
+  **every week** for backtest + rank trajectories. Published weeks: full NUTS; backtest weeks can
+  use a fast path (Pathfinder/Laplace) if NUTS is too slow — measure first.
+- [x] **D2. Ingest cleanup:** team IDs (A1), line scores/OT (A2), `week_seq` (A8), FCS games (A11),
+  team metadata (logo URLs, colors, conference by season from `cfbd_team_info`), betting lines.
+  Store PPA with game score so garbage time uses the real score.
+- [x] **D3. One `canonical_team_name`** (currently duplicated in 01 and 02); ideally unnecessary
+  once IDs are used.
+- [x] **D4. Poll fetching as proper targets** keyed by (season, week), with `tar_cue` for the
+  current week only (A4).
+- [x] **D5. Remove dead weight:** warm-start inits (A12), rstan fallback, VI "fast_prototype",
+  unused `version` args, `transform_wld_xpd` alias, `.Renviron` sanitising duplicated in 3 places,
+  `plan.md` from the Quarto render list, CBS scraper.
+- [x] **D6. Tests (testthat):** week resolution, OT detection, WAB/SOR math on a toy schedule,
+  Colley on a known example, ingest schema.
+- [x] **D7. Dashboard reads only targets outputs** (no sourcing R files or DuckDB fallbacks from
+  inside the .qmd). Export one tidy data file per season/week for the front end.
 
-- $\alpha_i$: Latent per-play efficiency rating (expected point differential).
+## E. Dashboard redesign
 
----
+Current problems: 19-column tables full of θ/δ/ω/α/SB jargon; every season's widgets are
+pre-rendered into one page and toggled with ~300 lines of hand-written JS plus DataTables resize
+hacks; hard-coded hex colors ignore `_brand.yml`; red/green-only deltas; the quadrant chart plots
+two correlated model internals with dramatized labels; half the "Over & Underrated" page is
+`eval: false`.
 
-## 4. Sparse Graph Regularization & Sub-Division Hierarchical Shrinkage
+Proposal: Quarto dashboard + **Observable JS** (built into Quarto, still a static HTML file) with
+`Inputs.select` for season/week, `Inputs.table` or a small custom table, Observable Plot for
+charts, data loaded from the exported JSON/Parquet (D7). Removes the year-panel JS and DT hacks.
 
-Matchups between FBS and FCS teams form a sparse, asymmetric bipartite subgraph (~110 games annually, ~98% hosted by FBS teams). Unregularized flat priors permit transitive inflation loops where elite FCS teams score higher than mid-tier FBS teams purely from internal conference connectivity.
+Pages:
+1. **Rankings** — one table: rank, ▲▼ movement vs. last week, logo + team + conf, record,
+   Resume (WAB, with rank-interval bar), Power (pts) + rank, SOS rank, AP/CFP rank. Row click →
+   team page. Toggle Resume ⇄ Power sort.
+2. **Team** — header card (ranks, record, rating trend sparkline), schedule with pre-game win
+   probability, result, efficiency margin, per-game resume contribution (ΔWAB), remaining games
+   with win probability, projected final-record distribution.
+3. **Matchup** — pick two teams + venue → spread, win %, projected score, rating distributions.
+4. **Trends** — weekly rank trajectories (bump chart) for top 25; biggest movers.
+5. **Resume vs. Power** — scatter (WAB vs. power rating) with plain-language annotations; win luck.
+6. **Polls** — model vs. AP/CFP/Colley/SP+: agreement stats + largest disagreements.
+7. **Methodology** — plain-language explanation; link to the diagnostics report.
 
-Following recent theoretical advances on high-dimensional Bradley–Terry models (*Fang et al., 2026, arXiv:2601.14727*), we apply non-centered hierarchical Gaussian shrinkage:
+Design system: tokens from `_brand.yml` only (no hex literals in .qmd/.js); Atkinson Hyperlegible
+Next for UI + tabular numerals (Lora is a reading face, not for dense tables); diverging
+blue↔orange from the brand palette with ▲▼ glyphs for direction; team colors as accents only;
+dark mode; mobile layout; fixed-width number columns.
 
-$$\begin{aligned}
-\theta_i &\sim \mathcal{N}\left(\mu_{\text{sub}[i]}, \, \sigma^2_{\text{sub}[i]}\right), \quad \text{sub}[i] \in \{\text{FBS}, \text{FCS}\} \\
-\mu_{\text{FBS}} &= 0 \quad (\text{Identifiability Anchor}) \\
-\mu_{\text{FCS}} &\sim \mathcal{N}(-1.5, 0.5^2) \quad [\text{or } \xi_{\text{FCS}} \sim \mathcal{N}(-21.0, 3.0^2) \text{ in XPD}] \\
-\sigma_{\text{FBS}}, \sigma_{\text{FCS}} &\sim \text{Exponential}(1)
-\end{aligned}$$
+Reports: rebuild `season_retro.qmd` around the new outputs (resume/power, luck, SOS, polls) and
+`model_diagnostics.qmd` around gates, PPC, calibration and backtest results.
 
-- **Elite FCS Programs (e.g., North Dakota State, South Dakota State):** Shrink toward the upper tail of the FCS prior distribution, giving appropriate credit to FBS teams that beat them.
-- **Low-Tier FCS Programs:** Heavily shrunk toward the mean, yielding negligible resume credit in $\theta$ and automatically bounding runaway point margin inflations.
+## F. Order followed
 
----
+1. **Data correctness:** A1, A2, A7, A8, A9, A11, D2, D3, D6 (tests alongside).
+2. **Power model** (C1) + backtest harness (C4) on a few seasons; iterate until calibrated.
+3. **Resume** (C2, C3) on top of the Power posterior; retire WLD/XWLD/XPD/SB/Buchholz/H2H.
+4. **All seasons/weeks** via branching (D1), benchmarks (C5, A4, A5), gates (A14), cleanup (D5, A12, A13).
+5. **Dashboard + reports** (E, D7, A6, A15).
+6. README rewrite.
 
-## 5. Sonneborn–Berger & Buchholz Tie-Break Derivation
+## Implementation notes
 
-Latent team abilities back-propagate into classical tournament equity metrics:
+- CFBD REST API replaces cfbfastR play-by-play: `games` (both classifications, line scores),
+  `stats/game/advanced` (garbage-time-filtered PPA; CFBD's own filter replaces B11's thresholds),
+  `lines`, `rankings`, `teams`. All keyed by CFBD team IDs / names from the same source.
+- Postseason is one snapshot (`week_seq` = last regular week + 1); week 0 is a prior-only
+  preseason snapshot (from 2015), so week-1 games are backtested too.
+- Offense/defense split and projected scores are not implemented (spread + win probability only).
 
-- **Sonneborn–Berger (SB) Score:**
-$$\text{SB}_i = \sum_{k \in \text{Games}(i)} w_{k, i} \cdot \text{logit}^{-1}(\theta_{\text{opp}[k]})$$
-where $w_{k, i} \in \{3: \text{W}, 2: \text{OTW}, 1: \text{OTL}, 0: \text{L}\}$.
+- Dashboard additions (after the first full build):
+  - a conference filter (group or single conference) beside every team picker;
+  - Resume vs. Power colored by Power 5/4, Group of 5/6 and Independents, with a conference table;
+  - the Polls page sorts by Resume, SOR, Power, AP, Coaches, CFP or Colley;
+  - a new Games page showing model spread vs. Vegas;
+  - the Team schedule shows the expected result, model and Vegas spreads (betting convention),
+    and the expected / projected record.
+- `check_build.R` runs the post-build checks.
 
-- **Buchholz (Strength of Schedule) Score:**
-$$\text{BH}_i = \sum_{k \in \text{Games}(i)} \text{logit}^{-1}(\theta_{\text{opp}[k]})$$
+## Follow-ups
 
-- **Ranking: Strength of Resume (SOR, past performance):**
-$$\text{SOR}_i = w_1 \Phi(Z_{\theta_i}) + w_2 \Phi(Z_{\text{SB}_i}) + w_3 \Phi(Z_{\delta_i}) + w_4 \Phi(Z_{\text{BH}_i}) + \text{H2H}_i$$
-Default weights: $w_1 = 0.40$ (WLD Resume), $w_2 = 0.30$ (Sonneborn–Berger), $w_3 = 0.20$ (PD Margin), $w_4 = 0.10$ (Buchholz SOS). $\text{H2H}_i$ is a small credit for each win, scaled by the loser's $\Phi(Z_\theta)$ (road wins weighted higher).
+- [ ] Use the backtest to tune `half_life_weeks` (recency), `b_prev` prior, and hfa prior.
+- [ ] Offense/defense ratings (would give projected scores and totals). Needed for a model-own
+      predicted score; until then the dashboard shows the model spread and win probability.
+- [ ] Close-game misfit: posterior predictive checks put more games within 7 points than the model
+      predicts in 13 of 13 seasons (2025: 33% observed vs 23–27% replicated). Likely cause:
+      OT games are counted as a regulation margin of 0, plus key numbers (3, 7). Options: model
+      OT games as ties separately, or a discrete margin likelihood.
+- [ ] Gate misses in the full build: 2025 weeks 7 and 16 (R-hat 1.014 / 1.023, ESS 390 / 306),
+      even after the retry. The retry should also double `iter_sampling`. This changes `cfg`,
+      so every snapshot is refit.
+- [ ] priorsense flags prior-data conflict for `b_prev` (12/13 seasons) and the tier/conference
+      hyperparameters: revisit these priors with the backtest.
+- [ ] Weekly random-walk ratings instead of static-within-season (C1 phase 2).
 
-- **Power Ranking (future performance, neutral field):**
-$$P_i = v_1 Z_{\alpha_i} + v_2 Z_{\text{EPA}_i} + v_3 Z_{\omega_i} + v_4 Z_{\delta_i}, \qquad \text{PowerRating}_i = \tilde{P}_i \cdot \text{sd}_{\text{FBS}}(\delta)$$
-Default weights: $v_1 = 0.40$ (XPD), $v_2 = 0.25$ (opponent-adjusted net EPA/play), $v_3 = 0.20$ (XWLD), $v_4 = 0.15$ (PD). Blended linearly in $z$-space (not $\Phi$) so elite margins are not compressed; $\tilde{P}$ is $P$ restandardized over FBS. Because all inputs carry separate home-field terms, $\text{PowerRating}_A - \text{PowerRating}_B$ is the expected neutral-field point spread.
+## References
 
----
-
-## 6. Multi-Season Data Store & DuckDB Architecture
-
-The data pipeline connects `cfbfastR` to a local analytical `DuckDB` database (`data/cfb.duckdb`).
-
-### 6.1 Multi-Season Storage Schema
-- **`schedules`**: Stores game metadata, conference affiliation, division indicators, scores, and overtime flags across multiple seasons (2014–present).
-- **`pbp`**: Stores play-level Expected Points Added (EPA), Win Probability Added (WPA), period, clock, and down/distance for every game.
-- **`sync_metadata`**: Tracks season-by-season sync timestamps, games count, and play counts, enabling granular incremental updates.
-
-### 6.2 Multi-Season Ingestion
-The ingestion engine (`R/01_ingest_duckdb.R`) supports syncing the full modern era (`seasons = 2013:current_season`), ensuring that:
-1. Multi-season data is preserved in DuckDB across both the BCS finale (2013 schedules/scores) and the entire CFP play-by-play EPA era (2014–present).
-2. Season-over-season trajectory (e.g. conference realignment in 2024 with Oregon/Washington in the Big Ten and Texas/Oklahoma in the SEC) is tracked.
-3. Inits for warm-starting Stan MCMC chains are cleanly scoped by season (`data/inits/<season>_<engine>_inits.rds`).
-
-### 6.3 API-Guarding, Smart Caching & Active Week Determination
-To protect against rate-limiting, redundant external calls, and downstream target invalidation:
-1. **Local Analytical Cache First**: [`get_latest_cfb_week()`](file:///home/thomas/CFB/R/01_ingest_duckdb.R#L160-L245) queries `data/cfb.duckdb` directly before making any network requests. If game records exist locally, it resolves the active week in milliseconds with zero network overhead.
-2. **AP Top 25 Poll Release & Concluded Week Threshold**: College Football weekend slates finish Saturday night (with occasional Sunday/Monday games), and the AP Top 25 Poll is officially released on **Sunday afternoons at approximately 2:00 PM US Eastern Time (14:00 ET)**. Under [`resolve_completed_ap_week()`](file:///home/thomas/CFB/R/01_ingest_duckdb.R#L80-L159), a week is counted as the active evaluation week only once:
-   - All scheduled games for that week are finished ($\ge 95\%$ to allow for rare cancellations).
-   - Current time is at or after the AP poll release time (Sunday 14:00 ET for Thursday/Friday/Saturday slates, Monday 14:00 ET for Sunday slates, Tuesday 14:00 ET for Monday night games like Week 1 Labor Day).
-   - If a week is currently underway (e.g. Thursday night, Friday, Saturday all day/evening, or Sunday morning before 14:00 ET), the pipeline steps back to the most recent fully concluded week (e.g. Week 2 when Week 3 is underway).
-3. **Pipeline Dataset Scoping**: [`transform_all_pipelines()`](file:///home/thomas/CFB/R/02_transform.R#L280-L330) accepts `max_week = current_season_info$week`, ensuring models and external AP poll comparisons evaluate the exact same concluded game slate.
-4. **Historical Season Freezing**: Completed past seasons (e.g. 2013–2025) are permanent records. [`pull_and_sync_duckdb()`](file:///home/thomas/CFB/R/01_ingest_duckdb.R#L320-L370) checks `sync_metadata`: if a historical season already contains game records (and PBP for 2014+), it is frozen and never re-fetched unless explicit `full_refresh = TRUE` is passed.
-5. **External Poll Disk Caching**: [`fetch_external_polls()`](file:///home/thomas/CFB/R/06_benchmark.R#L73-L115) persists poll results to `data/external_polls/polls_<season>_<week>.rds`. Subsequent targets runs load directly from disk without consuming CFBD API quotas.
-6. **Target Pipeline Stability**: By returning consistent objects from local stores, `targets` hashes remain identical across invocations, allowing `targets::tar_make()` to cleanly skip already-computed steps.
-
----
-
-## 7. Pipeline Orchestration & Quality Control (`targets`)
-
-```
-[ cfbfastR Data Feeds ]
-          │
-          ▼
-   [ data/cfb.duckdb ]  ◄── Incremental Multi-Season Sync (2013–Present)
-          │
-    targets Workflow Graph
-    ├── 1. current_season_info (active season & week tracker)
-    ├── 2. active_seasons (historical sync vector: 2013:current_season)
-    ├── 3. duckdb_sync (high-throughput multi-season ingest)
-    ├── 4. modeling_data (WLD, PD, XWLD, XPD transformations)
-    ├── 5. fit_wld, fit_pd, fit_xwld, fit_xpd (CmdStan MCMC with warm-start)
-    ├── 6. diagnostics_wld, pd, xwld, xpd (R-hat <= 1.01, ESS >= 400, Div = 0)
-    ├── 7. prior_sensitivity_wld (FCS hyperparameter perturbation grid)
-    ├── 8. sb_ratings, epa_ratings & composite_rankings (SOR Ranking + Power Ranking)
-    ├── 9. colley_rankings & benchmark_comparison (AP, Coaches, CFP, Colley)
-    ├── 10. render_dashboard (docs/dashboard.qmd -> 100% rankings-focused interactive explorer)
-    ├── 11. render_season_retro (docs/reports/season_retro.qmd -> in-season and end-of-season rankings audit)
-    └── 12. render_model_diagnostics (docs/reports/model_diagnostics.qmd -> dedicated MCMC convergence & diagnostics audit)
-```
-
-### 7.1 Diagnostic Quality Gates
-Pipeline execution fails fast if posterior draws fail any diagnostic threshold:
-- $\widehat{R} \le 1.01$ across all latent ability parameters.
-- $\text{ESS}_{\text{bulk}} \ge 400$ and $\text{ESS}_{\text{tail}} \ge 400$.
-- Post-warmup divergent transitions $= 0$.
-- Energy Bayesian Fraction of Missing Information (E-BFMI) $> 0.20$.
-
-### 7.2 Prior Sensitivity Diagnostic
-A 9-point grid perturbation sweep on the FCS prior $(\mu_{\text{FCS}} \in \{-1.0, -1.5, -2.0\}, \sigma_{\text{FCS}} \in \{0.3, 0.5, 0.8\})$ verifies that Top-25 FBS rankings remain invariant ($\rho \ge 0.985$, Jaccard $\ge 0.95$).
-
----
-
-## 8. Presentation, Reporting, & Dashboard Architecture
-
-The delivery layer is powered by Quarto and themed with `_brand.yml`. A strict separation of concerns is maintained: **all public/consumer viewing documents are dedicated 100% to rankings, accomplishments, and schedule evaluations**, while **all statistical model diagnostics, MCMC audits, and prior sensitivity sweeps are housed in a dedicated technical document**.
-
-### 8.1 Viewable Interactive Dashboard (`docs/dashboard.qmd`)
-- **Temporal Scope:** Multi-season single-year engine spanning 2013 to 2026 (strictly single-year at a time).
-- **Format:** Quarto Dashboard (`format: dashboard`), compiling to a self-contained HTML document (`docs/dashboard.html`) viewable directly in any web browser without an active R server.
-- **Global Year Selector (`# {.sidebar}`):**
-  - Features a persistent, prominent Season Selector dropdown in the left sidebar (and synchronized page controls) allowing the user to select any season from 2026 down to 2013.
-  - Changing the selector immediately updates the entire dashboard — updating all KPI banners, side-by-side matrices, 2×2 quadrants, poll divergence audits, and full standings to the chosen single year.
-- **Features (Dedicated Purely to Rankings & Single-Year Alignment):**
-  - **Side-by-Side Unified Rankings Matrix:** Side-by-side comparison across Composite Engine (`rank_composite`, `composite_index`), the 4 Component Pipelines (WLD resume $\theta$, PD margin $\delta$, XWLD deserved W/L $\omega$, XPD net EPA $\alpha$), External Benchmarks (Colley Matrix, AP Top 25, AP $\Delta$), and Luck Factors. Includes an interactive multi-system parallel rank trajectory chart (bump plot) and 4-pipeline component value decomposition.
-  - **2×2 Orthogonal Quadrants:** Active single-year Resume Quality ($\theta$) vs. EPA Play Efficiency ($\alpha$), with 4 quadrant zones (Dominant & Deserving, Unlucky Powerhouses, Resume Contenders, Vulnerable Seeds) and outcome luck factors.
-  - **Poll Divergence Benchmark:** Active single-year consensus comparison against AP Top 25 and Colley Matrix, isolating most underrated and overrated programs.
-  - **Single-Year Standings Archive:** Complete 134-team FBS standings table (Rank 1-134, records, win %, margins, PPG, Opp PPG) strictly one single year at a time for every season from 2013 to 2026.
-
-### 8.2 Season Retrospective Audit (`docs/reports/season_retro.qmd`)
-- **Temporal Scope:** Full-season retrospective evaluation (Season $S$), rendered on every pipeline run — so it doubles as the in-season rankings and playoff bubble audit while $S$ is still underway, and stands as the final accomplishment audit once $S$ concludes.
-- **Role:** Pure retrospective accomplishment audit. Features full 4-pipeline performance matrix, outcome luck variance analysis, and schedule difficulty & opponent quality back-propagation (Sonneborn-Berger and Buchholz ratings).
-
-### 8.3 Dedicated Model Diagnostics & Convergence Certification (`docs/reports/model_diagnostics.qmd`)
-- **Temporal Scope:** Technical modeling and sampling audit.
-- **Role:** The isolated technical specification document for statistical modeling and computation. Features individual convergence gate audits for all 4 pipelines (WLD, PD, XWLD, XPD), combined health certification matrix ($\widehat{R}$, bulk/tail ESS, divergences, E-BFMI), and the 9-point FCS prior hyperparameter sensitivity grid sweep.
-
-## 9. Theoretical & Methodological References
-
-- **Bradley–Terry Modern Theory & Sparse Graph Asymptotics:**
-  - Fang, S., Han, R., Luo, Y., & Xu, Y. (2026). *Recent advances in the Bradley–Terry Model: theory, algorithms, and applications*. arXiv preprint arXiv:2601.14727 [stat.ME]. https://arxiv.org/abs/2601.14727
-- **Paired Comparisons & Ordinal Regression:**
-  - Bradley, R. A., & Terry, M. E. (1952). *Rank analysis of incomplete block designs: I. The method of paired comparisons*. Biometrika, 39(3/4), 324–345.
-  - Agresti, A. (2010). *Analysis of Ordinal Categorical Data* (2nd ed.). Wiley.
-  - Cattelan, M. (2012). *Models for paired comparison data: A review with emphasis on dependent data*. Statistical Science, 27(3), 412–433.
-- **College Football Ratings & Resume Evaluation:**
-  - Connelly, B. (2017+). *SP+ Methodology and Efficiency Diagnostics*. ESPN Analytics.
-  - Colley, W. N. (2002). *Colley's Bias Free College Football Ranking Method: The Colley Matrix Explained*. Princeton University.
-- **Bayesian Computation & Workflow:**
-  - Gelman, A., Vehtari, A., Simpson, D., Margossian, C. C., Bürkner, P. C., Yanchenko, A. K., & Modrák, M. (2020). *Bayesian workflow*. arXiv preprint arXiv:2011.01808.
-  - Vehtari, A., Gelman, A., Simpson, D., Carpenter, B., & Bürkner, P. C. (2021). *Rank-normalization, folding, and localization: An improved $\widehat{R}$ for assessing convergence of MCMC*. Bayesian Analysis, 16(2), 667–718.
+- Fang, Han, Luo & Xu (2026). *Recent advances in the Bradley–Terry model.* arXiv:2601.14727.
+- Bradley & Terry (1952). *Rank analysis of incomplete block designs I.* Biometrika 39.
+- Glickman & Stern (1998). *A state-space model for National Football League scores.* JASA 93.
+- Colley (2002). *Colley's bias-free college football ranking method.*
+- NCAA NET / Wins Above Bubble methodology (men's basketball selection).
+- Gelman et al. (2020). *Bayesian workflow.* arXiv:2011.01808.
+- Vehtari et al. (2021). *Rank-normalization, folding, and localization: an improved R̂.* Bayesian Analysis 16.
+- Kallioinen et al. (2024). *Detecting and diagnosing prior and likelihood sensitivity with power-scaling.* Statistics and Computing.

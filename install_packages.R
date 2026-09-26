@@ -1,7 +1,7 @@
 # ==============================================================================
 # Script: install_packages.R
 # Purpose: Installs all R and C++ dependencies for the CFB Bayesian Ranking Engine
-#          Uses 'pak' with Pop!_OS -> Ubuntu 24.04 binary mapping and GitHub support.
+#          Uses 'pak' with Pop!_OS -> Ubuntu 24.04 binary mapping.
 # ==============================================================================
 
 cat("====================================================================\n")
@@ -31,46 +31,20 @@ if (!requireNamespace("pak", quietly = TRUE)) {
 
 # 3. Define required packages (CRAN and GitHub references)
 packages_to_install <- c(
-  # Core data manipulation & analytical database
-  "tidyverse",
-  "duckdb",
-  "DBI",
-  "arrow",
-  "qs2",                  # Modern fast serialization (successor to qs; fully compatible with targets format='qs' and R >= 4.5)
-  
-  # College Football Data (SportsDataverse)
-  "cfbfastR",
-  
-  # Bayesian modeling, inference & MCMC diagnostics
-  "brms",
-  "posterior",
-  "bayesplot",
-  "tidybayes",
-  "stan-dev/cmdstanr",    # GitHub / Stan R-Universe: CmdStan interface
-  
-  # Pipeline orchestration & parallel execution
-  "targets",
-  "tarchetypes",
-  "crew",
-  "future",
-  "furrr",
-  
-  # Presentation, visualization & reporting
-  "quarto",
-  "ggplot2",
-  "gt",
-  "gtExtras",
-  "patchwork",
-  "plotly",
-  "scales",
-  
-  # Interactive Dashboard
-  "shiny",
-  "bslib",
-  "bsicons",
-  
-  # Package management utilities
-  "remotes"
+  # Data store & API
+  "dplyr", "tidyr", "tibble", "duckdb", "DBI", "httr2", "jsonlite", "qs2",
+
+  # Bayesian modeling & checks
+  "stan-dev/cmdstanr", "posterior", "loo", "priorsense",
+
+  # Pipeline
+  "targets", "tarchetypes",
+
+  # Reporting
+  "quarto", "ggplot2", "gt", "scales",
+
+  # Tests
+  "testthat"
 )
 
 # Helper function to extract base package name from reference (e.g. "traversc/qs" -> "qs")

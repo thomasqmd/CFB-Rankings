@@ -1,0 +1,133 @@
+/*-- scss:defaults --*/
+// Colours come from _brand.yml (navy / series-1 blue / series-3 orange / ink ramp).
+$primary: #303e4e;
+$body-bg: #fcfcfb;
+$body-color: #222222;
+$font-family-sans-serif: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif;
+$headings-font-family: $font-family-sans-serif;
+$font-family-monospace: "JetBrains Mono", ui-monospace, monospace;
+
+/*-- scss:rules --*/
+@import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
+
+:root {
+  --ink: #222222;
+  --ink-2: #52514e;
+  --ink-3: #77756f;
+  --rule: #e1e0d9;
+  --rule-strong: #c3c2b7;
+  --surface: #fcfcfb;
+  --card: #ffffff;
+  --tint: #f3f2ee;
+  --resume: #3a6ea5;      // series-1 blue: Resume
+  --power: #d1622a;       // series-3 orange: Power
+  --up: #3a6ea5;
+  --down: #c1393f;
+  --accent: #303e4e;
+  --g1: #1baf7a;          // conference groups: Power / Group of 5-6 / Independents
+  --g2: #2a78d6;
+  --g3: #eb6834;
+}
+
+body.quarto-dark {
+  --ink: #ecebe6;
+  --ink-2: #b9b7af;
+  --ink-3: #8f8d86;
+  --rule: #34383d;
+  --rule-strong: #4a4f55;
+  --surface: #16191d;
+  --card: #1d2126;
+  --tint: #23282e;
+  --resume: #7f9fc4;
+  --power: #e58a5a;
+  --up: #7f9fc4;
+  --down: #e0787d;
+  --accent: #a9b5c3;
+  --g1: #199e70;
+  --g2: #3987e5;
+  --g3: #d95926;
+}
+
+body {
+  font-family: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif !important;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.navbar { background: #303e4e !important; }
+.navbar-title { font-weight: 700; letter-spacing: 0.01em; }
+
+.card { background: var(--card); border-color: var(--rule); border-radius: 10px; }
+.card-header { background: transparent; border-bottom-color: var(--rule); font-weight: 600; color: var(--ink-2); }
+.bslib-sidebar-layout > .sidebar, .sidebar { background: var(--tint) !important; border-color: var(--rule) !important; }
+
+.num, .cfb-table td.num, .cfb-table th.num { font-variant-numeric: tabular-nums; text-align: right; }
+.muted { color: var(--ink-3); }
+.small-caps { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); font-weight: 600; }
+
+// ---- Stat tiles ---------------------------------------------------------------
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.tile { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.tile .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); font-weight: 600; }
+.tile .value { font-size: 1.35rem; font-weight: 700; line-height: 1.2; margin-top: 2px; display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .sub { font-size: 0.82rem; color: var(--ink-2); }
+.tile.resume { border-top: 3px solid var(--resume); }
+.tile.power { border-top: 3px solid var(--power); }
+
+// ---- Tables -------------------------------------------------------------------
+.table-wrap { overflow: auto; max-height: 100%; }
+.cfb-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.9rem; }
+.cfb-table thead th {
+  position: sticky; top: 0; z-index: 1; background: var(--card);
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3);
+  font-weight: 600; padding: 8px 8px; border-bottom: 1px solid var(--rule-strong); white-space: nowrap;
+}
+.cfb-table thead tr.group th { border-bottom: none; padding-bottom: 0; font-size: 0.68rem; }
+.cfb-table thead tr.group th.resume { color: var(--resume); border-bottom: 2px solid var(--resume); }
+.cfb-table thead tr.group th.power { color: var(--power); border-bottom: 2px solid var(--power); }
+.cfb-table td { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: middle; white-space: nowrap; }
+.cfb-table tbody tr:hover td { background: var(--tint); }
+.cfb-table tbody tr.clickable { cursor: pointer; }
+.cfb-table td.rank { font-weight: 700; font-size: 1rem; width: 2.5em; text-align: right; }
+.cfb-table td.team { min-width: 190px; }
+.team-cell { display: flex; align-items: center; gap: 8px; }
+.team-cell img { width: 24px; height: 24px; object-fit: contain; }
+.team-cell .name { font-weight: 600; }
+.team-cell .conf { font-size: 0.75rem; color: var(--ink-3); }
+.move { font-size: 0.75rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.move.up { color: var(--up); }
+.move.down { color: var(--down); }
+.move.flat { color: var(--ink-3); }
+.pill { display: inline-block; min-width: 2em; padding: 1px 6px; border-radius: 999px; background: var(--tint); font-size: 0.8rem; text-align: center; font-variant-numeric: tabular-nums; }
+.result-w { color: var(--up); font-weight: 700; }
+.result-l { color: var(--down); font-weight: 700; }
+
+// Interval bar (value dot + 80% interval), drawn in inline SVG
+.ibar line.rng { stroke-width: 3; stroke-linecap: round; opacity: 0.35; }
+.ibar circle { stroke: var(--card); stroke-width: 1.5; }
+.ibar line.zero { stroke: var(--rule-strong); stroke-width: 1; }
+
+// Probability bar
+.pbar { display: inline-block; width: 56px; height: 8px; border-radius: 4px; background: var(--tint); vertical-align: middle; overflow: hidden; margin-right: 6px; }
+.pbar > span { display: block; height: 100%; border-radius: 4px; }
+
+// ---- Team header --------------------------------------------------------------
+.team-header { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.team-header img { width: 64px; height: 64px; object-fit: contain; }
+.team-header h2 { margin: 0; font-size: 1.5rem; font-weight: 700; }
+.team-header .facts { display: flex; gap: 20px; flex-wrap: wrap; margin-left: auto; }
+.team-header .fact .v { font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.card-body { justify-content: flex-start !important; }
+.explain { font-size: 0.88rem; color: var(--ink-2); max-width: 70ch; line-height: 1.5; }
+.explain strong { color: var(--ink); }
+
+// Observable inputs
+form.oi-3a86ea, .oi-3a86ea { font-family: inherit !important; }
+.observablehq input, .observablehq select { font-family: inherit; }
+
+@media (max-width: 700px) {
+  .cfb-table { font-size: 0.82rem; }
+  .cfb-table .hide-sm { display: none; }
+  .team-header .facts { margin-left: 0; }
+}

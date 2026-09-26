@@ -1,279 +1,188 @@
 ---
-title: "CFB Bayesian Engine: Model Diagnostics & Convergence Certification"
-subtitle: "Formal MCMC Convergence Audit, Gate Evaluations, and Hyperparameter Sensitivity Sweeps"
+title: "Model Diagnostics"
+subtitle: "Convergence gates, posterior predictive checks, prior sensitivity and out-of-sample accuracy"
 author: "Thomas Reinke"
 date: today
 format:
-  html:
+  qmdthemes-personal-html:
     toc: true
-    toc-depth: 3
-    toc-location: left
     code-fold: true
-    code-tools: true
-    embed-resources: true
-    css: ../styles/custom.scss
 ---
 
 ```{r}
 #| label: setup
-#| include: false
 library(targets)
 library(dplyr)
 library(tidyr)
+library(ggplot2)
 library(gt)
-library(gtExtras)
 
-# Brand colors from _brand.yml
-c_navy    <- "#303e4e"
-c_teal    <- "#0f9a7d"
-c_blue    <- "#3a6ea5"
-c_red     <- "#c1393f"
-c_seq_1   <- "#eef1f4"
+snapshots <- tar_read(snapshots)
+checks <- Filter(Negate(is.null), tar_read(checks))
+bt <- tar_read(backtest)
+params <- snapshots$params
+current <- max(params$season)
 
-has_targets <- tryCatch({
-  tar_read(diagnostics_wld)
-  TRUE
-}, error = function(e) FALSE)
+c_power <- "#d1622a"; c_resume <- "#3a6ea5"; c_muted <- "#77756f"
+theme_report <- theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(), plot.title.position = "plot",
+        axis.title = element_text(color = c_muted))
+```
 
-if (has_targets) {
-  diag_wld    <- tar_read(diagnostics_wld)
-  diag_pd     <- tar_read(diagnostics_pd)
-  diag_xwld   <- tar_read(diagnostics_xwld)
-  diag_xpd    <- tar_read(diagnostics_xpd)
-  sens_wld    <- tar_read(prior_sensitivity_wld)
-  season_info <- tar_read(current_season_info)
-} else {
-  season_info <- list(season = 2026, week = 3)
-  
-  make_gate <- function(name, max_r, min_eb, min_et, div, ebfmi) {
-    tibble::tibble(
-      Metric = c("Max R-hat", "Min ESS Bulk", "Min ESS Tail", "Post-warmup Divergences", "Min E-BFMI"),
-      Value = c(sprintf("%.3f", max_r), format(min_eb, big.mark = ","), format(min_et, big.mark = ","), as.character(div), sprintf("%.2f", ebfmi)),
-      Threshold = c("<= 1.01", ">= 400", ">= 400", "= 0", "> 0.20"),
-      Status = c("PASS", "PASS", "PASS", "PASS", "PASS")
-    )
-  }
-  
-  diag_wld  <- list(model_name = "Pipeline 1: WLD (Ordered Logit)", passed = TRUE, gate_report = make_gate("WLD", 1.002, 1420, 1180, 0, 0.78))
-  diag_pd   <- list(model_name = "Pipeline 2: PD (Student-t)", passed = TRUE, gate_report = make_gate("PD", 1.001, 1650, 1340, 0, 0.82))
-  diag_xwld <- list(model_name = "Pipeline 3: XWLD (Ordered Logit)", passed = TRUE, gate_report = make_gate("XWLD", 1.003, 1210, 990, 0, 0.74))
-  diag_xpd  <- list(model_name = "Pipeline 4: XPD (Student-t)", passed = TRUE, gate_report = make_gate("XPD", 1.002, 1380, 1140, 0, 0.76))
-  
-  sens_wld <- tibble::tibble(
-    pipeline = "WLD",
-    mu_fcs = c(-1.0, -1.0, -1.0, -1.5, -1.5, -1.5, -2.0, -2.0, -2.0),
-    sigma_fcs = c(0.3, 0.5, 0.8, 0.3, 0.5, 0.8, 0.3, 0.5, 0.8),
-    spearman_rho = c(0.9982, 0.9985, 0.9979, 0.9998, 1.0000, 0.9994, 0.9965, 0.9971, 0.9958),
-    jaccard_top25 = c(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.96, 0.96, 0.96),
-    alert_flag = FALSE
-  )
+## Convergence gates
+
+Every weekly snapshot is fit with 4 chains × 1000 draws and must pass R̂ ≤ 1.01,
+bulk/tail ESS ≥ 400, zero divergences and E-BFMI > 0.2. A failing fit is re-run once with a
+longer warmup and `adapt_delta = 0.99`; the published current-season snapshot stops the
+pipeline if it still fails.
+
+```{r}
+#| label: tbl-gates
+#| tbl-cap: "Gate results by season"
+params |>
+  group_by(Season = season) |>
+  summarise(Snapshots = n(), Passed = sum(passed), `Needed retry` = sum(attempts > 1),
+            `Worst R̂` = max(max_rhat), `Min ESS` = min(pmin(min_ess_bulk, min_ess_tail)),
+            Divergences = sum(divergences), `Fit time (min)` = sum(seconds) / 60) |>
+  gt() |>
+  fmt_number(`Worst R̂`, decimals = 3) |>
+  fmt_number(c(`Min ESS`, `Fit time (min)`), decimals = 0)
+```
+
+```{r}
+#| label: tbl-failed
+failed <- params |> filter(!passed)
+if (nrow(failed) > 0) {
+  failed |>
+    select(season, week_label, max_rhat, min_ess_bulk, min_ess_tail, divergences, min_ebfmi) |>
+    gt(caption = "Snapshots that failed a gate after the retry") |>
+    fmt_number(where(is.numeric), decimals = 3)
 }
-
-all_passed <- all(diag_wld$passed, diag_pd$passed, diag_xwld$passed, diag_xpd$passed)
 ```
 
-::: {.callout-note appearance="simple"}
-### Model Verification Scope: Season `r season_info$season`
-Formal MCMC convergence and diagnostic certification for the 4-pipeline ranking engine. All diagnostics live here, keeping the dashboard and briefing documents dedicated to team rankings.
-:::
-
-## 1. Executive Convergence Certification
-
-All four CmdStan sampling chains must pass these convergence gates before posterior ratings propagate to rankings (*Gelman et al., 2020; Vehtari et al., 2021*):
-
-1. **Rank-Normalized $\widehat{R} \le 1.01$:** Between-chain mixing across all latent ability parameters ($\theta, \delta, \omega, \alpha$).
-2. **Effective Sample Size ($\text{ESS}_{\text{bulk}} \ge 400$, $\text{ESS}_{\text{tail}} \ge 400$):** Accurate posterior medians and 90% credible intervals.
-3. **Zero Post-Warmup Divergences:** No geometric funnel pathology in the NUTS sampler.
-4. **E-BFMI $> 0.20$:** Adequate momentum exploration.
-
-::: {.callout-`r ifelse(all_passed, "tip", "important")` appearance="simple"}
-### Certification Status: `r ifelse(all_passed, "CERTIFIED (ALL GATES PASSED)", "ALERT: CONVERGENCE BREACH DETECTED")`
-All 4 pipelines passed convergence gates for Season `r season_info$season`; posteriors are certified for retrospective evaluation.
-:::
+## Estimated structure
 
 ```{r}
-#| label: tbl-combined-audit
-#| tbl-cap: "Cross-Pipeline MCMC Convergence Certification Matrix"
-#| echo: false
-gates_combined <- dplyr::bind_rows(
-  diag_wld$gate_report  |> dplyr::mutate(Pipeline = "1. WLD (Ordered Logit)"),
-  diag_pd$gate_report   |> dplyr::mutate(Pipeline = "2. PD (Student-t Margin)"),
-  diag_xwld$gate_report |> dplyr::mutate(Pipeline = "3. XWLD (Exp Win Expectancy)"),
-  diag_xpd$gate_report  |> dplyr::mutate(Pipeline = "4. XPD (Student-t Net EPA)")
-) |>
-  dplyr::select(Pipeline, Metric, Value, Threshold, Status)
-
-gt::gt(gates_combined, id = "tbl_combined_audit") |>
-  gt::tab_header(
-    title = gt::md("**Combined MCMC Health Audit Matrix**"),
-    subtitle = sprintf("Season %d • 4 Independent CmdStan Engines • 4 Chains × 1,000 Iterations", season_info$season)
-  ) |>
-  gtExtras::gt_theme_538(quiet = TRUE) |>
-  gt::tab_style(
-    style = list(gt::cell_fill(color = "#eef1f4"), gt::cell_text(weight = "bold", color = "#0f9a7d")),
-    locations = gt::cells_body(columns = Status, rows = Status == "PASS")
-  ) |>
-  gt::tab_style(
-    style = list(gt::cell_fill(color = "#f8d7da"), gt::cell_text(weight = "bold", color = "#c1393f")),
-    locations = gt::cells_body(columns = Status, rows = Status == "FAIL")
-  ) |>
-  gt::tab_style(
-    style = gt::cell_text(weight = "bold"),
-    locations = gt::cells_body(columns = Pipeline)
-  )
+#| label: fig-params
+#| fig-cap: "Population-level parameters at each season's final snapshot."
+#| fig-width: 9
+#| fig-height: 5
+params |>
+  group_by(season) |>
+  filter(week == max(week)) |>
+  ungroup() |>
+  select(season, `Home field (pts)` = hfa, `Game noise σ (pts)` = sigma,
+         `Preseason carry-over` = b_prev, `FCS offset (pts)` = fcs_offset) |>
+  pivot_longer(-season) |>
+  ggplot(aes(season, value)) +
+  geom_line(color = c_power, linewidth = 0.8) +
+  geom_point(color = c_power, size = 2) +
+  facet_wrap(~name, scales = "free_y") +
+  labs(x = NULL, y = NULL) +
+  theme_report
 ```
 
----
+## Posterior predictive checks
 
-## 2. Pipeline 1: WLD Ordered Logit (Actual Discrete Outcomes)
-
-Pipeline 1 models realized game outcomes $Y_k \in \{1: \text{L}, 2: \text{OTL}, 3: \text{OTW}, 4: \text{W}\}$ via cumulative ordered logit:
-
-$$Y_k \sim \text{OrderedLogit}(\theta_{\text{home}[k]} - \theta_{\text{away}[k]} + \gamma_{\text{home}} \cdot (1 - \text{neutral}_k), \, \mathbf{c})$$
+For each season's latest snapshot: does data simulated from the fitted model look like the real
+games? A statistic well outside the 90% predictive interval points to misfit.
 
 ```{r}
-#| label: tbl-diag-wld
-#| tbl-cap: "Pipeline 1: WLD Ordered Logit Diagnostic Summary"
-#| echo: false
-gt::gt(diag_wld$gate_report, id = "tbl_diag_wld") |>
-  gt::tab_header(
-    title = gt::md("**Pipeline 1 (WLD Ordered Logit) Convergence Audit**"),
-    subtitle = "Resume Strength Parameter θ Mixing & Threshold Stability"
-  ) |>
-  gtExtras::gt_theme_538(quiet = TRUE) |>
-  gt::tab_style(
-    style = list(gt::cell_fill(color = "#eef1f4"), gt::cell_text(weight = "bold", color = "#0f9a7d")),
-    locations = gt::cells_body(columns = Status, rows = Status == "PASS")
-  )
+#| label: tbl-ppc
+#| tbl-cap: "Observed statistic vs. 90% posterior predictive interval"
+bind_rows(lapply(checks, \(x) x$ppc |> mutate(season = x$season))) |>
+  mutate(ok = observed >= rep_lo & observed <= rep_hi) |>
+  transmute(Season = season, Statistic = statistic, Observed = observed,
+            Interval = sprintf("%.3f – %.3f", rep_lo, rep_hi), Inside = ifelse(ok, "✓", "✗")) |>
+  gt(groupname_col = "Statistic") |>
+  fmt_number(Observed, decimals = 3)
 ```
 
----
+## Prior sensitivity
 
-## 3. Pipeline 2: PD Robust Student-$t$ (Scoreboard Margin)
-
-Pipeline 2 models realized continuous point differential $\Delta \text{Pts}_k$ using a robust Student-$t$ likelihood:
-
-$$\Delta \text{Pts}_k \sim \text{Student-}t\left(\nu_{\text{pd}}, \, \delta_{\text{home}[k]} - \delta_{\text{away}[k]} + \beta_{\text{home, pd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{pd}}^2\right)$$
-
-The heavy-tailed degree of freedom $\nu_{\text{pd}} \sim \text{Gamma}(2, 0.1)$ bounds blowout leverage so extreme scorelines can't destabilize ratings.
+Power-scaling sensitivity (`priorsense`): how much each posterior shifts when the prior or the
+likelihood is strengthened or weakened. "prior-data conflict" or "weak likelihood" diagnoses
+are worth a look; values below 0.05 are negligible.
 
 ```{r}
-#| label: tbl-diag-pd
-#| tbl-cap: "Pipeline 2: PD Robust Student-t Diagnostic Summary"
-#| echo: false
-gt::gt(diag_pd$gate_report, id = "tbl_diag_pd") |>
-  gt::tab_header(
-    title = gt::md("**Pipeline 2 (PD Robust Student-t) Convergence Audit**"),
-    subtitle = "Point Margin Parameter δ Mixing & Robust Dispersion Check"
-  ) |>
-  gtExtras::gt_theme_538(quiet = TRUE) |>
-  gt::tab_style(
-    style = list(gt::cell_fill(color = "#eef1f4"), gt::cell_text(weight = "bold", color = "#0f9a7d")),
-    locations = gt::cells_body(columns = Status, rows = Status == "PASS")
-  )
+#| label: tbl-sens
+#| tbl-cap: "Current-season prior sensitivity"
+cur <- checks[[as.character(current)]]
+if (!is.null(cur) && "prior" %in% names(cur$sensitivity)) {
+  cur$sensitivity |>
+    select(variable, prior, likelihood, diagnosis) |>
+    gt() |>
+    fmt_number(c(prior, likelihood), decimals = 3)
+}
 ```
-
----
-
-## 4. Pipeline 3: XWLD Ordered Logit (Expected Discrete Outcomes)
-
-Pipeline 3 maps Post-Game Win Expectancy (PGWE) from cumulative play-by-play EPA into expected discrete tiers $Y_k^{\text{exp}} \in \{1, 2, 3, 4\}$:
-
-$$Y_k^{\text{exp}} \sim \text{OrderedLogit}(\omega_{\text{home}[k]} - \omega_{\text{away}[k]} + \gamma_{\text{home, xwld}} \cdot (1 - \text{neutral}_k), \, \mathbf{c}_{\text{xwld}})$$
-
-The divergence $\theta_i - \omega_i$ quantifies **Outcome Luck**.
 
 ```{r}
-#| label: tbl-diag-xwld
-#| tbl-cap: "Pipeline 3: XWLD Ordered Logit Diagnostic Summary"
-#| echo: false
-gt::gt(diag_xwld$gate_report, id = "tbl_diag_xwld") |>
-  gt::tab_header(
-    title = gt::md("**Pipeline 3 (XWLD Ordered Logit) Convergence Audit**"),
-    subtitle = "Expected Ability Parameter ω Mixing & Expected Cutpoint Stability"
-  ) |>
-  gtExtras::gt_theme_538(quiet = TRUE) |>
-  gt::tab_style(
-    style = list(gt::cell_fill(color = "#eef1f4"), gt::cell_text(weight = "bold", color = "#0f9a7d")),
-    locations = gt::cells_body(columns = Status, rows = Status == "PASS")
-  )
+#| label: tbl-loo
+#| tbl-cap: "PSIS-LOO by season (joint margin + efficiency likelihood)"
+bind_rows(lapply(checks, \(x) x$loo |> mutate(season = x$season, .before = 1))) |>
+  gt() |>
+  fmt_number(-season, decimals = 1)
 ```
 
----
+## Out-of-sample accuracy
 
-## 5. Pipeline 4: XPD Heavy-Tailed Student-$t$ (Net Play EPA)
-
-Pipeline 4 models game-level Expected Points Differential $\Delta \text{XP}_k$ aggregated over all offensive plays:
-
-$$\Delta \text{XP}_k \sim \text{Student-}t\left(\nu_{\text{xpd}}, \, \alpha_{\text{home}[k]} - \alpha_{\text{away}[k]} + \beta_{\text{home, xpd}} \cdot (1 - \text{neutral}_k), \, \tau_{\text{xpd}}^2\right)$$
-
-The divergence $\delta_i - \alpha_i$ isolates **Finishing / Red-Zone Luck**.
+Each game is predicted by the snapshot fitted through the previous week (week-1 games by the
+preseason snapshot), so no result informs its own prediction. Vegas comparisons use the median
+closing spread across books.
 
 ```{r}
-#| label: tbl-diag-xpd
-#| tbl-cap: "Pipeline 4: XPD Student-t Diagnostic Summary"
-#| echo: false
-gt::gt(diag_xpd$gate_report, id = "tbl_diag_xpd") |>
-  gt::tab_header(
-    title = gt::md("**Pipeline 4 (XPD Student-t) Convergence Audit**"),
-    subtitle = "Play Efficiency Parameter α Mixing & Play-by-Play Scale Check"
-  ) |>
-  gtExtras::gt_theme_538(quiet = TRUE) |>
-  gt::tab_style(
-    style = list(gt::cell_fill(color = "#eef1f4"), gt::cell_text(weight = "bold", color = "#0f9a7d")),
-    locations = gt::cells_body(columns = Status, rows = Status == "PASS")
-  )
+#| label: tbl-bt
+#| tbl-cap: "Backtest summary"
+bt$overall |>
+  gt() |>
+  cols_label(scope = "", games = "Games", mae = "MAE", rmse = "RMSE", brier = "Brier",
+             logloss = "Log loss", accuracy = "Winner %", games_with_line = "With line",
+             mae_model_lined = "Model MAE (lined)", mae_vegas = "Vegas MAE", ats_win_rate = "ATS %") |>
+  fmt_number(c(mae, rmse, mae_model_lined, mae_vegas), decimals = 2) |>
+  fmt_number(c(brier, logloss), decimals = 3) |>
+  fmt_percent(c(accuracy, ats_win_rate), decimals = 1)
 ```
-
----
-
-## 6. FCS Hierarchical Shrinkage & Prior Sensitivity Sweep
-
-To connect FBS and FCS teams without manual penalties, we apply non-centered hierarchical Gaussian shrinkage:
-
-$$\theta_i \sim \mathcal{N}(\mu_{\text{sub}[i]}, \sigma_{\text{sub}[i]}^2), \quad \mu_{\text{FBS}} = 0, \quad \mu_{\text{FCS}} \sim \mathcal{N}(-1.5, 0.5^2)$$
-
-Following *Fang et al. (2026, arXiv:2601.14727)*, a 9-point grid sweep over $\mu_{\text{FCS}} \in \{-1.0, -1.5, -2.0\}$ and $\sigma_{\text{FCS}} \in \{0.3, 0.5, 0.8\}$ checks that Top-25 FBS rankings are invariant to the FCS hyperparameter choice:
 
 ```{r}
-#| label: tbl-fcs-sensitivity
-#| tbl-cap: "9-Point FCS Prior Hyperparameter Sensitivity Sweep"
-#| echo: false
-sens_display <- sens_wld |>
-  dplyr::mutate(
-    Status = ifelse(alert_flag, "ALERT", "ROBUST (PASS)")
-  ) |>
-  dplyr::select(
-    Pipeline = pipeline,
-    `FCS Mean (μ)` = mu_fcs,
-    `FCS Scale (σ)` = sigma_fcs,
-    `Spearman ρ` = spearman_rho,
-    `Top 25 Jaccard` = jaccard_top25,
-    Status
-  )
-
-gt::gt(sens_display, id = "tbl_fcs_sensitivity") |>
-  gt::tab_header(
-    title = gt::md("**FCS Prior Hyperparameter Sensitivity Sweep**"),
-    subtitle = "Spearman rank correlation (ρ >= 0.985) and Top-25 Jaccard overlap (>= 0.95)"
-  ) |>
-  gtExtras::gt_theme_538(quiet = TRUE) |>
-  gt::fmt_number(columns = `Spearman ρ`, decimals = 4) |>
-  gt::fmt_number(columns = `Top 25 Jaccard`, decimals = 2) |>
-  gt::tab_style(
-    style = list(
-      gt::cell_fill(color = "#eef1f4"),
-      gt::cell_text(weight = "bold", color = "#0f9a7d")
-    ),
-    locations = gt::cells_body(columns = Status, rows = Status == "ROBUST (PASS)")
-  ) |>
-  gt::tab_style(
-    style = list(
-      gt::cell_fill(color = "#f8d7da"),
-      gt::cell_text(weight = "bold", color = "#c1393f")
-    ),
-    locations = gt::cells_body(columns = Status, rows = Status == "ALERT")
-  )
+#| label: fig-bt-week
+#| fig-cap: "Mean absolute error by week of season (FBS vs FBS), model vs. closing line."
+#| fig-width: 9
+#| fig-height: 4.5
+bt$by_week |>
+  select(week, Model = mae_model_lined, `Vegas close` = mae_vegas) |>
+  pivot_longer(-week) |>
+  ggplot(aes(week, value, color = name)) +
+  geom_line(linewidth = 0.8) + geom_point(size = 2) +
+  scale_color_manual(values = c(Model = c_power, `Vegas close` = "#52514e"), name = NULL) +
+  labs(x = "Week predicted", y = "MAE (points)") +
+  theme_report + theme(legend.position = "top")
 ```
 
-Rank conservation is near-perfect ($\rho \ge 0.995$, Jaccard $\ge 0.96$): FCS games add schedule connectivity without contaminating FBS ratings.
+```{r}
+#| label: fig-calibration
+#| fig-cap: "Calibration of pre-game win probabilities (all games)."
+#| fig-width: 6
+#| fig-height: 5
+ggplot(bt$calibration, aes(pred, obs)) +
+  geom_abline(linetype = "dashed", color = c_muted) +
+  geom_line(color = c_power, linewidth = 0.8) +
+  geom_point(aes(size = n), color = c_power) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+  scale_size_area(max_size = 6, guide = "none") +
+  labs(x = "Predicted home win probability", y = "Observed") +
+  coord_equal() + theme_report
+```
+
+```{r}
+#| label: tbl-bt-season
+#| tbl-cap: "Backtest by season (FBS vs FBS)"
+bt$by_season |>
+  select(season, games, mae, mae_model_lined, mae_vegas, accuracy, brier, ats_win_rate) |>
+  gt() |>
+  cols_label(season = "Season", games = "Games", mae = "MAE", mae_model_lined = "Model MAE (lined)",
+             mae_vegas = "Vegas MAE", accuracy = "Winner %", brier = "Brier", ats_win_rate = "ATS %") |>
+  fmt_number(c(mae, mae_model_lined, mae_vegas), decimals = 2) |>
+  fmt_number(brier, decimals = 3) |>
+  fmt_percent(c(accuracy, ats_win_rate), decimals = 1)
+```

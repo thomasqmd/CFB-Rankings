@@ -48,3 +48,9 @@ Thumbs.db
 
 /.quarto/
 **/*.quarto_ipynb
+
+# Raw CFBD API responses (re-creatable, but cached to save API calls)
+data/raw/
+# Compiled Stan executables (no extension on Linux)
+stan/*
+!stan/*.stan
