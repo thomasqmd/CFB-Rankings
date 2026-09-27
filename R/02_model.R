@@ -8,16 +8,17 @@ model_config <- function() {
   list(
     stan_file = "stan/power.stan",
     chains = 4, iter_warmup = 500, iter_sampling = 1000, adapt_delta = 0.9,
-    retry_adapt_delta = 0.99, retry_warmup = 1000,
-    hfa_mean = 2.5, hfa_sd = 1.5,
-    tier_mean = c(-18, -35), tier_sd = c(8, 10),
-    b_prev_mean = 0.6, b_prev_sd = 0.2,
-    # Structural priors, centred on full-season posterior estimates (2025) with sds wide enough
-    # for the data to move them by mid-season; they stabilise the first 1-3 weeks
-    sigma_team_mean = c(9.5, 10, 12), sigma_team_sd = c(2.5, 2.5, 4),
-    sigma_conf_prior = c(9, 3),
-    lambda_prior = c(0.75, 0.15), kappa_prior = c(0.7, 0.15),
-    sigma_eff_prior = c(14, 3), sigma_m_prior = c(8, 2),
+    retry_adapt_delta = 0.99, retry_warmup = 1000, retry_sampling = 2000,
+    # Priors are centred on full-season posterior means pooled over 2014-2025, with sd = 2x the
+    # between-season sd (analysis/tune_priors.R -> analysis/structural_pooled.csv). They only
+    # matter in the first weeks; by mid-season each season's own data dominates.
+    hfa_mean = 2.5, hfa_sd = 0.7,
+    tier_mean = c(-27.3, -54), tier_sd = c(3.7, 10.2),      # FCS, non-D1 offsets vs. FBS
+    b_prev_mean = 0.75, b_prev_sd = 0.13,                    # year-to-year carry-over
+    sigma_team_mean = c(7.6, 7.6, 13.6), sigma_team_sd = c(1.6, 2.5, 5.1),
+    sigma_conf_prior = c(4.4, 3.9),
+    lambda_prior = c(0.755, 0.07), kappa_prior = c(0.77, 0.06),
+    sigma_eff_prior = c(14.1, 1.1), sigma_m_prior = c(8.1, 1.0),
     half_life_weeks = NULL,          # NULL = every game weighted equally
     benchmark_rank = 12L,            # Resume benchmark: the #12 FBS team (playoff bubble)
     min_plays = 20L,                 # both offences need this many non-garbage plays for eff
@@ -156,25 +157,26 @@ sampler_health <- function(fit, cfg = model_config()) {
   out
 }
 
-#' Fit the Power model; retry once with a longer, more careful warmup if gates fail.
+#' Fit the Power model; retry once with a longer, more careful warmup and more draws if gates fail.
 #' @param strict stop() if the gates still fail after the retry (used for published snapshots)
 fit_power <- function(input, cfg = model_config(), compute_ll = FALSE, strict = FALSE, seed = 2026) {
   mod <- cmdstanr::cmdstan_model(cfg$stan_file)
   data <- input$stan_data
   data$compute_ll <- as.integer(compute_ll)
-  run <- function(warmup, adapt_delta) {
+  run <- function(warmup, adapt_delta, sampling) {
     mod$sample(
       data = data, chains = cfg$chains, parallel_chains = cfg$chains,
-      iter_warmup = warmup, iter_sampling = cfg$iter_sampling, adapt_delta = adapt_delta,
+      iter_warmup = warmup, iter_sampling = sampling, adapt_delta = adapt_delta,
       seed = seed, refresh = 0, show_messages = FALSE, show_exceptions = FALSE
     )
   }
   t0 <- Sys.time()
-  fit <- run(cfg$iter_warmup, cfg$adapt_delta)
+  fit <- run(cfg$iter_warmup, cfg$adapt_delta, cfg$iter_sampling)
   health <- sampler_health(fit, cfg)
   attempts <- 1L
   if (!health$passed) {
-    fit <- run(cfg$retry_warmup, cfg$retry_adapt_delta)
+    # Longer warmup, smaller steps, and twice the draws (low-ESS misses are usually just short chains)
+    fit <- run(cfg$retry_warmup, cfg$retry_adapt_delta, cfg$retry_sampling)
     health <- sampler_health(fit, cfg)
     attempts <- 2L
   }

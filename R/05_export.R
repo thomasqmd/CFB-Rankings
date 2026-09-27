@@ -33,7 +33,7 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
       p4 = round(resume_p4, 3), p12 = round(resume_p12, 3),
       sor = signif(sor_prob, 3), sos = round(sos, 3), sos_rk = sos_rank,
       xw = round(xwins, 1), luck = round(luck, 1), cw = close_w, cl = close_l,
-      colley = colley_rank, ap = ap_rank, coaches = coaches_rank, cfp = cfp_rank
+      colley = colley_rank, ap = ap_rank, coaches = coaches_rank, cfp = cfp_rank, cbs = cbs_rank
     ) |>
     dplyr::group_by(s, w, tier) |>
     dplyr::mutate(sor_rk = ifelse(g > 0, rank(sor, ties.method = "min", na.last = "keep"), NA_integer_)) |>

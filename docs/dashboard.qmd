@@ -341,16 +341,17 @@ viewof search = Inputs.text({ placeholder: "Search team…", label: "Find" })
     <td class="num hide-sm">${fmtSigned(d.luck)}</td>
     <td class="num hide-sm">${d.colley ?? "–"}</td>
     <td class="num">${rankOrNR(d.ap)}</td>
+    <td class="num" title="CBS Sports 138 (ranks every FBS team)">${rankOrNR(d.cbs)}</td>
     <td class="num">${rankOrNR(d.cfp)}</td>
   </tr>`
   return htl.html`<div class="table-wrap"><table class="cfb-table">
     <thead>
-      <tr class="group"><th colspan=4></th><th colspan=4 class="resume">Resume</th><th colspan=3 class="power">Power</th><th colspan=3 class="hide-sm"></th><th colspan=2>Polls</th></tr>
+      <tr class="group"><th colspan=4></th><th colspan=4 class="resume">Resume</th><th colspan=3 class="power">Power</th><th colspan=3 class="hide-sm"></th><th colspan=3>Polls</th></tr>
       <tr><th class="num">#</th><th></th><th>Team</th><th class="num">Record</th>
         <th class="num" title="Wins above the #${cfg.benchmark_rank} team vs. this schedule">WAB</th><th class="hide-sm">80% interval</th><th class="num" title="Median rank (80% interval)">Rank</th><th class="num hide-sm" title="Probability of a top-12 resume">Top 12</th>
         <th class="num" title="Points vs. average FBS team, neutral field">Rating</th><th class="hide-sm">80% interval</th><th class="num">Rank</th>
         <th class="num hide-sm" title="Schedule strength rank (benchmark's expected loss rate)">SOS</th><th class="num hide-sm" title="Wins minus expected wins">Luck</th><th class="num hide-sm" title="Colley matrix (record only)">Colley</th>
-        <th class="num">AP</th><th class="num">CFP</th></tr>
+        <th class="num">AP</th><th class="num" title="CBS Sports 138">CBS</th><th class="num">CFP</th></tr>
     </thead>
     <tbody>${rows.map(tr)}</tbody></table></div>`
 }
@@ -386,6 +387,7 @@ viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam)
       ${fact("Power", `#${tRow.prk}`, "var(--power)")}
       ${fact("Rating", `${fmtSigned(tRow.pw)}`)}
       ${fact("AP", tRow.ap ?? "–")}
+      ${fact("CBS", tRow.cbs ?? "–")}
       ${fact("Luck", fmtSigned(tRow.luck))}
       ${future.length ? fact("Proj. record", `${xFinal.toFixed(1)}–${(tRow.wins + tRow.losses + future.length - xFinal).toFixed(1)}`) : ""}
     </div></div>`
@@ -736,7 +738,7 @@ viewof rvpConf = Inputs.select(confKeys(fbs), { label: "Highlight", format: conf
 ## {.toolbar}
 
 ```{ojs}
-viewof pollSort = Inputs.select(["Resume", "SOR", "Power", "AP", "Coaches", "CFP", "Colley"], { label: "Sort by" })
+viewof pollSort = Inputs.select(["Resume", "SOR", "Power", "AP", "CBS", "Coaches", "CFP", "Colley"], { label: "Sort by" })
 ```
 
 ```{ojs}
@@ -785,18 +787,19 @@ htl.html`<div class="tiles">
     { key: "sor_rk", label: "SOR", title: "Strength of record: chance the #" + cfg.benchmark_rank + " team matches this record (lower = harder)" },
     { key: "prk", label: "Power", title: "Bayesian power rank" },
     { key: "ap", label: "AP", title: "AP Top 25" },
+    { key: "cbs", label: "CBS", title: "CBS Sports 138 (ranks every FBS team; top 25 only in weeks without a full capture)" },
     { key: "coaches", label: "Coaches", title: "Coaches Poll" },
     { key: "cfp", label: "CFP", title: "College Football Playoff committee" },
     { key: "colley", label: "Colley", title: "Colley matrix (record only)" }
   ].filter(s => s.key !== "cfp" || fbs.some(d => d.cfp != null))
   const sys = systems.find(s => s.label === pollSort) ?? systems[0]
-  const poll = ["ap", "coaches", "cfp"].includes(sys.key)
+  const poll = ["ap", "coaches", "cfp", "cbs"].includes(sys.key)
   const rows = fbs.filter(d => inConf(d, pollConf))
     .filter(d => pollShow === "All" || (d[sys.key] != null && d[sys.key] <= 25))
     .sort((a, b) => (a[sys.key] ?? 999) - (b[sys.key] ?? 999) || a.rrk - b.rrk)
   const cell = (d, s) => {
     const v = d[s.key]
-    const text = v == null ? htl.html`<span class="muted">–</span>` : ["ap", "coaches", "cfp"].includes(s.key) ? htl.html`<span class="pill">${v}</span>` : v
+    const text = v == null ? htl.html`<span class="muted">–</span>` : ["ap", "coaches", "cfp", "cbs"].includes(s.key) ? htl.html`<span class="pill">${v}</span>` : v
     return htl.html`<td class="num" style=${s.key === sys.key ? { fontWeight: 700, background: "var(--tint)" } : {}}>${text}</td>`
   }
   return htl.html`<p class="explain">Sorted by <strong>${sys.title}</strong>${poll ? "; unranked teams follow in Resume order" : ""}.

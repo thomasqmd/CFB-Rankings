@@ -59,6 +59,11 @@ unplayed <- sd_cur$games |> filter(week_seq <= latest$week, !completed)
 report(if (nrow(unplayed)) "WARN" else "PASS", "Unfinished games in snapshot weeks",
        if (nrow(unplayed)) paste(nrow(unplayed), "(postponed/cancelled?)") else "none")
 
+rt <- tar_read(ratings) |> filter(season == cur, week == latest$week, tier == 1)
+n_cbs <- sum(!is.na(rt$cbs_rank))
+report(if (n_cbs >= 130) "PASS" else if (n_cbs > 0) "WARN" else "FAIL", "CBS Sports 138 for latest week",
+       sprintf("%d teams ranked%s", n_cbs, if (n_cbs > 0 && n_cbs < 130) " (top 25 only: no full-page capture)" else ""))
+
 # ---- 4. Ratings sanity -----------------------------------------------------------
 section("Ratings sanity (latest snapshot)")
 r <- snaps$ratings |> filter(season == cur, week == latest$week)

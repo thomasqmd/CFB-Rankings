@@ -224,7 +224,10 @@ summarise_snapshot <- function(input, draws, health, cfg = model_config()) {
     n_games = nrow(input$played), has_prior = input$has_prior,
     hfa = mean(par$hfa), sigma = mean(par$sigma_marg), nu = mean(par$nu),
     lambda = mean(par$lambda), kappa = mean(par$kappa), b_prev = mean(par$b_prev),
-    fcs_offset = mean(par$`mu_tier[2]`), nond1_offset = mean(par$`mu_tier[3]`)
+    fcs_offset = mean(par$`mu_tier[2]`), nond1_offset = mean(par$`mu_tier[3]`),
+    sigma_m = mean(par$sigma_m), sigma_eff = mean(par$sigma_eff), sigma_conf = mean(par$sigma_conf),
+    sigma_team_fbs = mean(par$`sigma_team[1]`), sigma_team_fcs = mean(par$`sigma_team[2]`),
+    sigma_team_nond1 = mean(par$`sigma_team[3]`)
   ) |> dplyr::bind_cols(health)
 
   game_ids <- function(df) df |> dplyr::mutate(team_id = teams$team_id[team]) |> dplyr::select(-team)

@@ -83,6 +83,10 @@ output freshness. Exits non-zero on any FAIL; WARNs are worth a look but don't b
 - `CFB_FIRST_SEASON=2024 Rscript -e 'targets::tar_make()'` for a quick partial build.
 - The free CFBD tier allows ~1000 calls/month; a full backfill uses ~80, a weekly update ~6.
 - Settings (sampler, priors, benchmark rank, recency half-life) live in `model_config()`.
+- **CBS Sports 138** has no API: each sync archives the live ranking page to
+  `data/raw/cbs138/`. Run at least once per week in season, or that week's full 138 is only
+  available later as a Wayback Machine capture or an article's top 25. One-off backfill:
+  `cbs_backfill_wayback(from = 2022)` and `cbs_fetch_articles(urls)` (`R/01_ingest_cbs.R`).
 
 **Viewing the dashboard.** `docs/dashboard.html` is a single self-contained file, but Observable
 JS will not run from `file://`. Serve it: `python3 -m http.server -d docs 8000` then open

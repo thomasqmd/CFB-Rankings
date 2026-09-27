@@ -23,7 +23,9 @@ posterior_predictive_check <- function(draws, played, n_draws = 400, seed = 1) {
     par$hfa * matrix(played$home_adv, length(pick), nrow(played), byrow = TRUE)
   noise <- matrix(stats::rt(length(mu), df = rep(par$nu, nrow(played))), length(pick)) *
     par$sigma_marg
-  rep <- mu + noise
+  # Scores are integers: round the replicates so boundary statistics (|margin| <= 7, >= 28)
+  # compare like with like (a continuous replicate never lands exactly on 7 or 28)
+  rep <- round(mu + noise)
   stat_fns <- list(
     "SD of margin" = function(m) stats::sd(m),
     "Share within 7 pts" = function(m) mean(abs(m) <= 7),
@@ -79,7 +81,8 @@ combine_snapshots <- function(...) {
 
 #' Attach poll ranks (AP, CFP, Coaches, FCS Coaches) matching each snapshot's games
 attach_polls <- function(ratings, season_data_list) {
-  polls <- c(ap = "AP Top 25", cfp = "Playoff Committee Rankings", coaches = "Coaches Poll", fcs = "FCS Coaches Poll")
+  polls <- c(ap = "AP Top 25", cfp = "Playoff Committee Rankings", coaches = "Coaches Poll", fcs = "FCS Coaches Poll",
+             cbs = "CBS Sports 138")
   keys <- ratings |> dplyr::distinct(season, week)
   looked_up <- dplyr::bind_rows(lapply(seq_len(nrow(keys)), function(i) {
     s <- keys$season[i]; w <- keys$week[i]

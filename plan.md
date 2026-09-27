@@ -225,19 +225,53 @@ Reports: rebuild `season_retro.qmd` around the new outputs (resume/power, luck, 
 
 ## Follow-ups
 
-- [ ] Use the backtest to tune `half_life_weeks` (recency), `b_prev` prior, and hfa prior.
-- [ ] Offense/defense ratings (would give projected scores and totals). Needed for a model-own
-      predicted score; until then the dashboard shows the model spread and win probability.
-- [ ] Close-game misfit: posterior predictive checks put more games within 7 points than the model
-      predicts in 13 of 13 seasons (2025: 33% observed vs 23–27% replicated). Likely cause:
-      OT games are counted as a regulation margin of 0, plus key numbers (3, 7). Options: model
-      OT games as ties separately, or a discrete margin likelihood.
-- [ ] Gate misses in the full build: 2025 weeks 7 and 16 (R-hat 1.014 / 1.023, ESS 390 / 306),
-      even after the retry. The retry should also double `iter_sampling`. This changes `cfg`,
-      so every snapshot is refit.
-- [ ] priorsense flags prior-data conflict for `b_prev` (12/13 seasons) and the tier/conference
-      hyperparameters: revisit these priors with the backtest.
-- [ ] Weekly random-walk ratings instead of static-within-season (C1 phase 2).
+Done (second pass, after the first full build):
+
+- [x] **Convergence retry.** A retry now also doubles the post-warmup draws
+      (`retry_sampling = 2000`). The first full build had two misses, 2025 weeks 7 and 16,
+      both from low ESS rather than divergences.
+- [~] **Close-game misfit** (partly addressed). Replicated margins are now rounded to whole
+      points, so the check compares like with like. That raised the replicated share within 7
+      (2025: 0.228–0.265 → 0.247–0.283), but the observed share (0.30–0.36) is still outside the
+      interval in 13 of 13 seasons. So there is a real misfit: real margins bunch closer to one
+      score than a Student-t around the rating gap allows. Likely causes are end-game behaviour
+      (running clock, kneeling, onside/prevent defence), key numbers, and regulation ties (4%).
+      The win/loss probabilities are unaffected (backtest calibration within 4 points in every
+      bin), so the Resume and the win probabilities are sound. Only the predicted margin
+      distribution's shape is off.
+- [x] **Prior re-tuning** (`analysis/tune_priors.R`):
+  - **A. Structural priors.** Each season's final snapshot was refit and the posterior means
+    were pooled over 2014–2025. The priors are now centred on the pooled mean with sd = 2× the
+    between-season sd (`analysis/structural_pooled.csv`). The old priors were far off for the
+    FCS offset (−18 vs −27), the non-D1 offset (−35 vs −54), σ_conf (9 vs 4.4) and b_prev
+    (0.6 vs 0.75), which is what priorsense flagged.
+  - Caveat: these hyperpriors use every season, so early-week backtest numbers for 2014–2024
+    are slightly optimistic. They are structural constants, not team ratings.
+  - **B. Recency half-life.** Rolling backtest over 2022–2024, 196 fits
+    (`analysis/halflife_backtest.csv`). No down-weighting beats half-lives of 10, 6 and 4 weeks
+    on every measure. For FBS, week 5+: MAE 12.51 vs 12.56 / 12.65 / 12.81, and Brier
+    0.196 vs 0.197 / 0.199 / 0.202. `half_life_weeks` stays NULL.
+  - **New vs. old priors** on the same games:
+    - weeks 1–3, FBS vs FCS/lower: MAE 14.47 → 13.56, Brier 0.121 → 0.109;
+    - weeks 1–3, FBS vs FBS: MAE 13.68 → 13.44;
+    - week 4+: unchanged (12.44).
+
+TODO:
+
+- [ ] **Offense/defense ratings** (projected scores and totals). This is needed for a predicted
+      score from the model itself; until then the dashboard shows the model spread and win
+      probability.
+  - Sketch: points_home ~ f(off_home − def_away + hfa/2), and likewise for away.
+  - Use the per-play efficiency split (offense PPA and defense PPA) as the second signal, as
+    the margin model does now.
+  - Validate the total against the Vegas over/under (already in the `lines` table).
+- [ ] **Margin distribution shape.** Try a likelihood that bunches margins closer to one
+      score than a Student-t does: for example a two-component mixture, or a margin-dependent
+      scale. Compare them with LOO and the "within 7" check. This would sharpen spread and
+      cover probabilities; it does not affect win probabilities much.
+- [ ] **Weekly random-walk ratings** instead of ratings that are static within a season
+      (C1 phase 2): r_t = r_{t−1} + τ·ε. This replaces the half-life weighting with an
+      estimated τ.
 
 ## References
 

@@ -276,11 +276,20 @@ sync_all <- function(seasons, db_path = "data/cfb.duckdb", full_refresh = FALSE,
                 min_refresh_hours = if (full_refresh) 0 else min_refresh_hours)
   }
   if (full_refresh || !DBI::dbExistsTable(con, "teams")) sync_teams(con, refresh = full_refresh, raw_dir = raw_dir)
+  # CBS Sports 138: archive this week's live ranking while a season is being played
+  live <- any(!vapply(seasons, \(s) { m <- meta[meta$season == s, ]; nrow(m) == 1 && season_is_final(s, m$last_sync) }, logical(1)))
+  sync_cbs138(con, raw_dir = raw_dir, live = live)
 
-  DBI::dbGetQuery(con, sprintf(
+  fp <- DBI::dbGetQuery(con, sprintf(
     "SELECT season, COUNT(*) AS games, SUM(CASE WHEN completed THEN 1 ELSE 0 END) AS completed,
             SUM(COALESCE(home_points, 0) + COALESCE(away_points, 0)) AS points
      FROM games WHERE season IN (%s) GROUP BY season ORDER BY season", paste(seasons, collapse = ",")))
+  # New CBS rankings must invalidate that season's data target too
+  if (DBI::dbExistsTable(con, "cbs_rankings")) {
+    cbs <- DBI::dbGetQuery(con, "SELECT season, COUNT(DISTINCT updated) AS cbs_rankings FROM cbs_rankings GROUP BY season")
+    fp <- merge(fp, cbs, all.x = TRUE)
+  }
+  fp
 }
 
 # ------------------------------------------------------------------------------
@@ -296,6 +305,7 @@ read_season <- function(season, db_path = "data/cfb.duckdb") {
   stats <- q("SELECT * FROM game_stats WHERE season = %d")
   lines <- if (DBI::dbExistsTable(con, "lines")) q("SELECT * FROM lines WHERE season = %d") else NULL
   polls <- if (DBI::dbExistsTable(con, "polls")) q("SELECT * FROM polls WHERE season = %d") else NULL
+  cbs <- if (DBI::dbExistsTable(con, "cbs_rankings")) q("SELECT * FROM cbs_rankings WHERE season = %d") else NULL
 
   side <- function(prefix) {
     stats |> dplyr::transmute(game_id, "{prefix}_team" := team,
@@ -308,6 +318,7 @@ read_season <- function(season, db_path = "data/cfb.duckdb") {
       tibble::tibble(game_id = character(0), spread = numeric(0), over_under = numeric(0)), by = "game_id") |>
     dplyr::arrange(week_seq, start_date, game_id)
 
+  polls <- dplyr::bind_rows(polls, cbs_as_polls(cbs, games))
   list(season = as.integer(season), games = games, polls = polls)
 }
 
