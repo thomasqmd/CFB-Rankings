@@ -8,6 +8,7 @@
 #     -> snaps_<s>  [per week]    Power + Resume summaries for that week
 #     -> checks_<s>               PPC, prior sensitivity, LOO for the latest week
 #   -> snapshots, backtest, dashboard_data -> Quarto dashboard + reports
+#   -> supplement                 full-draw refits for the paper's supplementary checks
 #
 # Seasons: CFB_FIRST_SEASON (env, default 2014) through the current season.
 # ==============================================================================
@@ -71,6 +72,17 @@ list(
   tar_target_raw("season_data", as.call(c(quote(list), setNames(data_syms, SEASONS)))),
   tar_target_raw("snapshots", as.call(c(quote(combine_snapshots), snap_syms))),
   tar_target_raw("checks", as.call(c(quote(list), setNames(check_syms, SEASONS)))),
+  # Full-draw refits (week 1 and final week of the last complete season) for the
+  # paper's supplementary posterior checks
+  tar_target_raw("supplement",
+    bquote(run_supplement(.(as.symbol(paste0("inputs_", CURRENT_SEASON - 1L))), cfg = cfg))),
+  # Refits under widened / shifted priors, and the priors' induced distributions
+  tar_target_raw("prior_sensitivity",
+    bquote(run_prior_sensitivity(.(as.symbol(paste0("inputs_", CURRENT_SEASON - 1L))), cfg = cfg))),
+  tar_target_raw("induced_prior", bquote({
+    inp <- .(as.symbol(paste0("inputs_", CURRENT_SEASON - 1L)))
+    induced_priors(inp[[length(inp)]], cfg = cfg)
+  })),
   tar_target(ratings, attach_polls(snapshots$ratings, season_data)),
   tar_target(games_all, dplyr::bind_rows(lapply(season_data, `[[`, "games"))),
   tar_target(backtest, run_backtest(snapshots$predictions, games_all)),

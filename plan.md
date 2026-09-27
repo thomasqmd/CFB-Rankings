@@ -269,9 +269,209 @@ TODO:
       score than a Student-t does: for example a two-component mixture, or a margin-dependent
       scale. Compare them with LOO and the "within 7" check. This would sharpen spread and
       cover probabilities; it does not affect win probabilities much.
+- [ ] **Host the dashboard publicly.** Investigate options: add to personal website, self-host,
+      Quarto Pub / Posit Connect, GitHub Pages, etc. (Observable JS needs HTTP, not `file://`.)
 - [ ] **Weekly random-walk ratings** instead of ratings that are static within a season
       (C1 phase 2): r_t = r_{t−1} + τ·ε. This replaces the half-life weighting with an
       estimated τ.
+
+## Paper review (paper/cfb-paper.qmd, 2026-09-26)
+
+A critical read of the merged paper. Section labels (`@sec-…`, `@tbl-…`) are given
+because line numbers drift.
+
+### P1. Errors and inaccuracies (fix first)
+
+- [ ] **2020 FCS spring games leak into early 2020 posteriors (pipeline bug).** CFBD's
+      `spring_regular` / `spring_postseason` games, about 255 of them played Feb–May 2021,
+      carry `week_seq` 1–12. So the 2020 "through week w" fits contain games played months
+      later. This contaminates the 2020 backtest (FBS–FCS predictions and tier offsets) and
+      contradicts `@sec-data` ("fitted like any other"). There is also one
+      `spring_postseason` game at week 1. Fix: move spring games after the fall postseason, or
+      treat them as a separate block, then refit 2020+.
+- [ ] **`@tbl-backtest` mixes denominators.** `N` is all games (18,792), but the `MAE`
+      column is `mae_model_lined` (13,070 games with a line), while RMSE, Brier, log loss and
+      accuracy use all 18,792. Report N with a line separately, or split into two tables.
+- [ ] **Scope label mismatch.** The row "FBS vs FBS, week 5+" is built with `week >= 4` in
+      `R/04_validation.R:154`. Decide which is meant and make the label and filter agree
+      (also `bt_late`).
+- [ ] **Calibration caption says "deciles"; the bins are fixed-width 0.1 bins.**
+- [ ] **Calibration is overstated.** "Within 3.4 points" hides that two bins are about 3 SE
+      off: (0.1, 0.2] is 0.155 predicted vs 0.123 observed with n = 1,055, and (0.6, 0.7] is
+      0.650 vs 0.684 with n = 2,354. Say so. Add ECE and a reliability test (e.g.
+      Spiegelhalter z). Also split calibration by FBS–FBS / cross-tier and early / late weeks.
+- [ ] **Intro contribution 4 overclaims.** It says all posteriors "pass … posterior
+      predictive checks and prior-sensitivity diagnostics". The within-7 PPC fails in every
+      season, and priorsense flags ν, m₂, m₃ and τ₃. Reword.
+- [ ] **The concluded-week rule is misstated.** `@sec-data` says a week needs 90% of its
+      games final plus a 6-hour buffer. `_targets.R` uses `min_share = 0` for past seasons,
+      so the 90% rule applies only to the current season. State both.
+- [ ] **`@tbl-priors` posterior column is mislabelled.** It says "posterior means at each
+      complete season's final week", but it comes from `analysis/structural_by_season.csv`:
+      refits under the *old* priors, not the published fits.
+- [ ] **The justification of the priors is circular.** `@sec-priors` says "every
+      between-season range lies well inside its prior", but the priors were centred on those
+      same seasons.
+      - `@sec-supp-justify` says the refits used the old priors "whose influence at that
+        sample size is small". Yet plan.md records that priorsense flagged those old priors,
+        and the old σ_conf prior (mean 9) could have pulled the refit estimates.
+      - Fix: redo the refits under vague priors, or use leave-one-season-out priors (or
+        earlier-seasons-only priors), and report both.
+- [ ] **"Barely move between seasons" is false for ω.** σ_conf ranges 1.7–9.1. The 2014
+      value (9.08) is structural: with no carry-over (d_i = 0) conference effects absorb
+      team strength. 2020 is also atypical (η = 1.77 with empty stadiums, ν = 27.8).
+      Discuss both, and consider excluding 2014 from the pooled priors.
+- [ ] **The between-season sd is mostly estimation noise.** For b_prev, hfa and ν,
+      `between_sd ≈ typical_post_sd` in `analysis/structural_pooled.csv`, so "prior sd = 2 ×
+      between-season sd" measures noise, not true season-to-season variation. Say so; it
+      makes the priors conservative.
+- [ ] **ν reasoning in `@sec-sens` contradicts itself.** It explains a *prior–data
+      conflict* flag with a *flat likelihood* (which would be a weak-likelihood flag). Check
+      what priorsense actually reports for ν and rewrite.
+- [ ] **Hard-coded prose claims should be computed inline** (they will drift):
+  - "η and σ_m show a mild conflict in about a third of seasons";
+  - "no parameter is flagged for a weak likelihood in more than one season";
+  - "p_loo close to, and below, the number of teams";
+  - "resume ranks are sharper than power ranks at the top";
+  - "by mid-season the intervals have roughly halved";
+  - "the resume tracks Colley closely from the first weeks";
+  - "the gap to the line is roughly constant"; "error flat from about week 4";
+  - "the schedule graph has been connected in every season" (compute the number of
+    components per snapshot, including 2020).
+- [ ] **WAB Properties (ii) needs a qualifier.** "Changing a loss to a win raises WAB by
+      exactly one" holds per draw with the draws fixed. The published WAB changes by a
+      different amount, because the result also moves the posterior (the opponent and the
+      benchmark).
+- [ ] **Calibration is not "direct evidence" that π_g is on the right scale.** π_g is a
+      hypothetical benchmark-vs-opponent fixture, fitted in-sample, while the backtest scores
+      real fixtures out of sample. Soften the wording.
+- [ ] **Stale references to `paper/supplement.qmd`** in the `R/06_supplement.R` header. The
+      file itself is redundant; delete it once approved.
+
+### P2. Missing analyses (gaps a referee will raise)
+
+- [ ] **Ablations and baselines.** None exist yet. Backtest on identical games:
+  - margin-only (no efficiency likelihood) — this settles the Information Proposition
+    empirically;
+  - Normal vs Student-t;
+  - no carry-over (β = 0) and no hierarchy;
+  - a least-squares Massey and an Elo baseline;
+  - the published SP+, FPI and Elo ratings from CFBD (plan C5 promised these).
+- [ ] **LOO cannot compare models yet.** `log_lik` is the joint p(e, y) for games with
+      efficiency and p(y) otherwise, so its elpd is not comparable with a margin-only model.
+      Add a margin-only log-lik (the marginal p(y)) for comparisons.
+- [ ] **Uncertainty on the headline comparisons.**
+  - Model vs line MAE: paired bootstrap or Diebold–Mariano test.
+  - ATS 49.4%: binomial CI, and note the −110 break-even is 52.4%.
+  - Brier and log loss: CIs.
+- [ ] **Show the Brier-rise claim instead of asserting it.** Plot the mean |p − 0.5| by week,
+      or the line-implied Brier by week, next to the model's.
+- [ ] **Predictive distribution of the margin in the backtest.** Report 50/80/95% interval
+      coverage and CRPS, not only MAE. The PPC shape misfit suggests the intervals are too
+      wide near zero.
+- [ ] **No validation of the resume.** It has no out-of-sample target, so the paper needs
+      some external evidence:
+  - agreement with CFP committee selections, 2014–2025 (top 4 / top 12 and the at-large
+    bubble), against Colley, AP and the old composite;
+  - retrodictive accuracy (the share of games whose winner the ranking orders correctly).
+- [ ] **Sensitivity of the benchmark #12.**
+  - Rerun with b = 4, 12 and 25.
+  - Discuss that 2014–2023 had a 4-team playoff.
+  - Discuss that the 12-team format has auto-bids (5 conference champions), so "12th-best
+    team" ≠ "12th selected". Plan C2/C4 said to set b by backtest, which is impossible for
+    a retrodictive measure; say how b is chosen instead.
+- [ ] **Quantify how margin leaks into the resume.** A blowout win lowers the opponent's
+      posterior strength and so lowers the winner's WAB credit. Measure it: refit with one
+      game's margin replaced by ±1 and record the ΔWAB for both teams.
+- [ ] **SOR is inconsistent with the per-draw design.** It uses the posterior-mean π̄_g
+      rather than per-draw π_g^{(s)}, and "at least as well" counts ties. Justify, or
+      compute SOR per draw and average.
+- [ ] **Monte Carlo error of the published quantities.** Report the MCSE of Pr(top 12),
+      rank intervals and WAB from the `summary_draws` thinned draws. Thinning also discards
+      precision; justify it.
+- [ ] **Simulation-based calibration / fake-data recovery.** This is missing, and Kahle et al.
+      and Schad et al. recommend it. Simulate seasons from the prior on a real schedule,
+      refit, and check the coverage of r_i, WAB and ranks (e.g. with the SBC package).
+- [ ] **Uncertainty in d_i is ignored.** d_i uses the posterior *mean* of last season's
+      rating, which is errors-in-variables, so β absorbs attenuation. Propagate draws, or
+      add a measurement-error term (known sd from last season).
+- [ ] **Teams that change tier.** FCS→FBS transitions (e.g. Sam Houston, JSU, Kennesaw
+      State, Delaware, Missouri State) get d_i relative to their *old* tier mean but α from
+      the new tier. Check what the code does and document it; test on the transition seasons.
+- [ ] **Independents are pooled per tier.** Notre Dame, Army, UConn and UMass share one α_c.
+      Consider giving each independent its own conference effect or pooling to the tier.
+- [ ] **ω is shared across tiers** while τ_k is tier-specific. Justify, or estimate ω_k.
+- [ ] **One home-field advantage for all games.** Discuss FCS venues, travel and altitude,
+      and the 2020 no-fan season. Show η by season as a worked example.
+- [ ] **Asymmetric garbage time.** PPA excludes garbage time but the margin does not;
+      discuss what that does to λ and κ.
+- [ ] **State the missing-efficiency assumption.** Efficiency is missing mostly by tier (an
+      observed covariate), so MAR is plausible. Say so.
+- [ ] **Discreteness of the margin.** Integer margins, the spike at 0 from overtime games
+      and key numbers (3, 7) are modelled with a continuous t. Mention and cite discrete
+      alternatives: score models (Karlis & Ntzoufras 2003; Baio & Blangiardo 2010) or a
+      rounded/interval likelihood.
+- [ ] **Gaps in the perturbation study.**
+  - ν is not perturbed (its prior is fixed in the Stan program), although it is the most
+    often flagged parameter: expose the ν prior in `stan_data` and add ν > 3.
+  - Add one-at-a-time perturbations; everything is currently moved jointly.
+  - Only 2025 is tested; add an older season (e.g. 2020 or 2014).
+- [ ] **Preseason quality.** Evaluate the week-0 ratings against the preseason AP poll /
+      SP+ and discuss portal-era changes (β by season, 2014–2025: is carry-over falling
+      since 2021?).
+- [ ] **Leakage from tuning.** The half-life and prior tuning used the same backtest that
+      is reported. Hold out seasons, or at least list every tuned choice in one place.
+
+### P3. Examples and exposition
+
+- [ ] **No `.example` blocks anywhere**, unlike the reference chapter. Add worked examples:
+  - **Win probability:** one 2025 game, from r_i, r_j, η and σ̄ to the spread, p_ij and the
+    line.
+  - **WAB for one team:** the schedule table with π_g per game, W_g − π_g and the running
+    WAB, plus SOR via the Poisson-binomial recursion. Pick a bubble team.
+  - **Resume vs. power disagreement:** a team with high power but low WAB, explained game
+    by game.
+  - **Colley on a 4-team toy schedule,** with C, f and the solution.
+  - **Information Proposition:** plug in 2025's values to show the numbers.
+- [ ] **The 2025 CFP field vs the model.** Which teams the committee took, where WAB and
+      power disagree, and why. This is the example readers will look for first.
+- [ ] **Support the fig-scatter claims.** They are asserted ("lost close games", "few
+      chances"); overlay win luck (actual − expected wins) or the close-game record.
+- [ ] **A schedule-graph figure** for one season (conferences as clusters, cross-conference
+      and cross-tier edges) to motivate sparsity and connectivity.
+- [ ] **A related-work citation for wins above bubble** (NCAA NET / team-sheet practice) is
+      missing.
+  - Also add Elo/538, SP+, FPI and Massey's composite, Knorr-Held (2000) dynamic
+    paired comparisons, Glickman (1999), and Annis & Craig (2005) for CFB.
+- [ ] **Identification is a triviality labelled "Theorem".** Downgrade it to a Remark, or
+      strengthen it (e.g. the posterior of the centred r̃ under a flat prior on the
+      connected graph).
+- [ ] **Abstract is long** (about 250 words). Trim to about 150.
+
+### P4. Notation and presentation
+
+- [ ] **ρ is used twice:** for rank ρ_i^{(s)} (`@sec-sor`) and for Spearman ρ in the
+      perturbation tables. Rename one (e.g. rank R_i^{(s)}).
+- [ ] **Collisions among k, κ, k̂ and K:** tier k, loading κ, Pareto k̂, top-K. Also m_k
+      (tier mean) vs the t location m. Rename the t location, and use ℓ or t for tiers.
+- [ ] **β (carry-over) vs b^{(s)} (benchmark)** reads confusingly. Consider B^{(s)}.
+- [ ] **PPC replicate counts differ:** 400 replicate seasons in `@fig-ppc` vs 100 in the
+      supplement. Unify, or state why.
+- [ ] **The DAG** still has tight label placement near λ, σ_e and the curved edge. Also
+      σ_e enters y_g (through σ̄) when e_g is missing, and no edge shows this.
+
+### P5. Reproducibility
+
+- [ ] `analysis/structural_*.csv` and the half-life results are produced by a manual script
+      outside targets. Make them targets, or record their inputs' hashes.
+- [ ] **CFBD data can change retroactively.** Snapshot or hash the DuckDB tables used for
+      the paper; note the build date.
+- [ ] **Pin the environment:** add an `renv` lockfile (check whether one exists), plus the
+      CmdStan version and seeds.
+- [ ] **Add the paper as a `tar_quarto` target** so it cannot go stale.
+- [ ] **The supplement targets use `CURRENT_SEASON - 1`**, while the paper uses `last_full`.
+      They disagree in the window after the postseason but before the season rolls over.
+      Derive both from the same rule.
 
 ## References
 
