@@ -19,7 +19,13 @@ model_config <- function() {
     sigma_conf_prior = c(4.4, 3.9),
     lambda_prior = c(0.755, 0.07), kappa_prior = c(0.77, 0.06),
     sigma_eff_prior = c(14.1, 1.1), sigma_m_prior = c(8.1, 1.0),
+    nu_prior = c(2, 0.1), nu_lower = 1,                      # Gamma(shape, rate) truncated to nu > nu_lower
     half_life_weeks = NULL,          # NULL = every game weighted equally
+    # Model variants (the published model uses all four; the ablations switch one off)
+    use_eff = TRUE,                  # efficiency likelihood
+    student_t = TRUE,                # Student-t margin (FALSE = normal)
+    conf_level = TRUE,               # conference effects (FALSE = teams pooled to the tier only)
+    carry_over = TRUE,               # last season's ratings as preseason information
     benchmark_rank = 12L,            # Resume benchmark: the #12 FBS team (playoff bubble)
     min_plays = 20L,                 # both offences need this many non-garbage plays for eff
     summary_draws = 1000L,           # thinned draws used for Resume / predictions (memory)
@@ -54,7 +60,9 @@ season_teams <- function(games) {
         is.na(conference) ~ "FCS Independents",
         TRUE ~ conference
       ),
-      conf_key = paste(tier, conference)
+      # Independents are not a conference: each gets its own conference effect, drawn from
+      # the tier like any conference. Non-D1 teams stay pooled in one node.
+      conf_key = ifelse(grepl("Independents$", conference), paste(tier, conference, team_id), paste(tier, conference))
     ) |>
     dplyr::arrange(tier, team) |>
     dplyr::mutate(idx = dplyr::row_number())
@@ -77,14 +85,18 @@ game_observations <- function(games, min_plays = 20L) {
 #' (FBS / FCS / non-D1) among teams with a previous rating; 0 when unknown. Measuring it against
 #' the tier (not the conference) carries conference strength over too, so preseason
 #' cross-conference predictions are informative; mu_conf then absorbs only the change.
+#' The tier is this season's, so a team moving up (FCS -> FBS) keeps its absolute level:
+#' its old FCS rating sits far below the FBS mean and its d_i is strongly negative.
+#' @return list(dev, sd): d_i and the posterior sd of last season's rating (0 when unknown)
 prev_deviation <- function(teams, prior) {
-  if (is.null(prior) || nrow(prior) == 0) return(rep(0, nrow(teams)))
+  if (is.null(prior) || nrow(prior) == 0) return(list(dev = rep(0, nrow(teams)), sd = rep(0, nrow(teams))))
+  if (!"rating_sd" %in% names(prior)) prior$rating_sd <- 0
   x <- teams |>
-    dplyr::left_join(prior |> dplyr::select(team_id, prev = rating), by = "team_id") |>
+    dplyr::left_join(prior |> dplyr::select(team_id, prev = rating, prev_sd = rating_sd), by = "team_id") |>
     dplyr::group_by(tier) |>
     dplyr::mutate(dev = prev - mean(prev, na.rm = TRUE)) |>
     dplyr::ungroup()
-  dplyr::coalesce(x$dev, 0)
+  list(dev = dplyr::coalesce(x$dev, 0), sd = ifelse(is.na(x$dev), 0, dplyr::coalesce(x$prev_sd, 0)))
 }
 
 #' Everything needed to fit and summarise one snapshot (season, week_seq)
@@ -112,20 +124,24 @@ prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_conf
 
   weight <- if (is.null(cfg$half_life_weeks)) rep(1, nrow(played)) else
     0.5^((week - played$week_seq) / cfg$half_life_weeks)
+  prev <- prev_deviation(teams, if (isFALSE(cfg$carry_over)) NULL else prior)
 
   stan_data <- list(
     N_teams = nrow(teams), N_conf = nrow(confs),
     team_conf = teams$conf_idx, conf_tier = confs$tier, team_tier = teams$tier,
-    prev_dev = prev_deviation(teams, prior),
+    prev_dev = prev$dev, prev_sd = prev$sd,
     N_games = nrow(played), home = played$home, away = played$away,
     home_adv = played$home_adv, margin = played$margin,
-    has_eff = as.integer(played$has_eff), eff = played$eff, weight = weight,
+    has_eff = as.integer(played$has_eff & !isFALSE(cfg$use_eff)), eff = if (isFALSE(cfg$use_eff)) rep(0, nrow(played)) else played$eff,
+    weight = weight,
     hfa_mean = cfg$hfa_mean, hfa_sd = cfg$hfa_sd,
     tier_mean = cfg$tier_mean, tier_sd = cfg$tier_sd,
     b_prev_mean = cfg$b_prev_mean, b_prev_sd = cfg$b_prev_sd,
     sigma_team_mean = cfg$sigma_team_mean, sigma_team_sd = cfg$sigma_team_sd,
     sigma_conf_prior = cfg$sigma_conf_prior, lambda_prior = cfg$lambda_prior, kappa_prior = cfg$kappa_prior,
     sigma_eff_prior = cfg$sigma_eff_prior, sigma_m_prior = cfg$sigma_m_prior,
+    nu_prior = cfg$nu_prior %||% c(2, 0.1), nu_lower = cfg$nu_lower %||% 1,
+    student_t = as.integer(!isFALSE(cfg$student_t)), conf_level = as.integer(!isFALSE(cfg$conf_level)),
     compute_ll = 0L
   )
 
@@ -134,7 +150,7 @@ prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_conf
     week_label = if (week == 0) "Preseason" else unique(games$week_label[games$week_seq == week])[1],
     last_regular_week = max(games$week_seq[games$season_type == "regular"]),
     teams = teams, played = played, future = future,
-    has_prior = !is.null(prior) && nrow(prior) > 0,
+    has_prior = !is.null(prior) && nrow(prior) > 0 && !isFALSE(cfg$carry_over),
     stan_data = stan_data
   )
 }

@@ -39,3 +39,18 @@ test_that("concluded weeks need finished games and a buffer after the last kicko
   expect_equal(concluded_weeks(games, now = as.POSIXct("2026-09-25", tz = "UTC")), 1L)
   expect_equal(concluded_weeks(games, now = as.POSIXct("2026-09-25", tz = "UTC"), min_share = 0.5), 1:3)
 })
+
+test_that("spring games follow the fall postseason in date order", {
+  g <- tibble::tibble(week = c(1L, 14L, 1L, 1L, 3L, 1L),
+                      season_type = c("regular", "regular", "postseason", "spring_regular", "spring_regular", "spring_postseason"))
+  out <- add_week_seq(g)
+  expect_equal(out$week_seq, c(1L, 14L, 15L, 16L, 18L, 19L))
+  expect_equal(out$week_label[c(4, 6)], c("Spring week 1", "Spring postseason"))
+})
+
+test_that("the last complete season turns over on Feb 1", {
+  expect_equal(last_complete_season(as.Date("2026-09-27")), 2025L)
+  expect_equal(last_complete_season(as.Date("2027-01-20")), 2025L)
+  expect_equal(last_complete_season(as.Date("2027-02-01")), 2026L)
+  expect_equal(last_complete_season(as.Date("2027-07-31")), 2026L)
+})

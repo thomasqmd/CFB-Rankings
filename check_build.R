@@ -8,6 +8,8 @@ suppressPackageStartupMessages({
   library(targets)
   library(dplyr)
   source("R/01_ingest.R")
+  source("R/02_model.R")
+  source("R/07_analysis.R")
 })
 
 status <- character()
@@ -117,10 +119,33 @@ bs <- bt$by_season |> filter(season == cur)
 if (nrow(bs)) cat(sprintf("      %d so far: %d games, MAE %.2f (Vegas %.2f), accuracy %.1f%%\n",
                           cur, bs$games, bs$mae_model_lined, bs$mae_vegas, 100 * bs$accuracy))
 
-# ---- 7. Outputs ------------------------------------------------------------------
+# ---- 7. Priors ------------------------------------------------------------------
+# The published priors were set from the vague-prior refits; after a rebuild the refits move a
+# little (new data, new carry-over), so flag a prior mean that has drifted by > 0.5 prior sd
+section("Priors vs. the vague-prior refits")
+if (tar_exist_objects("prior_refits") && !"prior_refits" %in% errs$name) {
+  pooled <- pool_priors(tar_read(prior_refits))
+  cfg <- tar_read(cfg)
+  now <- priors_from_pool(cfg, pooled)
+  pairs <- list(hfa = c(cfg$hfa_mean, now$hfa_mean, cfg$hfa_sd), b_prev = c(cfg$b_prev_mean, now$b_prev_mean, cfg$b_prev_sd),
+                fcs = c(cfg$tier_mean[1], now$tier_mean[1], cfg$tier_sd[1]), nond1 = c(cfg$tier_mean[2], now$tier_mean[2], cfg$tier_sd[2]),
+                sigma_conf = c(cfg$sigma_conf_prior[1], now$sigma_conf_prior[1], cfg$sigma_conf_prior[2]),
+                lambda = c(cfg$lambda_prior[1], now$lambda_prior[1], cfg$lambda_prior[2]),
+                kappa = c(cfg$kappa_prior[1], now$kappa_prior[1], cfg$kappa_prior[2]),
+                sigma_eff = c(cfg$sigma_eff_prior[1], now$sigma_eff_prior[1], cfg$sigma_eff_prior[2]),
+                sigma_m = c(cfg$sigma_m_prior[1], now$sigma_m_prior[1], cfg$sigma_m_prior[2]))
+  drift <- vapply(pairs, \(x) abs(x[2] - x[1]) / x[3], numeric(1))
+  report(if (any(drift > 0.5)) "WARN" else "PASS", "Prior means vs. pooled refits",
+         sprintf("largest drift %.2f prior sd (%s)", max(drift), names(which.max(drift))))
+} else {
+  report("WARN", "Prior means vs. pooled refits", "prior_refits not built")
+}
+
+# ---- 8. Outputs ------------------------------------------------------------------
 section("Outputs")
 built <- max(meta$time[meta$name == "snapshots"], na.rm = TRUE)
-for (f in c("docs/dashboard.html", "docs/reports/season_retro.html", "docs/reports/model_diagnostics.html")) {
+for (f in c("docs/dashboard.html", "docs/reports/season_retro.html", "docs/reports/model_diagnostics.html",
+            "paper/cfb-paper.pdf")) {
   if (!file.exists(f)) { report("FAIL", f, "missing"); next }
   info <- file.info(f)
   fresh <- info$mtime >= built

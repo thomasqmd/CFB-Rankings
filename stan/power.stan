@@ -9,11 +9,23 @@
 // where mu = r[home] - r[away] + hfa * home_adv.
 // Games without eff use margin's marginal: Student-t(nu, mu, sqrt(sigma_m^2 + kappa^2 sigma_eff^2)).
 //
-// Hierarchy: r = mu_conf[conf] + b_prev * prev_dev + sigma_team[tier] * z,
+// Hierarchy: r = mu_conf[conf] + b_prev * prev_dev + s_team * z,
 //            mu_conf ~ Normal(mu_tier[tier], sigma_conf), tiers FBS (anchored at 0) / FCS / non-D1.
 // prev_dev is last season's final rating relative to its tier's mean (0 when unknown), so
 // b_prev is the year-to-year carry-over (team and conference strength), estimated from the data.
+// prev_sd is the posterior sd of that rating: treating last season's true rating as
+// Normal(prev, prev_sd^2) and integrating it out gives s_team = sqrt(sigma_team^2 + (b_prev prev_sd)^2).
+//
+// Switches for the ablations (the published model has both on): student_t = 0 uses a normal
+// margin; conf_level = 0 drops the conference effects (teams pool to their tier only).
 // =============================================================================
+
+functions {
+  // Margin density: Student-t, or normal when student_t = 0
+  real margin_lpdf(real y, int student_t, real nu, real loc, real scale) {
+    return student_t ? student_t_lpdf(y | nu, loc, scale) : normal_lpdf(y | loc, scale);
+  }
+}
 
 data {
   int<lower=1> N_teams;
@@ -22,6 +34,7 @@ data {
   array[N_conf] int<lower=1, upper=3> conf_tier;
   array[N_teams] int<lower=1, upper=3> team_tier;
   vector[N_teams] prev_dev;
+  vector<lower=0>[N_teams] prev_sd;
 
   int<lower=0> N_games;
   array[N_games] int<lower=1, upper=N_teams> home;
@@ -47,7 +60,11 @@ data {
   vector[2] kappa_prior;
   vector[2] sigma_eff_prior;
   vector[2] sigma_m_prior;
+  vector<lower=0>[2] nu_prior;                  // Gamma(shape, rate), truncated to nu > nu_lower
+  real<lower=0> nu_lower;
 
+  int<lower=0, upper=1> student_t;
+  int<lower=0, upper=1> conf_level;
   int<lower=0, upper=1> compute_ll;
 }
 
@@ -78,13 +95,14 @@ parameters {
   real<lower=0> sigma_eff;
   real kappa;
   real<lower=0> sigma_m;
-  real<lower=1> nu;
+  real<lower=nu_lower> nu;
 }
 
 transformed parameters {
   vector[3] mu_tier = append_row(0, mu_tier_raw);
-  vector[N_conf] mu_conf = mu_tier[conf_tier] + sigma_conf * conf_raw;
-  vector[N_teams] r = mu_conf[team_conf] + b_prev * prev_dev + sigma_team[team_tier] .* z;
+  vector[N_conf] mu_conf = mu_tier[conf_tier] + conf_level * sigma_conf * conf_raw;
+  vector[N_teams] r = mu_conf[team_conf] + b_prev * prev_dev
+                      + sqrt(square(sigma_team[team_tier]) + square(b_prev * prev_sd)) .* z;
   real sigma_marg = sqrt(square(sigma_m) + square(kappa * sigma_eff));
 
   // Log prior of the population-level parameters (used by priorsense power-scaling)
@@ -97,7 +115,7 @@ transformed parameters {
               + normal_lpdf(sigma_eff | sigma_eff_prior[1], sigma_eff_prior[2])
               + normal_lpdf(kappa | kappa_prior[1], kappa_prior[2])
               + normal_lpdf(sigma_m | sigma_m_prior[1], sigma_m_prior[2])
-              + gamma_lpdf(nu | 2, 0.1);
+              + gamma_lpdf(nu | nu_prior[1], nu_prior[2]) - gamma_lccdf(nu_lower | nu_prior[1], nu_prior[2]);
 }
 
 model {
@@ -111,26 +129,31 @@ model {
       int k = idx_eff[i];
       real res = eff[k] - lambda * mu[k];
       target += weight[k] * (normal_lpdf(eff[k] | lambda * mu[k], sigma_eff)
-                             + student_t_lpdf(margin[k] | nu, mu[k] + kappa * res, sigma_m));
+                             + margin_lpdf(margin[k] | student_t, nu, mu[k] + kappa * res, sigma_m));
     }
     for (j in 1:(N_games - N_eff)) {
       int k = idx_noeff[j];
-      target += weight[k] * student_t_lpdf(margin[k] | nu, mu[k], sigma_marg);
+      target += weight[k] * margin_lpdf(margin[k] | student_t, nu, mu[k], sigma_marg);
     }
   }
 }
 
 generated quantities {
+  // log_lik: joint p(e, y) where e is observed, p(y) otherwise (the fitted likelihood).
+  // log_lik_margin: p(y) alone for every game, the marginal law of the margin; comparable
+  // across models whether or not they use the efficiency margin.
   vector[compute_ll ? N_games : 0] log_lik;
+  vector[compute_ll ? N_games : 0] log_lik_margin;
   if (compute_ll) {
     vector[N_games] mu = r[home] - r[away] + hfa * home_adv;
     for (k in 1:N_games) {
+      log_lik_margin[k] = margin_lpdf(margin[k] | student_t, nu, mu[k], sigma_marg);
       if (has_eff[k] == 1) {
         real res = eff[k] - lambda * mu[k];
         log_lik[k] = normal_lpdf(eff[k] | lambda * mu[k], sigma_eff)
-                   + student_t_lpdf(margin[k] | nu, mu[k] + kappa * res, sigma_m);
+                   + margin_lpdf(margin[k] | student_t, nu, mu[k] + kappa * res, sigma_m);
       } else {
-        log_lik[k] = student_t_lpdf(margin[k] | nu, mu[k], sigma_marg);
+        log_lik[k] = log_lik_margin[k];
       }
     }
   }

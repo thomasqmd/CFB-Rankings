@@ -36,6 +36,13 @@ current_cfb_season <- function(today = Sys.Date()) {
   if (as.integer(format(today, "%m")) >= 8) yr else yr - 1L
 }
 
+#' The last season whose postseason is over (Feb 1 of the following year, the same rule as
+#' season_is_final()): the paper's worked example and its supplementary refits both use it
+last_complete_season <- function(today = Sys.Date()) {
+  s <- current_cfb_season(today)
+  if (today >= as.Date(sprintf("%d-02-01", s + 1L))) s else s - 1L
+}
+
 #' A season is final once it has been synced after Feb 1 of the following year (bowls/CFP done)
 season_is_final <- function(season, last_sync) {
   !is.na(last_sync) && as.Date(last_sync) >= as.Date(sprintf("%d-02-01", season + 1L))
@@ -98,13 +105,27 @@ parse_games <- function(raw) {
 }
 
 #' Consecutive week index: postseason games (which CFBD numbers from week 1 again) all
-#' share week_seq = last regular-season week + 1
+#' share week_seq = last regular-season week + 1. Spring games (the 2020 FCS season, played
+#' Feb-May 2021) follow the fall postseason in date order: spring week w is week_seq
+#' last_reg + 1 + w, and the spring postseason comes after the last spring week.
 add_week_seq <- function(games) {
   last_reg <- max(games$week[games$season_type == "regular"], na.rm = TRUE)
+  spring <- games$season_type == "spring_regular"
+  last_spring <- if (any(spring)) max(games$week[spring], na.rm = TRUE) else 0L
   games |>
     dplyr::mutate(
-      week_seq = ifelse(season_type == "postseason", last_reg + 1L, week),
-      week_label = ifelse(season_type == "postseason", "Postseason", paste("Week", week))
+      week_seq = dplyr::case_when(
+        season_type == "postseason" ~ last_reg + 1L,
+        season_type == "spring_regular" ~ last_reg + 1L + week,
+        season_type == "spring_postseason" ~ last_reg + 2L + last_spring,
+        TRUE ~ week
+      ),
+      week_label = dplyr::case_when(
+        season_type == "postseason" ~ "Postseason",
+        season_type == "spring_regular" ~ paste("Spring week", week),
+        season_type == "spring_postseason" ~ "Spring postseason",
+        TRUE ~ paste("Week", week)
+      )
     )
 }
 
@@ -301,7 +322,8 @@ read_season <- function(season, db_path = "data/cfb.duckdb") {
   con <- db_connect(db_path, read_only = TRUE)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
   q <- function(sql) tibble::as_tibble(DBI::dbGetQuery(con, sprintf(sql, as.integer(season))))
-  games <- q("SELECT * FROM games WHERE season = %d")
+  # week_seq is recomputed here, so a change to its rule applies without refetching a season
+  games <- q("SELECT * FROM games WHERE season = %d") |> add_week_seq()
   stats <- q("SELECT * FROM game_stats WHERE season = %d")
   lines <- if (DBI::dbExistsTable(con, "lines")) q("SELECT * FROM lines WHERE season = %d") else NULL
   polls <- if (DBI::dbExistsTable(con, "polls")) q("SELECT * FROM polls WHERE season = %d") else NULL
