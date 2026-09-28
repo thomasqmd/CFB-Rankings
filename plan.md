@@ -1,7 +1,8 @@
 # CFB Bayesian Rankings — Overhaul Plan
 
 Status: review completed 2026-09-26 against commit `c374378`; overhaul implemented the same day.
-Last updated 2026-09-27 (CBS Sports 138 reinstated, D8; paper review P1–P5 implemented, rebuild pending).
+Last updated 2026-09-28 (CBS Sports 138 reinstated, D8; paper review P1–P5 implemented, new
+priors set, full rebuild done and paper rendered).
 The previous spec (4-pipeline WLD/PD/XWLD/XPD matrix + Φ-blended composites) is in git history.
 
 Decisions: Resume benchmark = #12 FBS team; Colley is the record-only reference; seasons start
@@ -260,7 +261,8 @@ Done (second pass, after the first full build):
       bin), so the Resume and the win probabilities are sound. Only the predicted margin
       distribution's shape is off.
 - [x] **Prior re-tuning** (first pass, `analysis/tune_priors.R`, since replaced by the
-      `prior_refits` and `ablation` targets; see the paper review status below):
+      `prior_refits` and `ablation` targets and deleted; the CSVs named below are in git
+      history only; see the paper review status below):
   - **A. Structural priors.** Each season's final snapshot was refit and the posterior means
     were pooled over 2014–2025. The priors are now centred on the pooled mean with sd = 2× the
     between-season sd (`analysis/structural_pooled.csv`). The old priors were far off for the
@@ -300,13 +302,10 @@ TODO:
 
 ## Paper review (paper/cfb-paper.qmd, 2026-09-26)
 
-**Status (2026-09-27): every item below is implemented in code and text, but not yet run,
-and the new priors are not yet set (see "Next steps").** The
-changes alter the model (Stan program, priors, independents, carry-over uncertainty, 2020
-weeks), so the next `targets::tar_make()` refits every season and runs the new analysis
-targets (several hours; see "Rebuild" below). Every number in the paper is computed at render
-time, so the prose follows whatever the rebuild produces; after it, re-read the flagged
-sentences (conditional wording is used where the direction of a result was not known).
+**Status (2026-09-28): every item below is implemented, the new priors are set, the full
+rebuild has run and the paper renders (see "Remaining").** Every number in the paper is
+computed at render time, so the prose follows the targets; conditional wording is used where
+the direction of a result was not known in advance, and those sentences still need a read.
 
 What changed, by item group:
 
@@ -317,11 +316,12 @@ What changed, by item group:
   `power.stan` has ablation switches (`student_t`, `conf_level`; `use_eff`/`carry_over` in R)
   and stores `log_lik_margin` (the margin's marginal density) for model comparison.
   `LAST_FULL = last_complete_season()` drives both the supplement targets and the paper.
-- **Priors.** To be set from full-season refits under vague priors (`prior_refits` target),
-  pooled without 2014 (no carry-over) and without 2020 for η (`pool_priors()`,
-  `priors_from_pool()`). **Not done yet:** `model_config()` still holds the old priors (pooled
-  with 2014). A standalone run of the vague refits died partway (no output saved).
-  `check_build.R` warns if the refits drift more than 0.5 prior sd from the configured priors.
+- **Priors.** Set from full-season refits under vague priors, pooled without 2014 (no
+  carry-over) and without 2020 for η (`pool_priors()`, `priors_from_pool()`), rounded into
+  `model_config()`. The one-off refits used to set them are in `analysis/vague/<season>.rds`
+  (gitignored); the `prior_refits` target recomputes them on every build, and
+  `check_build.R` warns if they drift more than 0.5 prior sd from the configured priors
+  (largest drift after the rebuild: 0.01 prior sd).
 - **New targets** (`R/07_analysis.R`): `prior_refits`, `loso_backtest` (weeks 0–3 under
   leave-one-season-out priors), `ablation` (8 variants incl. half-lives, 2022–2025),
   `baselines` (ridge least squares; CFBD pregame Elo), `external_ratings` (SP+/FPI, 24 API
@@ -339,30 +339,33 @@ What changed, by item group:
   ξ (t location), B⁽ˢ⁾ (benchmark), R_i⁽ˢ⁾ (rank). The legacy composite is not in the committee
   comparison (its code was retired).
 - **Reproducibility.** `renv.lock` added; seeds and data hashes in the appendix.
-  `analysis/tune_priors.R` and its CSV/log outputs are superseded by the targets above but
-  **not yet deleted**; the paper no longer reads them.
-- **Tests.** `tests/testthat/test-model.R` and the new ingest tests pass (58 in total).
-  All paper chunks and inline R code parse, but the paper has **not been rendered** with the
-  new targets.
+  `analysis/tune_priors.R` and its CSV/log outputs were deleted (superseded by the targets
+  above); `analysis/vague/` keeps the one-off vague-prior refits used to set the priors.
+- **Tests.** `tests/testthat/test-model.R` and the new ingest tests pass.
+- **Rebuild (2026-09-28).** No errored targets; all 225 snapshots pass the gates (15 needed
+  the retry); backtest FBS MAE 12.87 vs Vegas 12.29. Fixes made while rendering the paper:
+  - `fin_last` filtered on `max(week)` across all seasons; since spring games moved after
+    the postseason, that left the final 2025 table empty. It now filters the season first.
+  - `loo_compare()` in loo ≥ 2.10 returns the model names in a column, not the row names,
+    so the margin-only LOO comparison was unlabelled. Handled in `run_final_refits()`.
+  - `check_build.R` only calls `quit()` under `Rscript`, so `source()` no longer kills an
+    interactive session.
 
-**Next steps, in order:**
+**Remaining:**
 
-1. Run the vague-prior refits once (e.g. `run_prior_refits()` on each complete season's final
-   input), then write `priors_from_pool(model_config(), pool_priors(refits))` into
-   `model_config()` (round the values, and update its comment that points to
-   `analysis/tune_priors.R`). Doing this before the rebuild avoids a second full rebuild.
-   Run it with `run_in_background` or as a `tar_make(prior_refits)`; a `nohup` job died.
-2. Optional: test-render the paper against small stand-in versions of the new targets
-   (short chains, few seasons, `tar_make(..., shortcut = TRUE)` in a copied store), to catch
-   render errors before the long rebuild.
-3. `targets::tar_make()` with the sandbox off (the SP+/FPI step makes 24 API calls), then
-   `Rscript check_build.R`. Expect: weekly refits of every season ~3 h; `ablation` ~544 short
-   fits (~1.5–2 h); `sbc`, `loso_backtest`, `final_refits` and prior sensitivity ~1–1.5 h
-   together.
-4. Read the rendered paper. Sentences with conditional wording (e.g. the committee
-   comparison, margin-leakage sign, SBC) and the examples (bubble team, disagreement team,
-   championship game) depend on the new results.
-5. Delete `analysis/tune_priors.R` and its outputs, and commit.
+1. Read the rendered paper. Sentences with conditional wording (e.g. the committee
+   comparison, margin-leakage sign, SBC, margin-only LOO) and the examples (bubble team,
+   disagreement team, championship game) depend on the new results.
+2. Decide whether the paper should discuss the remaining `check_build.R` warnings: priorsense
+   flags ν as a prior–data conflict in 10 of 13 seasons, and the "share within 7 pts" PPC is
+   extreme in 13 of 13 (see "Margin distribution shape" in the TODO list).
+3. Commit.
+
+How the rebuild was run, for reference: (1) vague-prior refits of each complete season's final
+input with `run_prior_refits()`, saved per season to `analysis/vague/`; (2)
+`priors_from_pool(model_config(), pool_priors(refits))`, rounded into `model_config()`;
+(3) `targets::tar_make()` with the sandbox off (the SP+/FPI step makes 24 API calls; the
+whole rebuild takes several hours), then `Rscript check_build.R`.
 
 A critical read of the merged paper. Section labels (`@sec-…`, `@tbl-…`) are given
 because line numbers drift.

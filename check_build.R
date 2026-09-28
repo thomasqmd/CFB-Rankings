@@ -153,4 +153,4 @@ for (f in c("docs/dashboard.html", "docs/reports/season_retro.html", "docs/repor
 }
 
 cat(sprintf("\n%d FAIL, %d WARN\n", sum(status == "FAIL"), sum(status == "WARN")))
-if (any(status == "FAIL")) quit(status = 1)
+if (any(status == "FAIL") && !interactive()) quit(status = 1)

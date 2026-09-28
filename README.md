@@ -7,8 +7,9 @@ Two college football rankings, rebuilt every week from 2014 on:
 | **Power** | How good is a team right now? | Points vs. an average FBS team on a neutral field (A − B = predicted spread) |
 | **Resume** | What has a team earned? | Wins Above Benchmark (WAB): wins beyond what the #12 FBS team would have managed with the same schedule |
 
-Output: a static Quarto + Observable JS dashboard (`docs/dashboard.html`) and two reports
-(`docs/reports/season_retro.html`, `docs/reports/model_diagnostics.html`).
+Output: a static Quarto + Observable JS dashboard (`docs/dashboard.html`), two reports
+(`docs/reports/season_retro.html`, `docs/reports/model_diagnostics.html`) and a methods paper
+(`paper/cfb-paper.pdf`) whose every number is computed from the pipeline at render time.
 
 ## Method
 
@@ -39,7 +40,16 @@ no divergences, E-BFMI > 0.2); the published current-season snapshot halts the p
 fails after one careful retry. Each season's latest snapshot also gets posterior predictive
 checks, `priorsense` prior sensitivity and PSIS-LOO. A rolling backtest predicts every game from
 the previous week's snapshot and scores it against results and closing lines (MAE, Brier,
-calibration, ATS).
+log loss, CRPS, interval coverage, calibration, ATS). For the paper: ablations (margin only,
+Normal margin, no carry-over, no conference level, recency half-lives), baselines (least
+squares, CFBD Elo, SP+, FPI), leave-one-season-out priors, simulation-based calibration,
+benchmark ranks 4/12/25, and agreement with CFP committee selections.
+
+**Priors** on the structural parameters (home field, tier offsets, carry-over, scales) are
+centred on full-season refits of 2015–2025 under vague priors, with sd = 2× the between-season
+sd (`prior_refits` target → `pool_priors()` → `priors_from_pool()`, rounded into
+`model_config()`). `check_build.R` warns when a rebuild's refits drift from the configured
+values.
 
 ## Pipeline (`targets`)
 
@@ -48,7 +58,8 @@ sync (CFBD API → data/raw JSON cache → data/cfb.duckdb)
   └ per season s: data_s → weeks_s → inputs_s[week] → snaps_s[week]      (dynamic branches)
                                       ↑ prior = final ratings of season s−1
                                     → checks_s (PPC, sensitivity, LOO)
-  → snapshots → ratings (+ polls) → backtest → dashboard_data → Quarto renders
+  → snapshots → ratings (+ polls, CBS 138) → backtest → dashboard_data → dashboard, reports
+  → analysis targets (prior_refits, ablation, baselines, final_refits, sbc, …) → paper
 ```
 
 Only new weeks are refit: a week's inputs contain nothing from later weeks. Finished seasons
@@ -57,17 +68,23 @@ Only new weeks are refit: a week's inputs contain nothing from later weeks. Fini
 | File | Contents |
 | :--- | :--- |
 | `R/01_ingest.R` | CFBD client, JSON cache, DuckDB tables (`games`, `game_stats`, `lines`, `polls`, `teams`), concluded-week rule |
+| `R/01_ingest_cbs.R` | CBS Sports 138: archive, Wayback/article backfill, poll alignment |
 | `R/02_model.R` | Model config, Stan inputs per snapshot, fitting with gates |
 | `R/03_rankings.R` | Power and Resume summaries, Colley, poll alignment |
 | `R/04_validation.R` | Snapshot runner, PPC, prior sensitivity, backtest |
 | `R/05_export.R` | Compact data for the dashboard |
+| `R/06_supplement.R` | Full-draw refits and prior-perturbation study for the paper's appendix |
+| `R/07_analysis.R` | Paper analyses: vague-prior refits and pooled priors, ablations, baselines, SP+/FPI, benchmark sensitivity, margin leakage, SBC, committee validation, data hashes |
+| `paper/cfb-paper.qmd` | Methods paper (`tar_quarto` target; references in `paper/references.bib`) |
+| `check_build.R` | Post-build checks (below) |
 | `tests/testthat/` | Unit tests (`Rscript -e 'testthat::test_dir("tests/testthat")'`) |
 
 ## Running
 
 ```r
 # once
-source("install_packages.R")          # R packages; CmdStan via cmdstanr::install_cmdstan()
+renv::restore()                        # R packages pinned in renv.lock (or source("install_packages.R"))
+cmdstanr::install_cmdstan()
 # CFBD_API_KEY=... in .Renviron        (free key: collegefootballdata.com)
 
 targets::tar_make()                    # sync, fit, render
@@ -78,10 +95,14 @@ latest snapshot covers every concluded week, ratings sanity (team count, ranks, 
 posterior predictive / prior-sensitivity / LOO flags, backtest vs. Vegas and calibration, and
 output freshness. Exits non-zero on any FAIL; WARNs are worth a look but don't block publishing.
 
-- First full run fits ~200 weekly snapshots (≈ 2–4 hours on 8 cores); later runs fit only
-  the new week (a few minutes).
+- A full rebuild fits ~225 weekly snapshots plus the paper's analysis targets (several hours
+  on 8 cores; the analysis targets alone take ~3 h). Later runs fit only the new week (a few
+  minutes); the analysis targets rerun only when the model code or priors change.
+- `check_build.R` can also be `source()`d in an interactive session (it only exits non-zero
+  under `Rscript`).
 - `CFB_FIRST_SEASON=2024 Rscript -e 'targets::tar_make()'` for a quick partial build.
-- The free CFBD tier allows ~1000 calls/month; a full backfill uses ~80, a weekly update ~6.
+- The free CFBD tier allows ~1000 calls/month; a full backfill uses ~80, a weekly update ~6,
+  and the `external_ratings` target (SP+/FPI) 24 when it reruns.
 - Settings (sampler, priors, benchmark rank, recency half-life) live in `model_config()`.
 - **CBS Sports 138** has no API: each sync archives the live ranking page to
   `data/raw/cbs138/`. Run at least once per week in season, or that week's full 138 is only

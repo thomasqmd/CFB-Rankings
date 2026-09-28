@@ -278,9 +278,11 @@ run_final_refits <- function(final_inputs, cfg = model_config(), workers = 2L, s
     full <- fits[[which(seasons == s & vapply(fits, `[[`, "", "model") == "full")]]
     marg <- fits[[which(seasons == s & vapply(fits, `[[`, "", "model") == "margin")]]
     cmp <- loo::loo_compare(list(full = full$loo, margin = marg$loo))
+    # loo >= 2.10 returns the model names in a column; earlier versions in the row names
+    nm <- if ("model" %in% colnames(cmp)) as.character(cmp$model) else rownames(cmp)
     full$loo_compare <- tibble::tibble(
-      model = rownames(cmp), elpd_diff = cmp[, "elpd_diff"], se_diff = cmp[, "se_diff"],
-      elpd_loo = c(full = full$loo$estimates["elpd_loo", "Estimate"], margin = marg$loo$estimates["elpd_loo", "Estimate"])[rownames(cmp)])
+      model = nm, elpd_diff = cmp[, "elpd_diff"], se_diff = cmp[, "se_diff"],
+      elpd_loo = c(full = full$loo$estimates["elpd_loo", "Estimate"], margin = marg$loo$estimates["elpd_loo", "Estimate"])[nm])
     full$loo <- NULL
     full$margin_health <- marg$health
     full

@@ -243,7 +243,7 @@ info <- final_full |>
     r2 = kappa^2 * sigma_eff^2 / S22
   )
 
-fin_last <- ratings |> filter(season == last_full, week == max(week), tier == 1)
+fin_last <- ratings |> filter(season == last_full, tier == 1) |> filter(week == max(week))
 ```
 
 ```{r, analyses}

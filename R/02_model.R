@@ -10,15 +10,16 @@ model_config <- function() {
     chains = 4, iter_warmup = 500, iter_sampling = 1000, adapt_delta = 0.9,
     retry_adapt_delta = 0.99, retry_warmup = 1000, retry_sampling = 2000,
     # Priors are centred on full-season posterior means pooled over 2014-2025, with sd = 2x the
-    # between-season sd (analysis/tune_priors.R -> analysis/structural_pooled.csv). They only
-    # matter in the first weeks; by mid-season each season's own data dominates.
-    hfa_mean = 2.5, hfa_sd = 0.7,
-    tier_mean = c(-27.3, -54), tier_sd = c(3.7, 10.2),      # FCS, non-D1 offsets vs. FBS
-    b_prev_mean = 0.75, b_prev_sd = 0.13,                    # year-to-year carry-over
-    sigma_team_mean = c(7.6, 7.6, 13.6), sigma_team_sd = c(1.6, 2.5, 5.1),
-    sigma_conf_prior = c(4.4, 3.9),
-    lambda_prior = c(0.755, 0.07), kappa_prior = c(0.77, 0.06),
-    sigma_eff_prior = c(14.1, 1.1), sigma_m_prior = c(8.1, 1.0),
+    # between-season sd, from vague-prior refits (target prior_refits -> pool_priors() ->
+    # priors_from_pool()). They only matter in the first weeks; by mid-season each season's own
+    # data dominates. check_build.R warns when the pooled refits drift from these values.
+    hfa_mean = 2.4, hfa_sd = 0.801,
+    tier_mean = c(-29.2, -61.2), tier_sd = c(3.45, 7.31),      # FCS, non-D1 offsets vs. FBS
+    b_prev_mean = 0.779, b_prev_sd = 0.0867,                    # year-to-year carry-over
+    sigma_team_mean = c(6.73, 6.32, 13.6), sigma_team_sd = c(1.45, 1.56, 9.35),
+    sigma_conf_prior = c(2.95, 2.53),
+    lambda_prior = c(.7623, .0486), kappa_prior = c(.7729, .0594),
+    sigma_eff_prior = c(14.255, .681), sigma_m_prior = c(8.011, .806),
     nu_prior = c(2, 0.1), nu_lower = 1,                      # Gamma(shape, rate) truncated to nu > nu_lower
     half_life_weeks = NULL,          # NULL = every game weighted equally
     # Model variants (the published model uses all four; the ablations switch one off)
