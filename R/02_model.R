@@ -8,11 +8,15 @@ model_config <- function() {
   list(
     stan_file = "stan/power.stan",
     chains = 4, iter_warmup = 500, iter_sampling = 1000, adapt_delta = 0.9,
-    retry_adapt_delta = 0.99, retry_warmup = 1000, retry_sampling = 2000,
+    # The retry lengthens warmup and sampling but keeps adapt_delta moderate: a much smaller step
+    # size makes chains stall in the neck of the random-walk funnel (small tau)
+    retry_adapt_delta = 0.95, retry_warmup = 1000, retry_sampling = 2000,
     # Priors are centred on full-season posterior means pooled over 2014-2025, with sd = 2x the
     # between-season sd, from vague-prior refits (target prior_refits -> pool_priors() ->
     # priors_from_pool()). They only matter in the first weeks; by mid-season each season's own
     # data dominates. check_build.R warns when the pooled refits drift from these values.
+    # The values below were pooled under the static Student-t margin model; the random-walk,
+    # family and total priors further down are provisional until the next pooling.
     hfa_mean = 2.4, hfa_sd = 0.801,
     tier_mean = c(-29.2, -61.2), tier_sd = c(3.45, 7.31),      # FCS, non-D1 offsets vs. FBS
     b_prev_mean = 0.779, b_prev_sd = 0.0867,                    # year-to-year carry-over
@@ -21,10 +25,26 @@ model_config <- function() {
     lambda_prior = c(.7623, .0486), kappa_prior = c(.7729, .0594),
     sigma_eff_prior = c(14.255, .681), sigma_m_prior = c(8.011, .806),
     nu_prior = c(2, 0.1), nu_lower = 1,                      # Gamma(shape, rate) truncated to nu > nu_lower
-    half_life_weeks = NULL,          # NULL = every game weighted equally
-    # Model variants (the published model uses all four; the ablations switch one off)
+    # Margin family: "t" (Student-t), "normal", "mixture" (two-normal scale mixture) or "scale_t"
+    # (t whose scale grows with the expected margin). The published family is picked by the
+    # margin_comparison target (choose_margin_family()); this is the incumbent it must beat.
+    margin_family = "t",
+    sigma_gap_prior = c(0, 10), p_wide_prior = c(2, 2), gamma_prior = c(0, 0.3),
+    # Weekly random walk of ratings within a season (FALSE = static ratings)
+    dynamic = TRUE,
+    # Weekly step sd of r and t (normal truncated at 0). The data identify tau_r only weakly
+    # (2025 full season: 0.59 +- 0.34 under a half-normal(0, 1)), and a prior with much mass
+    # near 0 makes a funnel with the steps; these keep it away from 0. tau_t: 1.09 +- 0.30.
+    tau_r_prior = c(0.6, 0.25), tau_t_prior = c(1.0, 0.3),
+    # Total model (offence / defence). Priors from 2022-2025 FBS games: ~26.4 points per team,
+    # summed offensive PPA ~13.5 (sd 18.8), slope of the total on it ~0.54
+    use_total = TRUE,
+    base_prior = c(26.5, 2), t_tier_mean = c(0, 0), t_tier_sd = c(6, 10),
+    sigma_t_team_prior = c(4, 2), sigma_conf_t_prior = c(2, 1.5), b_prev_t_prior = c(0.5, 0.25),
+    lambda_t_prior = c(0.8, 0.3), alpha_es_prior = c(13.5, 8), kappa_t_prior = c(0.55, 0.2),
+    sigma_es_prior = c(17, 4), sigma_tot_prior = c(12.5, 2),
+    # Model variants (the published model uses all of these; the ablations switch one off)
     use_eff = TRUE,                  # efficiency likelihood
-    student_t = TRUE,                # Student-t margin (FALSE = normal)
     conf_level = TRUE,               # conference effects (FALSE = teams pooled to the tier only)
     carry_over = TRUE,               # last season's ratings as preseason information
     benchmark_rank = 12L,            # Resume benchmark: the #12 FBS team (playoff bubble)
@@ -69,7 +89,7 @@ season_teams <- function(games) {
     dplyr::mutate(idx = dplyr::row_number())
 }
 
-#' Per-game model observations (regulation margin, efficiency margin)
+#' Per-game model observations (regulation margin, efficiency margin, total and summed efficiency)
 game_observations <- function(games, min_plays = 20L) {
   games |>
     dplyr::mutate(
@@ -77,6 +97,10 @@ game_observations <- function(games, min_plays = 20L) {
       has_eff = !is.na(home_ppa) & !is.na(away_ppa) &
         dplyr::coalesce(home_plays, 0L) >= min_plays & dplyr::coalesce(away_plays, 0L) >= min_plays,
       eff = ifelse(has_eff, home_ppa * home_plays - away_ppa * away_plays, 0),
+      eff_sum = ifelse(has_eff, home_ppa * home_plays + away_ppa * away_plays, 0),
+      # Overtime inflates the total, so OT games inform the total model through eff_sum only
+      has_total = !dplyr::coalesce(ot, FALSE) & !is.na(home_points) & !is.na(away_points),
+      total = ifelse(has_total, as.numeric(home_points + away_points), 0),
       home_adv = ifelse(neutral_site, 0, 1),
       home_win = as.integer(home_points > away_points)
     )
@@ -88,22 +112,53 @@ game_observations <- function(games, min_plays = 20L) {
 #' cross-conference predictions are informative; mu_conf then absorbs only the change.
 #' The tier is this season's, so a team moving up (FCS -> FBS) keeps its absolute level:
 #' its old FCS rating sits far below the FBS mean and its d_i is strongly negative.
+#' `value`/`sd` name the prior's columns (rating / rating_sd, or total_t / total_t_sd).
 #' @return list(dev, sd): d_i and the posterior sd of last season's rating (0 when unknown)
-prev_deviation <- function(teams, prior) {
-  if (is.null(prior) || nrow(prior) == 0) return(list(dev = rep(0, nrow(teams)), sd = rep(0, nrow(teams))))
-  if (!"rating_sd" %in% names(prior)) prior$rating_sd <- 0
+prev_deviation <- function(teams, prior, value = "rating", sd = paste0(value, "_sd")) {
+  none <- list(dev = rep(0, nrow(teams)), sd = rep(0, nrow(teams)))
+  if (is.null(prior) || nrow(prior) == 0 || !value %in% names(prior)) return(none)
+  prior$prev <- prior[[value]]
+  prior$prev_sd <- if (sd %in% names(prior)) prior[[sd]] else 0
   x <- teams |>
-    dplyr::left_join(prior |> dplyr::select(team_id, prev = rating, prev_sd = rating_sd), by = "team_id") |>
+    dplyr::left_join(prior |> dplyr::select(team_id, prev, prev_sd), by = "team_id") |>
     dplyr::group_by(tier) |>
     dplyr::mutate(dev = prev - mean(prev, na.rm = TRUE)) |>
     dplyr::ungroup()
   list(dev = dplyr::coalesce(x$dev, 0), sd = ifelse(is.na(x$dev), 0, dplyr::coalesce(x$prev_sd, 0)))
 }
 
+#' Random-walk states: one per (team, week with a game), grouped by team and in week order within
+#' a team (Stan sums each team's steps over its block). Week 1 is
+#' the time origin (the preseason level r0 is the week-1 rating), so a team's first state steps
+#' max(week - 1, 0) weeks from r0, and later states the weeks since its previous game.
+#' @return list(states, home_state, away_state, now_state, now_gap); now = the snapshot week
+walk_states <- function(played, n_teams, week) {
+  now <- max(week, 1L)
+  tw <- dplyr::bind_rows(
+    tibble::tibble(team = played$home, week_seq = played$week_seq),
+    tibble::tibble(team = played$away, week_seq = played$week_seq)
+  ) |>
+    dplyr::distinct() |>
+    dplyr::arrange(team, week_seq) |>
+    dplyr::mutate(state = dplyr::row_number()) |>
+    dplyr::group_by(team) |>
+    dplyr::mutate(prev = dplyr::lag(state, default = 0L), first = dplyr::first(state),
+                  gap = pmax(week_seq - dplyr::lag(week_seq, default = 1L), 0L)) |>
+    dplyr::ungroup()
+  key <- function(tm, wk) match(paste(tm, wk), paste(tw$team, tw$week_seq))
+  last <- tw |> dplyr::group_by(team) |> dplyr::slice_max(week_seq, n = 1) |> dplyr::ungroup()
+  now_state <- integer(n_teams); now_gap <- rep(now - 1, n_teams)
+  now_state[last$team] <- last$state
+  now_gap[last$team] <- pmax(now - last$week_seq, 0)
+  list(states = tw, home_state = key(played$home, played$week_seq), away_state = key(played$away, played$week_seq),
+       now_state = now_state, now_gap = as.numeric(now_gap))
+}
+
 #' Everything needed to fit and summarise one snapshot (season, week_seq)
 #' @param season_data list from read_season()
 #' @param week week_seq to fit through
-#' @param prior tibble(team_id, rating) from the previous season's final snapshot, or NULL
+#' @param prior tibble(team_id, rating, rating_sd, total_t, total_t_sd) from the previous
+#'   season's final snapshot, or NULL
 prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_config()) {
   games <- season_data$games
   teams <- season_teams(games)
@@ -118,31 +173,34 @@ prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_conf
   # cached fit) doesn't change when later weeks' results or lines arrive
   played <- obs |>
     dplyr::filter(completed, week_seq <= .env$week, !is.na(home_points), !is.na(away_points)) |>
-    dplyr::select(game_id, week_seq, home, away, home_adv, home_points, away_points, margin, has_eff, eff)
+    dplyr::select(game_id, week_seq, home, away, home_adv, home_points, away_points, margin, has_eff, eff,
+                  eff_sum, has_total, total)
   future <- obs |>
     dplyr::filter(week_seq > .env$week) |>
     dplyr::select(game_id, week_seq, home, away, home_adv)
 
-  weight <- if (is.null(cfg$half_life_weeks)) rep(1, nrow(played)) else
-    0.5^((week - played$week_seq) / cfg$half_life_weeks)
-  prev <- prev_deviation(teams, if (isFALSE(cfg$carry_over)) NULL else prior)
+  carry <- if (isFALSE(cfg$carry_over)) NULL else prior
+  prev <- prev_deviation(teams, carry)
+  prev_t <- prev_deviation(teams, carry, "total_t")
+  ws <- walk_states(played, nrow(teams), week)
+  use_eff <- !isFALSE(cfg$use_eff)
+  fam <- margin_family_code(cfg$margin_family %||% "t")
 
   stan_data <- list(
     N_teams = nrow(teams), N_conf = nrow(confs),
     team_conf = teams$conf_idx, conf_tier = confs$tier, team_tier = teams$tier,
-    prev_dev = prev$dev, prev_sd = prev$sd,
-    N_games = nrow(played), home = played$home, away = played$away,
+    prev_dev = prev$dev, prev_sd = prev$sd, prev_dev_t = prev_t$dev, prev_sd_t = prev_t$sd,
+    N_states = nrow(ws$states), state_team = ws$states$team, state_first = ws$states$first,
+    state_prev = ws$states$prev,   # not read by Stan; used to simulate from the priors
+    state_gap = as.numeric(ws$states$gap), now_state = ws$now_state, now_gap = ws$now_gap,
+    N_games = nrow(played), home_state = ws$home_state, away_state = ws$away_state,
     home_adv = played$home_adv, margin = played$margin,
-    has_eff = as.integer(played$has_eff & !isFALSE(cfg$use_eff)), eff = if (isFALSE(cfg$use_eff)) rep(0, nrow(played)) else played$eff,
-    weight = weight,
-    hfa_mean = cfg$hfa_mean, hfa_sd = cfg$hfa_sd,
-    tier_mean = cfg$tier_mean, tier_sd = cfg$tier_sd,
-    b_prev_mean = cfg$b_prev_mean, b_prev_sd = cfg$b_prev_sd,
-    sigma_team_mean = cfg$sigma_team_mean, sigma_team_sd = cfg$sigma_team_sd,
-    sigma_conf_prior = cfg$sigma_conf_prior, lambda_prior = cfg$lambda_prior, kappa_prior = cfg$kappa_prior,
-    sigma_eff_prior = cfg$sigma_eff_prior, sigma_m_prior = cfg$sigma_m_prior,
-    nu_prior = cfg$nu_prior %||% c(2, 0.1), nu_lower = cfg$nu_lower %||% 1,
-    student_t = as.integer(!isFALSE(cfg$student_t)), conf_level = as.integer(!isFALSE(cfg$conf_level)),
+    has_eff = as.integer(played$has_eff & use_eff),
+    eff = if (use_eff) played$eff else rep(0, nrow(played)),
+    eff_sum = if (use_eff) played$eff_sum else rep(0, nrow(played)),
+    has_total = as.integer(played$has_total), total = played$total,
+    margin_family = fam, dynamic = as.integer(!isFALSE(cfg$dynamic)),
+    use_total = as.integer(!isFALSE(cfg$use_total)), conf_level = as.integer(!isFALSE(cfg$conf_level)),
     compute_ll = 0L
   )
 
@@ -151,14 +209,37 @@ prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_conf
     week_label = if (week == 0) "Preseason" else unique(games$week_label[games$week_seq == week])[1],
     last_regular_week = max(games$week_seq[games$season_type == "regular"]),
     teams = teams, played = played, future = future,
-    has_prior = !is.null(prior) && nrow(prior) > 0 && !isFALSE(cfg$carry_over),
-    stan_data = stan_data
+    has_prior = !is.null(carry) && nrow(carry) > 0,
+    stan_data = apply_priors(list(stan_data = stan_data), cfg)$stan_data
   )
 }
 
+#' Stan's code for a margin family name
+margin_family_code <- function(family) {
+  codes <- c(normal = 1L, t = 2L, mixture = 3L, scale_t = 4L)
+  if (!family %in% names(codes)) stop("Unknown margin family: ", family)
+  codes[[family]]
+}
+
+#' Structural parameters of a fit, given its switches (zero-size ones are absent from the output)
+model_vars <- function(stan_data) {
+  c("hfa", "sigma_m", "lambda", "sigma_eff", "kappa", "b_prev", "mu_tier[2]", "mu_tier[3]",
+    "sigma_team[1]", "sigma_team[2]", "sigma_team[3]", "sigma_conf",
+    if (stan_data$margin_family %in% c(2L, 4L)) "nu",
+    if (stan_data$margin_family == 3L) c("sigma_w", "p_wide"),
+    if (stan_data$margin_family == 4L) "gamma_m",
+    if (stan_data$dynamic == 1L) "tau_r",
+    if (stan_data$use_total == 1L) c("base_raw[1]", "t_tier_raw[1]", "t_tier_raw[2]", "sigma_conf_t_raw[1]",
+                                     "sigma_t_team_raw[1]", "b_prev_t_raw[1]", "lambda_t_raw[1]",
+                                     "alpha_es_raw[1]", "sigma_es_raw[1]", "kappa_t_raw[1]", "sigma_tot_raw[1]"),
+    if (stan_data$use_total == 1L && stan_data$dynamic == 1L) "tau_t_raw[1]")
+}
+
 #' Summaries of sampler health for the gates
-sampler_health <- function(fit, cfg = model_config()) {
-  vars <- c("r", "hfa", "sigma_m", "nu", "lambda", "sigma_eff", "kappa", "b_prev", "mu_tier", "sigma_team", "sigma_conf")
+sampler_health <- function(fit, cfg = model_config(), stan_data = NULL) {
+  vars <- c("r", if (!is.null(stan_data)) model_vars(stan_data) else
+    c("hfa", "sigma_m", "nu", "lambda", "sigma_eff", "kappa", "b_prev", "mu_tier", "sigma_team", "sigma_conf"),
+    if (!is.null(stan_data) && stan_data$use_total == 1L) "t")
   s <- posterior::summarise_draws(fit$draws(variables = vars), "rhat", "ess_bulk", "ess_tail")
   d <- fit$diagnostic_summary(quiet = TRUE)
   g <- cfg$gates
@@ -189,12 +270,12 @@ fit_power <- function(input, cfg = model_config(), compute_ll = FALSE, strict = 
   }
   t0 <- Sys.time()
   fit <- run(cfg$iter_warmup, cfg$adapt_delta, cfg$iter_sampling)
-  health <- sampler_health(fit, cfg)
+  health <- sampler_health(fit, cfg, data)
   attempts <- 1L
   if (!health$passed) {
     # Longer warmup, smaller steps, and twice the draws (low-ESS misses are usually just short chains)
     fit <- run(cfg$retry_warmup, cfg$retry_adapt_delta, cfg$retry_sampling)
-    health <- sampler_health(fit, cfg)
+    health <- sampler_health(fit, cfg, data)
     attempts <- 2L
   }
   health$attempts <- attempts
@@ -207,17 +288,58 @@ fit_power <- function(input, cfg = model_config(), compute_ll = FALSE, strict = 
   list(fit = fit, health = health)
 }
 
-#' Posterior draws needed downstream, as plain matrices/vectors (so the CmdStan CSVs can be deleted)
-extract_draws <- function(fit, compute_ll = FALSE) {
-  get <- function(v) posterior::as_draws_matrix(fit$draws(variables = v))
-  scalars <- get(c("hfa", "sigma_m", "sigma_marg", "nu", "lambda", "sigma_eff", "kappa", "b_prev", "sigma_conf", "mu_tier", "sigma_team"))
-  out <- list(
-    r = unclass(get("r")),
-    par = as.data.frame(unclass(scalars))
-  )
+#' Scalar parameters every downstream function may use, under fixed names. Parameters a fit does
+#' not have get their neutral value (no drift, no mixture, constant scale, no total model).
+par_names <- c("hfa", "sigma_m", "sigma_marg", "sigma_w", "sigma_marg_w", "p_wide", "gamma_m", "nu",
+               "lambda", "sigma_eff", "kappa", "b_prev", "sigma_conf", "mu_tier[2]", "mu_tier[3]",
+               "sigma_team[1]", "sigma_team[2]", "sigma_team[3]", "tau_r",
+               "base_raw[1]", "tau_t_raw[1]", "sigma_tot_raw[1]", "sigma_es_raw[1]", "kappa_t_raw[1]",
+               "lambda_t_raw[1]", "alpha_es_raw[1]", "b_prev_t_raw[1]", "sigma_t_team_raw[1]",
+               "sigma_conf_t_raw[1]", "t_tier_raw[1]", "t_tier_raw[2]")
+
+#' Posterior draws needed downstream, as plain matrices/vectors (so the CmdStan CSVs can be deleted).
+#' r (and t) are the ratings at the snapshot week; states = TRUE adds the weekly states the
+#' games were played at (r_state, t_state) for checks that need each game's expected margin.
+extract_draws <- function(fit, compute_ll = FALSE, states = FALSE, family = NULL) {
+  get <- function(v) unclass(posterior::as_draws_matrix(fit$draws(variables = v)))
+  have <- fit$metadata()$stan_variable_sizes
+  present <- function(v) {
+    base <- sub("\\[.*", "", v)
+    size <- have[[base]]
+    !is.null(size) && prod(size) > 0
+  }
+  par <- as.data.frame(get(Filter(present, par_names)))
+  fill <- list(sigma_w = par$sigma_m, sigma_marg_w = par$sigma_marg, p_wide = 0, gamma_m = 0, nu = Inf, tau_r = 0,
+               `tau_t_raw[1]` = 0)
+  for (nm in names(fill)) if (!nm %in% names(par)) par[[nm]] <- fill[[nm]]
+  # Friendlier names for the total model's scalars
+  nm_map <- c(base = "base_raw[1]", tau_t = "tau_t_raw[1]", sigma_tot = "sigma_tot_raw[1]", sigma_es = "sigma_es_raw[1]",
+              kappa_t = "kappa_t_raw[1]", lambda_t = "lambda_t_raw[1]", alpha_es = "alpha_es_raw[1]",
+              b_prev_t = "b_prev_t_raw[1]", sigma_t_team = "sigma_t_team_raw[1]", sigma_conf_t = "sigma_conf_t_raw[1]",
+              `t_tier[2]` = "t_tier_raw[1]", `t_tier[3]` = "t_tier_raw[2]")
+  for (nm in names(nm_map)) if (nm_map[[nm]] %in% names(par)) names(par)[names(par) == nm_map[[nm]]] <- nm
+  if ("sigma_tot" %in% names(par)) par$sigma_tot_marg <- sqrt(par$sigma_tot^2 + par$kappa_t^2 * par$sigma_es^2)
+  out <- list(r = get("r"), par = par, family = family)
+  if (present("t")) out$t <- get("t")
+  if (states) {
+    if (present("r_state")) out$r_state <- get("r_state")
+    if (present("t_state")) out$t_state <- get("t_state")
+  }
   if (compute_ll) {
-    out$log_lik <- unclass(get("log_lik"))
-    out$lprior <- as.numeric(unclass(get("lprior")))
+    out$log_lik <- get("log_lik")
+    out$lprior <- as.numeric(get("lprior"))
   }
   out
+}
+
+#' Expected margin (and total, when the fit has one) of each played game at the week it was played,
+#' per draw: S x N_games matrices. Needs extract_draws(states = TRUE).
+game_means <- function(draws, input) {
+  sd_ <- input$stan_data
+  if (sd_$N_games == 0) return(list(mu = matrix(0, nrow(draws$r), 0), tt = NULL))
+  S <- nrow(draws$r)
+  mu <- draws$r_state[, sd_$home_state, drop = FALSE] - draws$r_state[, sd_$away_state, drop = FALSE] +
+    draws$par$hfa * matrix(sd_$home_adv, S, sd_$N_games, byrow = TRUE)
+  tt <- if (!is.null(draws$t_state)) draws$t_state[, sd_$home_state, drop = FALSE] + draws$t_state[, sd_$away_state, drop = FALSE]
+  list(mu = mu, tt = tt)
 }

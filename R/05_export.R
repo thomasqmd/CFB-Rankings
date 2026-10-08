@@ -33,7 +33,9 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
       p4 = round(resume_p4, 3), p12 = round(resume_p12, 3),
       sor = signif(sor_prob, 3), sos = round(sos, 3), sos_rk = sos_rank,
       xw = round(xwins, 1), luck = round(luck, 1), cw = close_w, cl = close_l,
-      colley = colley_rank, ap = ap_rank, coaches = coaches_rank, cfp = cfp_rank, cbs = cbs_rank
+      colley = colley_rank, ap = ap_rank, coaches = coaches_rank, cfp = cfp_rank, cbs = cbs_rank,
+      off = round(off, 1), off_sd = round(off_sd, 2), off_rk = off_rank,
+      def = round(def, 1), def_sd = round(def_sd, 2), def_rk = def_rank
     ) |>
     dplyr::group_by(s, w, tier) |>
     dplyr::mutate(sor_rk = ifelse(g > 0, rank(sor, ties.method = "min", na.last = "keep"), NA_integer_)) |>
@@ -41,21 +43,27 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
     dplyr::mutate(grp = conference_group(conf, s, tier), .after = conf)
 
   snaps_meta <- params |>
-    dplyr::transmute(s = season, w = week, label = week_label, n_games, has_prior,
+    dplyr::transmute(s = season, w = week, label = week_label, n_games, has_prior, family,
                      hfa = round(hfa, 2), sigma = round(sigma, 2), nu = round(nu, 1),
+                     noise_sd = round(noise_sd, 2), noise_slope = round(noise_slope, 4),
+                     tau = round(tau, 2), base = round(base, 2),
                      b_prev = round(b_prev, 2), passed, max_rhat = round(max_rhat, 3),
                      min_ess = round(pmin(min_ess_bulk, min_ess_tail)), divergences)
 
   # Pre-game view of each game: the prediction made by the previous week's snapshot
-  pre <- snapshots$predictions |>
+  preds <- snapshots$predictions
+  for (nm in c("pred_home_pts", "pred_away_pts")) if (!nm %in% names(preds)) preds[[nm]] <- NA_real_
+  pre <- preds |>
     dplyr::inner_join(games_all |> dplyr::select(season, game_id, week_seq), by = c("season", "game_id")) |>
     dplyr::filter(week_seq == week + 1L) |>
-    dplyr::select(season, game_id, pre_margin = pred_margin, pre_wp = pred_home_wp)
+    dplyr::select(season, game_id, pre_margin = pred_margin, pre_wp = pred_home_wp,
+                  pre_hp = pred_home_pts, pre_ap = pred_away_pts)
   # Remaining games of the live season: prediction from the latest snapshot
   latest <- params |> dplyr::filter(season == max(season)) |> dplyr::pull(week) |> max()
-  future <- snapshots$predictions |>
+  future <- preds |>
     dplyr::filter(season == max(params$season), week == latest) |>
-    dplyr::select(season, game_id, fut_margin = pred_margin, fut_wp = pred_home_wp)
+    dplyr::select(season, game_id, fut_margin = pred_margin, fut_wp = pred_home_wp,
+                  fut_hp = pred_home_pts, fut_ap = pred_away_pts)
   # Resume contribution of each played game, valued with the latest opponent strength
   contrib <- snapshots$game_resume |>
     dplyr::left_join(last_week, by = "season") |>
@@ -81,6 +89,10 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
       pre_margin = round(sgn * pre_margin, 1),
       fut_wp = round(if (home) fut_wp else 1 - fut_wp, 3),
       fut_margin = round(sgn * fut_margin, 1),
+      # projected score: this team's points, then the opponent's
+      pre_pts = round(if (home) pre_hp else pre_ap, 1), pre_opp_pts = round(if (home) pre_ap else pre_hp, 1),
+      fut_pts = round(if (home) fut_hp else fut_ap, 1), fut_opp_pts = round(if (home) fut_ap else fut_hp, 1),
+      ou = over_under,
       eff = round(sgn * eff_margin, 1),
       line = round(-sgn * spread, 1)
     )
@@ -109,6 +121,7 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
       calibration = backtest$calibration |> dplyr::mutate(bin = as.character(bin),
                                                           dplyr::across(where(is.numeric), \(x) round(x, 3)))
     ),
-    config = list(benchmark_rank = cfg$benchmark_rank, generated = format(Sys.time(), "%Y-%m-%d %H:%M %Z"))
+    config = list(benchmark_rank = cfg$benchmark_rank, margin_family = cfg$margin_family,
+                  generated = format(Sys.time(), "%Y-%m-%d %H:%M %Z"))
   )
 }

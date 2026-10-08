@@ -131,3 +131,6 @@ form.oi-3a86ea, .oi-3a86ea { font-family: inherit !important; }
   .cfb-table .hide-sm { display: none; }
   .team-header .facts { margin-left: 0; }
 }
+
+// Quarto wraps each cell's (hidden) source in a fill item that otherwise claims card height
+.card-body > .code-copy-outer-scaffold { flex: 0 0 auto !important; min-height: 0 !important; }

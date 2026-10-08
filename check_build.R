@@ -9,6 +9,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   source("R/01_ingest.R")
   source("R/02_model.R")
+  source("R/06_supplement.R")
   source("R/07_analysis.R")
 })
 
@@ -79,8 +80,10 @@ top <- fbs |> arrange(power_rank) |> head(10)
 cat("      Power top 10:  ", paste(top$team, collapse = ", "), "\n")
 top <- fbs |> arrange(resume_rank) |> head(10)
 cat("      Resume top 10: ", paste(top$team, collapse = ", "), "\n")
-cat(sprintf("      hfa %.2f | b_prev %.2f | FCS offset %.1f | nu %.1f\n",
-            latest$hfa, latest$b_prev, latest$fcs_offset, latest$nu))
+cat(sprintf("      hfa %.2f | b_prev %.2f | FCS offset %.1f | family %s | nu %.1f | tau %.2f | base %.1f\n",
+            latest$hfa, latest$b_prev, latest$fcs_offset, latest$family, latest$nu, latest$tau, latest$base))
+report(if (anyNA(fbs$off) || anyNA(fbs$def)) "FAIL" else "PASS", "Offence / defence ratings",
+       sprintf("max |off - def - power| = %.2f", max(abs(fbs$off - fbs$def - fbs$power))))
 report(if (between(latest$hfa, 0.5, 5)) "PASS" else "WARN", "Home field plausible", sprintf("%.2f pts", latest$hfa))
 pt <- tar_read(teams_meta)
 nologo <- setdiff(fbs$team_id, pt$team_id[!is.na(pt$logo)])
@@ -105,6 +108,21 @@ lo <- bind_rows(lapply(ck, \(x) mutate(x$loo, season = x$season)))
 report(if (any(lo$n_bad_k > 25, na.rm = TRUE)) "WARN" else "PASS", "PSIS-LOO Pareto k > 0.7",
        paste(sprintf("%d:%d", lo$season, lo$n_bad_k), collapse = " "))
 
+# ---- 5b. Margin family -------------------------------------------------------------
+section("Margin family (pooled LOO over complete seasons)")
+if (tar_exist_objects("margin_families")) {
+  mf <- tar_read(margin_families)
+  cfg_now <- tar_read(cfg)
+  report("INFO", "Published family", sprintf("%s (incumbent %s)", cfg_now$margin_family, cfg_now$margin_choice$incumbent))
+  print(as.data.frame(mf$pooled |> mutate(across(where(is.numeric), \(x) round(x, 1)))), row.names = FALSE)
+  report(if (all(mf$per_season$passed)) "PASS" else "WARN", "Comparison fits passed gates",
+         sprintf("%d / %d", sum(mf$per_season$passed), nrow(mf$per_season)))
+  w7 <- mf$ppc |> filter(statistic == "Share within 7 pts") |> group_by(family) |>
+    summarise(extreme = sum(p_value < 0.01 | p_value > 0.99), seasons = n(), .groups = "drop")
+  cat("      'Share within 7 pts' extreme (p < .01 or > .99):",
+      paste(sprintf("%s %d/%d", w7$family, w7$extreme, w7$seasons), collapse = " | "), "\n")
+}
+
 # ---- 6. Backtest -----------------------------------------------------------------
 section("Backtest (predicted from the previous week)")
 bt <- tar_read(backtest)
@@ -115,6 +133,9 @@ report(if (gap > 1.5) "WARN" else "PASS", "MAE vs Vegas (FBS)",
 cal <- bt$calibration |> filter(n >= 50)
 worst <- max(abs(cal$pred - cal$obs))
 report(if (worst > 0.05) "WARN" else "PASS", "Calibration", sprintf("worst bin off by %.1f pts", 100 * worst))
+if (!is.na(o$mae_total_model_ou)) report("INFO", "Total MAE vs over/under (FBS)",
+       sprintf("model %.2f, O/U %.2f on %d games", o$mae_total_model_ou, o$mae_total_vegas, o$games_with_ou))
+report(if (abs(o$cover80 - 0.8) > 0.05) "WARN" else "PASS", "80% interval coverage (FBS)", sprintf("%.1f%%", 100 * o$cover80))
 bs <- bt$by_season |> filter(season == cur)
 if (nrow(bs)) cat(sprintf("      %d so far: %d games, MAE %.2f (Vegas %.2f), accuracy %.1f%%\n",
                           cur, bs$games, bs$mae_model_lined, bs$mae_vegas, 100 * bs$accuracy))
@@ -133,10 +154,28 @@ if (tar_exist_objects("prior_refits") && !"prior_refits" %in% errs$name) {
                 lambda = c(cfg$lambda_prior[1], now$lambda_prior[1], cfg$lambda_prior[2]),
                 kappa = c(cfg$kappa_prior[1], now$kappa_prior[1], cfg$kappa_prior[2]),
                 sigma_eff = c(cfg$sigma_eff_prior[1], now$sigma_eff_prior[1], cfg$sigma_eff_prior[2]),
-                sigma_m = c(cfg$sigma_m_prior[1], now$sigma_m_prior[1], cfg$sigma_m_prior[2]))
+                sigma_m = c(cfg$sigma_m_prior[1], now$sigma_m_prior[1], cfg$sigma_m_prior[2]),
+                tau_r = c(cfg$tau_r_prior[1], now$tau_r_prior[1], cfg$tau_r_prior[2]),
+                tau_t = c(cfg$tau_t_prior[1], now$tau_t_prior[1], cfg$tau_t_prior[2]),
+                base = c(cfg$base_prior[1], now$base_prior[1], cfg$base_prior[2]),
+                sigma_tot = c(cfg$sigma_tot_prior[1], now$sigma_tot_prior[1], cfg$sigma_tot_prior[2]),
+                sigma_es = c(cfg$sigma_es_prior[1], now$sigma_es_prior[1], cfg$sigma_es_prior[2]),
+                lambda_t = c(cfg$lambda_t_prior[1], now$lambda_t_prior[1], cfg$lambda_t_prior[2]),
+                kappa_t = c(cfg$kappa_t_prior[1], now$kappa_t_prior[1], cfg$kappa_t_prior[2]),
+                sigma_t_team = c(cfg$sigma_t_team_prior[1], now$sigma_t_team_prior[1], cfg$sigma_t_team_prior[2]),
+                b_prev_t = c(cfg$b_prev_t_prior[1], now$b_prev_t_prior[1], cfg$b_prev_t_prior[2]))
   drift <- vapply(pairs, \(x) abs(x[2] - x[1]) / x[3], numeric(1))
   report(if (any(drift > 0.5)) "WARN" else "PASS", "Prior means vs. pooled refits",
          sprintf("largest drift %.2f prior sd (%s)", max(drift), names(which.max(drift))))
+  if (any(drift > 0.5)) {
+    cat("      Pooled priors to copy into model_config():\n")
+    for (nm in c("hfa_mean", "hfa_sd", "tier_mean", "tier_sd", "b_prev_mean", "b_prev_sd", "sigma_team_mean",
+                 "sigma_team_sd", "sigma_conf_prior", "lambda_prior", "kappa_prior", "sigma_eff_prior", "sigma_m_prior",
+                 "tau_r_prior", "tau_t_prior", "gamma_prior", "base_prior", "t_tier_mean", "t_tier_sd",
+                 "sigma_t_team_prior", "sigma_conf_t_prior", "b_prev_t_prior", "lambda_t_prior", "alpha_es_prior",
+                 "kappa_t_prior", "sigma_es_prior", "sigma_tot_prior"))
+      cat(sprintf("        %s = c(%s)\n", nm, paste(signif(now[[nm]], 4), collapse = ", ")))
+  }
 } else {
   report("WARN", "Prior means vs. pooled refits", "prior_refits not built")
 }

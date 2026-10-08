@@ -7,39 +7,49 @@
 #' Fit + summarise one snapshot. Returns only summaries; CmdStan CSVs are deleted.
 run_snapshot <- function(input, cfg = model_config()) {
   f <- fit_power(input, cfg)
-  draws <- extract_draws(f$fit)
+  draws <- extract_draws(f$fit, family = cfg$margin_family)
   unlink(f$fit$output_files())
   summarise_snapshot(input, draws, f$health, cfg)
 }
 
-#' Posterior predictive check on the fitted games: observed statistic vs. 90% predictive interval
-posterior_predictive_check <- function(draws, played, n_draws = 400, seed = 1) {
+#' Posterior predictive check on the fitted games: observed statistic vs. 90% predictive interval.
+#' Each game's expected margin is taken at the week it was played (draws need states = TRUE).
+posterior_predictive_check <- function(draws, input, n_draws = 400, seed = 1) {
   set.seed(seed)
+  played <- input$played
+  family <- draws$family %||% "t"
+  gm <- game_means(draws, input)
   S <- nrow(draws$r)
   pick <- sample.int(S, min(n_draws, S))
-  r <- draws$r[pick, , drop = FALSE]
+  mu <- gm$mu[pick, , drop = FALSE]
   par <- draws$par[pick, ]
-  mu <- r[, played$home, drop = FALSE] - r[, played$away, drop = FALSE] +
-    par$hfa * matrix(played$home_adv, length(pick), nrow(played), byrow = TRUE)
-  noise <- matrix(stats::rt(length(mu), df = rep(par$nu, nrow(played))), length(pick)) *
-    par$sigma_marg
   # Scores are integers: round the replicates so boundary statistics (|margin| <= 7, >= 28)
   # compare like with like (a continuous replicate never lands exactly on 7 or 28)
-  rep <- round(mu + noise)
+  rep <- round(margin_rng(mu, par, family))
   stat_fns <- list(
     "SD of margin" = function(m) stats::sd(m),
     "Share within 7 pts" = function(m) mean(abs(m) <= 7),
+    "Share within 3 pts" = function(m) mean(abs(m) <= 3),
     "Share decided by 28+" = function(m) mean(abs(m) >= 28),
     "Home win rate (true home games)" = function(m) mean(m[played$home_adv == 1] > 0)
   )
-  dplyr::bind_rows(lapply(names(stat_fns), function(nm) {
-    fn <- stat_fns[[nm]]
-    reps <- apply(rep, 1, fn)
-    tibble::tibble(statistic = nm, observed = fn(played$margin),
+  one <- function(nm, fn, reps_mat, obs) {
+    reps <- apply(reps_mat, 1, fn)
+    tibble::tibble(statistic = nm, observed = fn(obs),
                    rep_lo = stats::quantile(reps, 0.05, names = FALSE),
                    rep_hi = stats::quantile(reps, 0.95, names = FALSE),
-                   p_value = mean(reps >= fn(played$margin)))
-  }))
+                   p_value = mean(reps >= fn(obs)))
+  }
+  out <- dplyr::bind_rows(lapply(names(stat_fns), \(nm) one(nm, stat_fns[[nm]], rep, played$margin)))
+  if (!is.null(gm$tt)) {
+    # Totals of games without overtime, from the total's marginal law
+    ht <- played$has_total
+    tot_mu <- 2 * par$base + gm$tt[pick, ht, drop = FALSE]
+    trep <- round(tot_mu + matrix(stats::rnorm(length(tot_mu)), nrow(tot_mu)) * par$sigma_tot_marg)
+    tot_fns <- list("Mean total" = mean, "SD of total" = stats::sd)
+    out <- dplyr::bind_rows(out, dplyr::bind_rows(lapply(names(tot_fns), \(nm) one(nm, tot_fns[[nm]], trep, played$total[ht]))))
+  }
+  out
 }
 
 #' Full checks for a season's latest snapshot: gates (optionally strict), PPC,
@@ -49,7 +59,7 @@ run_checks <- function(inputs, cfg = model_config(), strict = FALSE) {
   input <- inputs[[length(inputs)]]
   if (nrow(input$played) == 0) return(NULL)
   f <- fit_power(input, cfg, compute_ll = TRUE, strict = strict)
-  vars <- c("hfa", "b_prev", "sigma_m", "nu", "lambda", "kappa", "sigma_eff", "sigma_team", "sigma_conf", "mu_tier[2]", "mu_tier[3]")
+  vars <- model_vars(input$stan_data)
   sens <- tryCatch({
     x <- f$fit$draws(variables = c(vars, "lprior", "log_lik"))
     tibble::as_tibble(priorsense::powerscale_sensitivity(x, variable = vars))
@@ -60,8 +70,8 @@ run_checks <- function(inputs, cfg = model_config(), strict = FALSE) {
                    p_loo = l$estimates["p_loo", "Estimate"],
                    n_bad_k = sum(loo::pareto_k_values(l) > 0.7))
   }, error = function(e) tibble::tibble(elpd_loo = NA_real_))
-  draws <- extract_draws(f$fit)
-  ppc <- posterior_predictive_check(draws, input$played)
+  draws <- extract_draws(f$fit, states = TRUE, family = cfg$margin_family)
+  ppc <- posterior_predictive_check(draws, input)
   unlink(f$fit$output_files())
   list(season = input$season, week = input$week, health = f$health, ppc = ppc, sensitivity = sens, loo = loo_est)
 }
@@ -69,7 +79,8 @@ run_checks <- function(inputs, cfg = model_config(), strict = FALSE) {
 #' Last season's final Power ratings, used as next season's preseason information
 final_prior <- function(snaps) {
   last <- snaps[[length(snaps)]]
-  last$ratings |> dplyr::select(team_id, rating = power, rating_sd = power_sd)
+  last$ratings |> dplyr::select(team_id, rating = power, rating_sd = power_sd,
+                                dplyr::any_of(c("total_t", "total_t_sd")))
 }
 
 combine_snapshots <- function(...) {
@@ -121,22 +132,22 @@ spiegelhalter_z <- function(p, y) {
 
 #' Out-of-sample backtest: each game is predicted by the snapshot fitted through the
 #' previous week (no future information), then compared with the result and the line.
-#' The predictive distribution of the margin is approximated by a Student-t with the
-#' snapshot's posterior-mean nu and scale sqrt(sigma_marg^2 + sd(mu)^2), which adds the
-#' rating uncertainty to the game noise.
+#' The predictive distribution of the margin is the snapshot's own (pred_q: quantiles of
+#' posterior predictive draws, which include rating uncertainty, the week of random-walk drift
+#' and the margin family). Totals are compared with the closing over/under.
 run_backtest <- function(predictions, games, params = NULL) {
   played <- games |>
     dplyr::filter(completed, !is.na(home_points), !is.na(away_points)) |>
     dplyr::transmute(season, game_id, week_seq, margin = home_points - away_points,
                      home_win = as.integer(home_points > away_points),
-                     vegas_margin = -spread,
+                     vegas_margin = -spread, total = home_points + away_points, vegas_total = over_under,
                      fbs_game = home_class %in% "fbs" & away_class %in% "fbs",
                      d1_game = home_class %in% c("fbs", "fcs") & away_class %in% c("fbs", "fcs"))
-  if (is.null(params)) params <- dplyr::distinct(predictions, season, week) |> dplyr::mutate(sigma = NA_real_, nu = NA_real_)
+  if (!"pred_total" %in% names(predictions)) predictions$pred_total <- NA_real_
+  if (!"pred_q" %in% names(predictions)) predictions$pred_q <- vector("list", nrow(predictions))
   bt <- predictions |>
     dplyr::inner_join(played, by = c("season", "game_id")) |>
     dplyr::filter(week_seq == week + 1L) |>
-    dplyr::left_join(params |> dplyr::select(season, week, sigma, nu), by = c("season", "week")) |>
     dplyr::mutate(
       err = pred_margin - margin,
       vegas_err = vegas_margin - margin,
@@ -147,15 +158,19 @@ run_backtest <- function(predictions, games, params = NULL) {
       ats_result = sign(margin - vegas_margin),
       ats_win = dplyr::if_else(ats_result == 0, NA, (ats_result > 0) == ats_pick_home),
       # Predictive distribution of the margin
-      pred_scale = sqrt(sigma^2 + dplyr::coalesce(pred_margin_sd, 0)^2),
-      crps = crps_t(margin, pred_margin, pred_scale, nu),
-      cover50 = abs(margin - pred_margin) <= stats::qt(0.75, nu) * pred_scale,
-      cover80 = abs(margin - pred_margin) <= stats::qt(0.90, nu) * pred_scale,
-      cover95 = abs(margin - pred_margin) <= stats::qt(0.975, nu) * pred_scale,
-      # The line turned into a win probability with the model's own predictive scale
-      line_wp = stats::pt(vegas_margin / pred_scale, nu),
-      brier_line = (line_wp - home_win)^2
-    )
+      crps = crps_quantiles(margin, pred_q),
+      cover50 = margin >= quantile_at(pred_q, 0.25) & margin <= quantile_at(pred_q, 0.75),
+      cover80 = margin >= quantile_at(pred_q, 0.10) & margin <= quantile_at(pred_q, 0.90),
+      cover95 = margin >= quantile_at(pred_q, 0.025) & margin <= quantile_at(pred_q, 0.975),
+      # The line turned into a win probability with the model's own predictive distribution,
+      # shifted to centre on the line
+      line_wp = 1 - cdf_from_quantiles(pred_margin - vegas_margin, pred_q),
+      brier_line = (line_wp - home_win)^2,
+      # Totals (final score, overtime included, as the over/under is settled)
+      total_err = pred_total - total,
+      total_vegas_err = vegas_total - total
+    ) |>
+    dplyr::select(-pred_q)
 
   summarise_bt <- function(df) {
     df |> dplyr::summarise(
@@ -172,6 +187,10 @@ run_backtest <- function(predictions, games, params = NULL) {
       ats_win_rate = mean(ats_win, na.rm = TRUE),
       ats_n = sum(!is.na(ats_win)),
       sharpness = mean(abs(pred_home_wp - 0.5)),
+      mae_total = mean(abs(total_err), na.rm = TRUE),
+      games_with_ou = sum(!is.na(vegas_total) & !is.na(total_err)),
+      mae_total_model_ou = mean(abs(total_err[!is.na(vegas_total)]), na.rm = TRUE),
+      mae_total_vegas = mean(abs(total_vegas_err[!is.na(total_err)]), na.rm = TRUE),
       .groups = "drop"
     )
   }

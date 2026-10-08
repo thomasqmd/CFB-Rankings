@@ -11,6 +11,9 @@
 #   -> supplement                 full-draw refits for the paper's supplementary checks
 #   -> prior_refits, ablation, ... analyses for the paper (R/07_analysis.R) -> paper
 #
+#   cfg_base -> margin_comparison (each margin family on every complete season) -> cfg: the
+#   published margin family is chosen before any snapshot is fit
+#
 # Seasons: CFB_FIRST_SEASON (env, default 2014) through the current season.
 # ==============================================================================
 
@@ -64,13 +67,19 @@ check_syms <- lapply(paste0("checks_", SEASONS), as.symbol)
 input_syms <- function(s) lapply(paste0("inputs_", s), as.symbol)
 weeks_syms <- lapply(paste0("weeks_", SEASONS), as.symbol)
 last_full_inputs <- as.symbol(paste0("inputs_", LAST_FULL))
+complete_data_call <- as.call(c(quote(list), setNames(lapply(paste0("data_", COMPLETE), as.symbol), COMPLETE)))
 # Final-week input of each complete season
 final_inputs_call <- bquote(lapply(stats::setNames(.(as.call(c(quote(list), input_syms(COMPLETE)))), COMPLETE),
                                    \(x) x[[length(x)]]))
 
 list(
   tar_target(stan_file, "stan/power.stan", format = "file"),
-  tar_target(cfg, { cfg <- model_config(); cfg$stan_file <- stan_file; cfg }),
+  tar_target(cfg_base, { cfg <- model_config(); cfg$stan_file <- stan_file; cfg }),
+  # Margin family: compared on every complete season (vague priors, no carry-over, so this does
+  # not depend on the published fits); the winner by pooled LOO becomes the published family
+  tar_target_raw("margin_comparison", bquote(run_margin_comparison(.(complete_data_call), cfg = cfg_base))),
+  tar_target(margin_families, compare_margin_families(margin_comparison, cfg_base$margin_family)),
+  tar_target(cfg, choose_margin_family(cfg_base, margin_comparison)),
 
   # Refreshes live seasons each run (final seasons make no API calls); returns a data
   # fingerprint so downstream targets only rerun when something actually changed

@@ -1,8 +1,9 @@
 # CFB Bayesian Rankings — Overhaul Plan
 
 Status: review completed 2026-09-26 against commit `c374378`; overhaul implemented the same day.
-Last updated 2026-09-28 (CBS Sports 138 reinstated, D8; paper review P1–P5 implemented, new
-priors set, full rebuild done and paper rendered).
+Last updated 2026-10-06 (offence/defence ratings, margin families, weekly random walk; see
+TODO). Previously 2026-09-28 (CBS Sports 138 reinstated, D8; paper review P1–P5 implemented,
+new priors set, full rebuild done and paper rendered).
 The previous spec (4-pipeline WLD/PD/XWLD/XPD matrix + Φ-blended composites) is in git history.
 
 Decisions: Resume benchmark = #12 FBS team; Colley is the record-only reference; seasons start
@@ -281,24 +282,50 @@ Done (second pass, after the first full build):
 
 TODO:
 
-- [ ] **Offense/defense ratings** (projected scores and totals). This is needed for a predicted
-      score from the model itself; until then the dashboard shows the model spread and win
-      probability.
-  - Sketch: points_home ~ f(off_home − def_away + hfa/2), and likewise for away.
-  - Use the per-play efficiency split (offense PPA and defense PPA) as the second signal, as
-    the margin model does now.
-  - Validate the total against the Vegas over/under (already in the `lines` table).
-- [ ] **Margin distribution shape.** Try a likelihood that bunches margins closer to one
-      score than a Student-t does: for example a two-component mixture, or a margin-dependent
-      scale. Compare them with LOO and the "within 7" check. This would sharpen spread and
-      cover probabilities; it does not affect win probabilities much.
+- [x] **Offense/defense ratings** (2026-10-06). Each team also has a total tendency t; off =
+      (r + t)/2, def = (r − t)/2, so the home score is base + (μ + T)/2 and the away score
+      base + (T − μ)/2 with T = t_h + t_a. The total (final score; overtime games excluded) is
+      conditioned on the summed offensive PPA exactly as the margin is on the net PPA. t has its
+      own conference/tier hierarchy and carry-over. Published as Off / Def (points scored /
+      allowed vs. an average FBS team, Off − Def = Power) with ranks; projected scores and totals
+      in the predictions; backtest compares the total with the closing over/under.
+- [x] **Margin distribution shape** (2026-10-06). `margin_family` in `power.stan`: normal, t,
+      two-normal scale mixture, and a t whose scale grows with |μ| (scale-t). The
+      `margin_comparison` target fits t / mixture / scale-t to every complete season's final week
+      (vague priors, no carry-over, no total model), and `choose_margin_family()` publishes the
+      family with the best pooled elpd if it beats the t by > 2 pooled SE (`margin_families`
+      target has the table and the "within 7" PPCs). The backtest now scores the model's own
+      predictive distribution (quantiles of posterior predictive draws) instead of a t
+      approximation.
 - [ ] **CBS Sports 138 history.** Only 2026 is covered. Look for another archive of past
       weekly rankings (articles for 2022–2025), or keep it as a current-season-only column.
 - [ ] **Host the dashboard publicly.** Investigate options: add to personal website, self-host,
       Quarto Pub / Posit Connect, GitHub Pages, etc. (Observable JS needs HTTP, not `file://`.)
-- [ ] **Weekly random-walk ratings** instead of ratings that are static within a season
-      (C1 phase 2): r_t = r_{t−1} + τ·ε. This replaces the half-life weighting with an
-      estimated τ.
+- [x] **Weekly random-walk ratings** (2026-10-06). r and t both walk: a state per (team, week
+      with a game), each step τ·sqrt(weeks elapsed)·ε, starting from the hierarchical week-1
+      level. The published rating is the state at the snapshot week (latest state + drift since);
+      predictions add drift for the weeks ahead. Half-life weighting is gone; the ablation has a
+      "Static ratings" arm instead (and arms for the other margin families).
+
+### Follow-ups after the model changes (2026-10-06)
+
+- [ ] **Re-pool the priors.** The margin priors in `model_config()` were pooled under the static
+      t model; τ, the total model and the family priors are provisional. After the rebuild,
+      `check_build.R` prints the pooled values from `prior_refits` when they drift; copy them in
+      and rebuild.
+- [ ] **Paper.** Not yet updated for the changes; it may not render until it is. To do:
+  - Model section: the random walk (states, τ, drift in predictions), the total model and
+    off/def notation, the margin families. Remove the static-strength limitation (§ limitations,
+    item 2) and the half-life sentences (@sec-hierarchy, @sec-ablation).
+  - Ablation table: variants are now Published / Margin only / No carry-over / No conference
+    level / Static ratings / one per other margin family (`ablation_order` lists the old ones).
+  - New results: `margin_families` (pooled LOO, "within 7" PPC by family), τ by season, total
+    backtest vs. over/under, off/def examples.
+  - Code that assumes the t: the championship plug-in example uses `pt(., nu)`; `params$nu` is
+    NA for the normal/mixture families; the ν prior-sensitivity discussion; supplement `par`
+    now has the family's own parameters (`model_vars()`); SBC adds τ (and the family's
+    parameters).
+  - Induced priors now include τ; PPC adds "Share within 3 pts", "Mean total", "SD of total".
 
 ## Paper review (paper/cfb-paper.qmd, 2026-09-26)
 

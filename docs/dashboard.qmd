@@ -239,10 +239,38 @@ hasResume = snap.w > 0
 
 ```{ojs}
 //| output: false
+// Points an average FBS team scores against another (off + def of a team = 2 x this + its total tendency)
+avgPts = d3.mean(fbs, d => (d.off + d.def) / 2)
+```
+
+```{ojs}
+//| output: false
+// Projected score "31–24" for a team and its opponent (null when either is missing)
+fmtScore = (pts, opp) => pts == null || opp == null ? null : `${Math.round(pts)}–${Math.round(opp)}`
+```
+
+```{ojs}
+//| output: false
 mTeams = {
   const last = d3.max(seasonSnaps, d => d.w)
   const fcs = R.filter(d => d.s === season && d.w === last && d.tier === 2)
   return [...fbs, ...fcs].sort((a, b) => a.team.localeCompare(b.team))
+}
+```
+
+```{ojs}
+//| output: false
+matchup = {
+  const a = mTeams.find(d => d.id === teamA), b = mTeams.find(d => d.id === teamB)
+  const v = venue === "Neutral" ? 0 : venue === "A at home" ? 1 : -1
+  const mean = a.pw - b.pw + snap.hfa * v
+  // Normal approximation: game noise (growing with the spread for the scale-t family) plus
+  // the uncertainty in both ratings
+  const sd = Math.sqrt(snap.noise_sd ** 2 + (snap.noise_slope * mean) ** 2 + a.pw_sd ** 2 + b.pw_sd ** 2)
+  const hasScore = a.off != null && b.off != null
+  const ptsA = hasScore ? a.off + b.def - avgPts + snap.hfa * v / 2 : null
+  const ptsB = hasScore ? b.off + a.def - avgPts - snap.hfa * v / 2 : null
+  return { a, b, mean, sd, pA: normCdf(mean / sd), ptsA, ptsB }
 }
 ```
 
@@ -267,6 +295,8 @@ htl.html`<div class="explain" style="margin-top:12px">
   wins above what the <strong>#${cfg.benchmark_rank} team</strong> would have managed against the same schedule, at the same venues.</p>
   <p><strong style="color:var(--power)">Power</strong> ranks how good a team <em>is</em>: points better than an average FBS team on a neutral field.
   Power A − Power B is the predicted spread.</p>
+  <p><strong>Off / Def</strong> split Power into points scored and allowed against an average FBS team
+  (Off − Def = Power); together they give projected scores.</p>
   <p class="muted" style="font-size:0.78rem">${snap.n_games} games · home field ${snap.hfa.toFixed(1)} pts ·
   ${snap.passed ? "✓ convergence checks passed" : "⚠ convergence checks failed"}<br>Updated ${cfg.generated}</p>
 </div>`
@@ -331,12 +361,13 @@ viewof search = Inputs.text({ placeholder: "Search team…", label: "Find" })
     <td class="team">${teamCell(d.id, d.team, d.conf)}</td>
     <td class="num">${d.wins}–${d.losses}</td>
     <td class="num"><strong>${fmtSigned(d.wab, 2)}</strong></td>
-    <td class="hide-sm">${ibar(d.wab, d.wab_lo, d.wab_hi, wabDom, hue.resume)}</td>
+    <td class="hide-sm">${ibar(d.wab, d.wab_lo, d.wab_hi, wabDom, hue.resume, 90)}</td>
     <td class="num">${d.rrk}${d.rrk_lo == null ? "" : htl.html`<span class="muted" style="font-size:0.75rem"> (${d.rrk_lo}–${d.rrk_hi})</span>`}</td>
     <td class="num hide-sm">${fmtPct(d.p12)}</td>
     <td class="num"><strong>${fmtSigned(d.pw)}</strong></td>
-    <td class="hide-sm">${ibar(d.pw, d.pw_lo, d.pw_hi, pwDom, hue.power)}</td>
+    <td class="hide-sm">${ibar(d.pw, d.pw_lo, d.pw_hi, pwDom, hue.power, 90)}</td>
     <td class="num">${d.prk}<span class="muted" style="font-size:0.75rem"> (${d.prk_lo}–${d.prk_hi})</span></td>
+    <td class="num hide-sm" title=${d.off == null ? "" : `Offence #${d.off_rk}: ${d.off.toFixed(1)} pts scored vs. an average FBS defence\nDefence #${d.def_rk}: ${d.def.toFixed(1)} pts allowed vs. an average FBS offence`}>${d.off == null ? "–" : `${d.off_rk} / ${d.def_rk}`}</td>
     <td class="num hide-sm">${d.sos_rk ?? "–"}</td>
     <td class="num hide-sm">${fmtSigned(d.luck)}</td>
     <td class="num hide-sm">${d.colley ?? "–"}</td>
@@ -346,10 +377,11 @@ viewof search = Inputs.text({ placeholder: "Search team…", label: "Find" })
   </tr>`
   return htl.html`<div class="table-wrap"><table class="cfb-table">
     <thead>
-      <tr class="group"><th colspan=4></th><th colspan=4 class="resume">Resume</th><th colspan=3 class="power">Power</th><th colspan=3 class="hide-sm"></th><th colspan=3>Polls</th></tr>
+      <tr class="group"><th colspan=4></th><th colspan=4 class="resume">Resume</th><th colspan=4 class="power">Power</th><th colspan=3 class="hide-sm"></th><th colspan=3>Polls</th></tr>
       <tr><th class="num">#</th><th></th><th>Team</th><th class="num">Record</th>
-        <th class="num" title="Wins above the #${cfg.benchmark_rank} team vs. this schedule">WAB</th><th class="hide-sm">80% interval</th><th class="num" title="Median rank (80% interval)">Rank</th><th class="num hide-sm" title="Probability of a top-12 resume">Top 12</th>
-        <th class="num" title="Points vs. average FBS team, neutral field">Rating</th><th class="hide-sm">80% interval</th><th class="num">Rank</th>
+        <th class="num" title="Wins above the #${cfg.benchmark_rank} team vs. this schedule">WAB</th><th class="hide-sm" title="80% interval">80%</th><th class="num" title="Median rank (80% interval)">Rank</th><th class="num hide-sm" title="Probability of a top-12 resume">Top 12</th>
+        <th class="num" title="Points vs. average FBS team, neutral field">Rating</th><th class="hide-sm" title="80% interval">80%</th><th class="num">Rank</th>
+        <th class="num hide-sm" title="Offence rank / defence rank (hover a cell for points)">Off / Def</th>
         <th class="num hide-sm" title="Schedule strength rank (benchmark's expected loss rate)">SOS</th><th class="num hide-sm" title="Wins minus expected wins">Luck</th><th class="num hide-sm" title="Colley matrix (record only)">Colley</th>
         <th class="num">AP</th><th class="num" title="CBS Sports 138">CBS</th><th class="num">CFP</th></tr>
     </thead>
@@ -386,6 +418,8 @@ viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam)
       ${fact("WAB", fmtSigned(tRow.wab, 2))}
       ${fact("Power", `#${tRow.prk}`, "var(--power)")}
       ${fact("Rating", `${fmtSigned(tRow.pw)}`)}
+      ${tRow.off == null ? "" : fact("Offence", `#${tRow.off_rk} · ${tRow.off.toFixed(1)}`)}
+      ${tRow.def == null ? "" : fact("Defence", `#${tRow.def_rk} · ${tRow.def.toFixed(1)}`)}
       ${fact("AP", tRow.ap ?? "–")}
       ${fact("CBS", tRow.cbs ?? "–")}
       ${fact("Luck", fmtSigned(tRow.luck))}
@@ -422,14 +456,15 @@ viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam)
         htl.html`<span class=${g.result === "W" ? "result-w" : "result-l"}>${g.result}</span> <span class="num">${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</span>`}</td>
       <td class="num" title=${isFuture ? "Expected result and win probability now" : "Expected result and pre-game win probability (model as of the previous week)"}>${wp == null ? "–" : htl.html`<span class="muted" style="font-weight:600">${wp >= 0.5 ? "W" : "L"}</span> ${fmtPct(wp)}`}</td>
       <td class="num" title=${isFuture ? "Model spread now" : "Model spread before kickoff"}>${spread(isFuture ? g.fut_margin : g.pre_margin)}</td>
+      <td class="num hide-sm" title=${isFuture ? "Projected score now" : "Projected score before kickoff"}>${(isFuture ? fmtScore(g.fut_pts, g.fut_opp_pts) : fmtScore(g.pre_pts, g.pre_opp_pts)) ?? "–"}</td>
       <td class="num hide-sm">${spread(g.line)}</td>
       <td class="num" title="Resume contribution: result minus the benchmark's win probability">${g.wab_game == null ? "–" : htl.html`<strong style=${{ color: g.wab_game >= 0 ? "var(--up)" : "var(--down)" }}>${fmtSigned(g.wab_game, 2)}</strong>`}</td>
     </tr>`
   }
   return htl.html`<div class="table-wrap"><table class="cfb-table">
-    <thead><tr><th>Wk</th><th>Opponent</th><th>Result</th><th class="num" title="Model's expected result and win probability">Expected</th><th class="num" title="Model spread for this team (negative = favoured)">Model</th><th class="num hide-sm" title="Closing-line spread for this team (negative = favoured)">Vegas</th><th class="num" title="Resume contribution (wins above benchmark)">WAB</th></tr></thead>
+    <thead><tr><th>Wk</th><th>Opponent</th><th>Result</th><th class="num" title="Model's expected result and win probability">Expected</th><th class="num" title="Model spread for this team (negative = favoured)">Model</th><th class="num hide-sm" title="Projected score: this team first">Proj.</th><th class="num hide-sm" title="Closing-line spread for this team (negative = favoured)">Vegas</th><th class="num" title="Resume contribution (wins above benchmark)">WAB</th></tr></thead>
     <tbody>${rows.map(tr)}</tbody>
-    <tfoot><tr><td colspan=7 style="padding-top:10px; white-space:normal">
+    <tfoot><tr><td colspan=8 style="padding-top:10px; white-space:normal">
       <span class="small-caps">Expected record</span> <strong class="num">${xw.toFixed(1)}–${(n - xw).toFixed(1)}</strong>
       <span class="muted">(sum of win probabilities: pre-game for played games, current for the rest)</span>
       ${futureRows.length ? htl.html` · <span class="small-caps">Projected final</span> <strong class="num">${projW.toFixed(1)}–${(playedRows.length + futureRows.length - projW).toFixed(1)}</strong>
@@ -488,31 +523,31 @@ viewof venue = Inputs.radio(["Neutral", "A at home", "B at home"], { value: "Neu
 ## Row {height="100%"}
 
 ```{ojs}
-//| output: false
-matchup = {
-  const a = mTeams.find(d => d.id === teamA), b = mTeams.find(d => d.id === teamB)
-  const v = venue === "Neutral" ? 0 : venue === "A at home" ? 1 : -1
-  const mean = a.pw - b.pw + snap.hfa * v
-  const tScale = snap.nu > 2 ? Math.sqrt(snap.nu / (snap.nu - 2)) : 1.3
-  const sd = Math.sqrt((snap.sigma * tScale) ** 2 + a.pw_sd ** 2 + b.pw_sd ** 2)
-  return { a, b, mean, sd, pA: normCdf(mean / sd) }
-}
-```
-
-```{ojs}
 //| title: "Prediction"
 {
-  const { a, b, mean, pA } = matchup
+  const { a, b, mean, pA, ptsA, ptsB } = matchup
   const fav = mean >= 0 ? a : b
+  const rk = (v, r, d = 1) => v == null ? "–" : htl.html`${typeof v === "number" ? v.toFixed(d) : v} <span class="muted" style="font-size:0.75rem">#${r ?? "–"}</span>`
+  const row = (label, fa, fb, title) => htl.html`<tr title=${title ?? ""}><td>${label}</td><td class="num">${fa}</td><td class="num">${fb}</td></tr>`
   return htl.html`<div class="tiles">
     <div class="tile power"><div class="label">Predicted spread</div>
       <div class="value">${logoOf(fav.id) ? htl.html`<img src=${logoOf(fav.id)} width=26 height=26 alt="">` : ""}${fav.team} by ${Math.abs(mean).toFixed(1)}</div>
-      <div class="sub">Power ${fmtSigned(a.pw)} vs ${fmtSigned(b.pw)}${venue === "Neutral" ? "" : ` · home field ${snap.hfa.toFixed(1)}`}</div></div>
+      <div class="sub">${venue === "Neutral" ? "Neutral site" : `Incl. home field ${snap.hfa.toFixed(1)}`}</div></div>
     <div class="tile"><div class="label">${a.team} win probability</div><div class="value">${fmtPct(pA)}</div>
       <div class="sub">${b.team}: ${fmtPct(1 - pA)}</div></div>
-    <div class="tile"><div class="label">Resume</div><div class="value" style="font-size:1.05rem">${a.team} #${a.rrk ?? "–"} · ${b.team} #${b.rrk ?? "–"}</div>
-      <div class="sub">${a.wins}–${a.losses} vs ${b.wins}–${b.losses}</div></div>
+    ${ptsA == null ? "" : htl.html`<div class="tile"><div class="label">Projected score</div>
+      <div class="value">${Math.round(ptsA)}–${Math.round(ptsB)}</div>
+      <div class="sub">Total ${(ptsA + ptsB).toFixed(1)}</div></div>`}
   </div>
+  <table class="cfb-table" style="margin-top:14px">
+    <thead><tr><th></th><th class="num">${a.team}</th><th class="num">${b.team}</th></tr></thead>
+    <tbody>
+      ${row("Power", rk(fmtSigned(a.pw), a.prk), rk(fmtSigned(b.pw), b.prk), "Points vs. an average FBS team (rank)")}
+      ${a.off == null ? "" : row("Offence", rk(a.off, a.off_rk), rk(b.off, b.off_rk), "Points scored vs. an average FBS defence (rank)")}
+      ${a.def == null ? "" : row("Defence", rk(a.def, a.def_rk), rk(b.def, b.def_rk), "Points allowed vs. an average FBS offence (rank)")}
+      ${row("Resume", a.rrk == null ? "–" : `#${a.rrk}`, b.rrk == null ? "–" : `#${b.rrk}`)}
+      ${row("Record", `${a.wins}–${a.losses}`, `${b.wins}–${b.losses}`)}
+    </tbody></table>
   <p class="explain" style="margin-top:12px">The margin distribution combines game-to-game noise with uncertainty in both ratings.
   Shaded: outcomes where <strong>${a.team}</strong> wins.</p>`
 }
@@ -566,6 +601,7 @@ viewof gamesConf = Inputs.select(confKeys(fbs), { label: "Conference", format: c
   const upcoming = gamesWeek > d3.max(S.filter(d => d.s === season), d => d.w)
   // margin/wp from this team's side: before kickoff for weeks already modelled, else latest snapshot
   const m = g => g.pre_margin ?? g.fut_margin, wp = g => g.pre_wp ?? g.fut_wp
+  const proj = g => g.pre_margin != null ? [g.pre_pts, g.pre_opp_pts] : [g.fut_pts, g.fut_opp_pts]
   const shown = rows.filter(g => {
     const a = info(g.id), b = info(g.opp_id)
     return (a && inConf(a, gamesConf)) || (b && inConf(b, gamesConf))
@@ -582,12 +618,12 @@ viewof gamesConf = Inputs.select(confKeys(fbs), { label: "Conference", format: c
     const p = wp(g)
     return htl.html`<tr>
       <td class="team">${teamCell(g.id, g.team, info(g.id) ? `${info(g.id).conf} · Power #${info(g.id).prk}` : "")}</td>
-      <td class="muted">vs</td>
+      <td class="muted" title=${g.venue === "N" ? "Neutral site" : `Home: ${g.team}`}>${g.venue === "N" ? "vs" : "hosts"}</td>
       <td class="team">${teamCell(g.opp_id, g.opp, info(g.opp_id) ? `${info(g.opp_id).conf} · Power #${info(g.opp_id).prk}` : "")}</td>
-      <td class="muted hide-sm">${g.venue === "N" ? "Neutral" : "Home: " + g.team}</td>
       <td>${fav(g, mm)}</td>
       <td>${p == null ? "–" : pbar(Math.max(p, 1 - p), hue.power)}</td>
-      <td class="hide-sm">${fav(g, g.line)}</td>
+      <td class="num hide-sm" title="Projected score (team first) and total">${(() => { const [p, o] = proj(g); return p == null ? "–" : htl.html`${Math.round(p)}–${Math.round(o)}<div class="muted" style="font-size:0.75rem">total ${(p + o).toFixed(0)}</div>` })()}</td>
+      <td class="hide-sm">${fav(g, g.line)}${g.ou == null ? "" : htl.html`<div class="muted" style="font-size:0.75rem">O/U ${g.ou}</div>`}</td>
       <td class="num hide-sm" title="Model margin minus Vegas margin, for ${g.team}">${edge == null ? "–" : htl.html`<span title=${`Model likes ${edge >= 0 ? g.team : g.opp} by ${Math.abs(edge).toFixed(1)} more than Vegas`}>${Math.abs(edge) < 0.05 ? "0.0" : `${edge >= 0 ? g.team : g.opp} +${Math.abs(edge).toFixed(1)}`}</span>`}</td>
       <td>${g.result == null ? htl.html`<span class="muted">${g.date}</span>` : htl.html`<span class="num">${g.team} ${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</span>`}</td>
       <td>${closer == null ? "" : htl.html`<span class=${closer === "Model" ? "result-w" : closer === "Vegas" ? "result-l" : "muted"}>${closer}</span>`}</td>
@@ -597,7 +633,7 @@ viewof gamesConf = Inputs.select(confKeys(fbs), { label: "Conference", format: c
   (${upcoming ? "latest snapshot" : "previous week's snapshot"}) next to the closing line. Favourite shown with its spread.
   ${scored.length ? htl.html`This week so far: model MAE <strong>${err(m).toFixed(1)}</strong> vs Vegas <strong>${err(g => g.line).toFixed(1)}</strong> over ${scored.length} games; model closer in ${scored.filter(g => Math.abs(m(g) - (g.pts - g.opp_pts)) < Math.abs(g.line - (g.pts - g.opp_pts))).length}.` : ""}</p>
   <div class="table-wrap"><table class="cfb-table">
-    <thead><tr><th>Team</th><th></th><th>Opponent</th><th class="hide-sm">Site</th><th>Model spread</th><th>Fav. win prob.</th><th class="hide-sm">Vegas</th><th class="hide-sm" title="Where the model differs from the closing line">Edge</th><th>Result</th><th title="Which prediction was closer to the final margin">Closer</th></tr></thead>
+    <thead><tr><th>Team</th><th></th><th>Opponent</th><th>Model spread</th><th>Fav. win prob.</th><th class="num hide-sm" title="Projected score (team first) and total">Proj.</th><th class="hide-sm" title="Closing line and over/under">Vegas</th><th class="hide-sm" title="Where the model differs from the closing line">Edge</th><th>Result</th><th title="Which prediction was closer to the final margin">Closer</th></tr></thead>
     <tbody>${shown.map(tr)}</tbody></table></div>`
 }
 ```
@@ -820,12 +856,15 @@ htl.html`<div class="tiles">
 
 ::: {.card title="How it works"}
 **Power** is a Bayesian model fit to every game since the start of the season (FBS, FCS and
-lower-division opponents). Each team has one strength, in points. Each game informs it twice:
-the regulation scoreboard margin, and an efficiency margin (net expected points added per play,
-garbage time removed). The model learns how much to trust each and accounts for their
-correlation within a game. Teams share information within their conference and division, and
-the preseason starting point is last season's final rating, regressed toward the average by
-an amount estimated from the data. Home field is estimated each season.
+lower-division opponents). Each team has a strength, in points, that can drift from week to
+week; how fast is estimated from the data. Each game informs it twice: the regulation scoreboard
+margin, and an efficiency margin (net expected points added per play, garbage time removed).
+The model learns how much to trust each and accounts for their correlation within a game.
+A second part of the model does the same for game totals, which splits strength into
+**offence** and **defence** and gives projected scores. Teams share information within their
+conference and division, and the preseason starting point is last season's final rating,
+regressed toward the average by an amount estimated from the data. Home field is estimated
+each season.
 
 **Resume** asks what a playoff-bubble team, the #12 FBS team by Power, would have done with the
 same schedule. Each win adds 1 − P(bubble team wins that game). Each loss subtracts P(bubble team
@@ -844,10 +883,11 @@ after the same games.
 {
   const rows = transpose(bt_overall)
   return htl.html`<p class="explain">Every game is predicted by the model fitted through the <em>previous</em> week, then compared with the result and the closing line.</p>
-  <div class="table-wrap"><table class="cfb-table"><thead><tr><th>Games</th><th class="num">n</th><th class="num">MAE</th><th class="num">Vegas MAE</th><th class="num">Accuracy</th><th class="num">Brier</th><th class="num">ATS</th></tr></thead>
+  <div class="table-wrap"><table class="cfb-table"><thead><tr><th>Games</th><th class="num">n</th><th class="num">MAE</th><th class="num">Vegas MAE</th><th class="num">Accuracy</th><th class="num">Brier</th><th class="num">ATS</th><th class="num" title="Mean absolute error of the projected total (model vs. closing over/under)">Total MAE</th></tr></thead>
   <tbody>${rows.map(d => htl.html`<tr><td>${d.scope}</td><td class="num">${d.games.toLocaleString()}</td><td class="num">${d.mae.toFixed(1)}</td>
     <td class="num">${d.mae_vegas == null ? "–" : d.mae_vegas.toFixed(1)} <span class="muted">(model ${d.mae_model_lined?.toFixed(1) ?? "–"})</span></td>
-    <td class="num">${fmtPct(d.accuracy)}</td><td class="num">${d.brier.toFixed(3)}</td><td class="num">${d.ats_win_rate == null ? "–" : (d.ats_win_rate * 100).toFixed(1) + "%"}</td></tr>`)}</tbody></table></div>`
+    <td class="num">${fmtPct(d.accuracy)}</td><td class="num">${d.brier.toFixed(3)}</td><td class="num">${d.ats_win_rate == null ? "–" : (d.ats_win_rate * 100).toFixed(1) + "%"}</td>
+    <td class="num">${d.mae_total_model_ou == null ? "–" : htl.html`${d.mae_total_model_ou.toFixed(1)} <span class="muted">(O/U ${d.mae_total_vegas?.toFixed(1) ?? "–"})</span>`}</td></tr>`)}</tbody></table></div>`
 }
 ```
 
