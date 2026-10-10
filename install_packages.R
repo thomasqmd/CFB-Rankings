@@ -13,7 +13,10 @@ cat("====================================================================\n\n")
 # pak falls back to source compilation, failing on missing C/C++ dev headers.
 Sys.setenv(
   PKG_SYSREQS_PLATFORM = "ubuntu-24.04",
-  LIBARROW_BINARY = "true"
+  LIBARROW_BINARY = "true",
+  # Any package that still builds from source (duckdb is the slow one) uses
+  # every core instead of R's single-core default.
+  MAKEFLAGS = paste0("-j", parallel::detectCores())
 )
 
 options(
@@ -32,16 +35,31 @@ if (!requireNamespace("pak", quietly = TRUE)) {
 # 3. Define required packages (CRAN and GitHub references)
 packages_to_install <- c(
   # Data store & API
-  "dplyr", "tidyr", "tibble", "duckdb", "DBI", "httr2", "jsonlite", "qs2",
+  "dplyr",
+  "tidyr",
+  "tibble",
+  "duckdb",
+  "DBI",
+  "httr2",
+  "jsonlite",
+  "qs2",
 
   # Bayesian modeling & checks
-  "stan-dev/cmdstanr", "posterior", "loo", "priorsense",
+  "stan-dev/cmdstanr",
+  "posterior",
+  "loo",
+  "priorsense",
 
   # Pipeline
-  "targets", "tarchetypes",
+  "targets",
+  "tarchetypes",
+  "crew",
 
   # Reporting
-  "quarto", "ggplot2", "gt", "scales",
+  "quarto",
+  "ggplot2",
+  "gt",
+  "scales",
 
   # Tests
   "testthat"
@@ -52,7 +70,12 @@ pkg_name <- function(ref) {
   sub(".*/", "", ref)
 }
 
-expected_pkg_names <- vapply(packages_to_install, pkg_name, character(1), USE.NAMES = FALSE)
+expected_pkg_names <- vapply(
+  packages_to_install,
+  pkg_name,
+  character(1),
+  USE.NAMES = FALSE
+)
 installed_pkgs <- installed.packages()[, "Package"]
 
 # 4. Identify and install missing packages
@@ -60,8 +83,11 @@ missing_mask <- !expected_pkg_names %in% installed_pkgs
 missing_refs <- packages_to_install[missing_mask]
 
 if (length(missing_refs) > 0) {
-  cat(sprintf("[pak] Installing %d missing package(s) using Ubuntu 24.04 binaries:\n%s\n\n", 
-              length(missing_refs), paste(paste0("  - ", missing_refs), collapse = "\n")))
+  cat(sprintf(
+    "[pak] Installing %d missing package(s) using Ubuntu 24.04 binaries:\n%s\n\n",
+    length(missing_refs),
+    paste(paste0("  - ", missing_refs), collapse = "\n")
+  ))
   pak::pkg_install(missing_refs, ask = FALSE)
 } else {
   cat("[pak] All required packages are already installed.\n\n")
@@ -70,16 +96,23 @@ if (length(missing_refs) > 0) {
 # 5. Check CmdStan C++ Toolchain & Backend
 cat("\nChecking CmdStan C++ backend...\n")
 if (requireNamespace("cmdstanr", quietly = TRUE)) {
-  tryCatch({
-    cs_path <- cmdstanr::cmdstan_path()
-    cs_ver <- cmdstanr::cmdstan_version()
-    cat(sprintf("[CmdStan] Found CmdStan version %s at %s\n", cs_ver, cs_path))
-  }, error = function(e) {
-    cat("[CmdStan] CmdStan C++ backend is not yet installed.\n")
-    cat("To install CmdStan, run in R:\n")
-    cat("  cmdstanr::check_cmdstan_toolchain()\n")
-    cat("  cmdstanr::install_cmdstan(cores = parallel::detectCores())\n")
-  })
+  tryCatch(
+    {
+      cs_path <- cmdstanr::cmdstan_path()
+      cs_ver <- cmdstanr::cmdstan_version()
+      cat(sprintf(
+        "[CmdStan] Found CmdStan version %s at %s\n",
+        cs_ver,
+        cs_path
+      ))
+    },
+    error = function(e) {
+      cat("[CmdStan] CmdStan C++ backend is not yet installed.\n")
+      cat("To install CmdStan, run in R:\n")
+      cat("  cmdstanr::check_cmdstan_toolchain()\n")
+      cat("  cmdstanr::install_cmdstan(cores = parallel::detectCores())\n")
+    }
+  )
 } else {
   cat("[CmdStan] cmdstanr package is not yet available.\n")
 }

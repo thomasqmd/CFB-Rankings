@@ -25,21 +25,17 @@ stan/*.exe
 stan/*_model
 stan/*.hpp
 
-# Quarto & Knitr rendered outputs, cache, and freeze directory
+# Quarto & Knitr cache and freeze directory. Rendered HTML and PDF are
+# tracked so they can be hosted from any machine.
 .quarto/
 _freeze/
 *_cache/
 *_files/
-*.html
-*.pdf
 *.docx
 *.pptx
-docs/**/*.html
-docs/**/*.pdf
 
-# Un-ignore exceptions: specify files to track even if rendered
-# Example:
-# !docs/reports/special_briefing.html
+# Supporting files for the non-self-contained HTML reports
+!docs/**/*_files/
 
 # OS artifacts
 .DS_Store

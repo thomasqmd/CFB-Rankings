@@ -20,11 +20,18 @@
 library(targets)
 library(tarchetypes)
 
+# Core budget (CFB_CORES, default all cores). Each Stan fit runs 4 chains, so CORES / 4 targets
+# fit at once on crew workers. The analysis targets fork their own fits (`workers`), so they run
+# in the main process, one at a time, and size their workers to the same budget.
+CORES <- as.integer(Sys.getenv("CFB_CORES", parallel::detectCores()))
+FIT_WORKERS <- max(1L, CORES %/% 4L)
+
 tar_option_set(
   packages = c("dplyr", "tidyr", "tibble", "posterior", "cmdstanr"),
   format = "qs",
   memory = "transient",
-  garbage_collection = TRUE
+  garbage_collection = TRUE,
+  controller = crew::crew_controller_local(workers = FIT_WORKERS, seconds_idle = 60)
 )
 
 tar_source("R")
@@ -74,10 +81,16 @@ final_inputs_call <- bquote(lapply(stats::setNames(.(as.call(c(quote(list), inpu
 
 list(
   tar_target(stan_file, "stan/power.stan", format = "file"),
-  tar_target(cfg_base, { cfg <- model_config(); cfg$stan_file <- stan_file; cfg }),
+  # Compiles the model once here, so parallel fits never race to rebuild the same executable
+  tar_target(cfg_base, {
+    cmdstanr::cmdstan_model(stan_file)
+    cfg <- model_config(); cfg$stan_file <- stan_file; cfg
+  }),
   # Margin family: compared on every complete season (vague priors, no carry-over, so this does
   # not depend on the published fits); the winner by pooled LOO becomes the published family
-  tar_target_raw("margin_comparison", bquote(run_margin_comparison(.(complete_data_call), cfg = cfg_base))),
+  tar_target_raw("margin_comparison",
+    bquote(run_margin_comparison(.(complete_data_call), cfg = cfg_base, workers = FIT_WORKERS)),
+    deployment = "main"),
   tar_target(margin_families, compare_margin_families(margin_comparison, cfg_base$margin_family)),
   tar_target(cfg, choose_margin_family(cfg_base, margin_comparison)),
 
@@ -97,8 +110,12 @@ list(
   tar_target_raw("supplement", bquote(run_supplement(.(last_full_inputs), cfg = cfg))),
   # Refits under widened / shifted priors (joint and one at a time), and for an older season;
   # and the priors' induced distributions
-  tar_target_raw("prior_sensitivity", bquote(run_prior_sensitivity(.(last_full_inputs), cfg = cfg))),
-  tar_target(prior_sensitivity_2020, run_prior_sensitivity(inputs_2020, cfg = cfg, one_at_a_time = FALSE)),
+  tar_target_raw("prior_sensitivity",
+    bquote(run_prior_sensitivity(.(last_full_inputs), cfg = cfg, workers = FIT_WORKERS)),
+    deployment = "main"),
+  tar_target(prior_sensitivity_2020,
+    run_prior_sensitivity(inputs_2020, cfg = cfg, one_at_a_time = FALSE, workers = FIT_WORKERS),
+    deployment = "main"),
   tar_target_raw("induced_prior", bquote({
     inp <- .(last_full_inputs)
     induced_priors(inp[[length(inp)]], cfg = cfg)
@@ -110,27 +127,32 @@ list(
   # ---- Analyses for the paper (R/07_analysis.R) ----
   tar_target_raw("weeks_all", as.call(c(quote(list), setNames(weeks_syms, SEASONS)))),
   # Full-season refits under vague priors: the evidence for the published priors
-  tar_target_raw("prior_refits", bquote(run_prior_refits(.(final_inputs_call), cfg = cfg))),
+  tar_target_raw("prior_refits",
+    bquote(run_prior_refits(.(final_inputs_call), cfg = cfg, workers = FIT_WORKERS)),
+    deployment = "main"),
   # Weeks 0-3 of each season under priors pooled from the other seasons only
   tar_target_raw("loso_backtest", bquote(run_loso_backtest(
     .(as.call(c(quote(list), setNames(input_syms((FIRST_SEASON + 1L):LAST_FULL), (FIRST_SEASON + 1L):LAST_FULL)))),
-    prior_refits, cfg = cfg))),
+    prior_refits, cfg = cfg, workers = FIT_WORKERS)), deployment = "main"),
+  # Ablation fits run 2 chains (fast_config), so twice as many fit at once
   tar_target_raw("ablation", bquote(run_ablation(
     season_data[as.character(.(ABLATION_SEASONS))],
     .(as.call(c(quote(list), setNames(lapply(ABLATION_SEASONS - 1L, \(s) call("final_prior", as.symbol(paste0("snaps_", s)))),
                                       ABLATION_SEASONS)))),
-    weeks_all[as.character(.(ABLATION_SEASONS))], cfg = cfg))),
+    weeks_all[as.character(.(ABLATION_SEASONS))], cfg = cfg, workers = 2L * FIT_WORKERS)), deployment = "main"),
   tar_target(baselines, run_baselines(season_data, weeks_all)),
   tar_target(external_ratings, run_external_ratings(COMPLETE, teams_meta)),
-  tar_target_raw("final_refits", bquote(run_final_refits(.(final_inputs_call), cfg = cfg))),
+  tar_target_raw("final_refits",
+    bquote(run_final_refits(.(final_inputs_call), cfg = cfg, workers = FIT_WORKERS)),
+    deployment = "main"),
   tar_target_raw("margin_leakage", bquote({
     inp <- .(last_full_inputs)
-    run_margin_leakage(inp[[length(inp)]], cfg = cfg)
-  })),
+    run_margin_leakage(inp[[length(inp)]], cfg = cfg, workers = FIT_WORKERS)
+  }), deployment = "main"),
   tar_target_raw("sbc", bquote({
     inp <- .(last_full_inputs)
-    run_sbc(inp[[which(vapply(inp, `[[`, integer(1), "week") == 8L)]], cfg = cfg)
-  })),
+    run_sbc(inp[[which(vapply(inp, `[[`, integer(1), "week") == 8L)]], cfg = cfg, workers = FIT_WORKERS)
+  }), deployment = "main"),
   tar_target(ablation_scores, score_predictions(ablation, games_all)),
   tar_target(loso_scores, score_predictions(loso_backtest, games_all)),
   tar_target(baseline_scores, score_predictions(baselines, games_all)),

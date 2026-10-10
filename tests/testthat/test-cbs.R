@@ -26,3 +26,8 @@ test_that("CBS rankings align to the snapshot they follow", {
   expect_equal(p$week, c(1L, 2L, 3L))          # preseason -> week 0 snapshot, then weeks 1, 2
   expect_true(all(p$season_type == "regular"))
 })
+
+test_that("slugify transliterates accents the same on every platform", {
+  expect_equal(slugify(c("San José State Spartans", "Texas A&M Aggies")),
+               c("san-jose-state-spartans", "texas-am-aggies"))
+})

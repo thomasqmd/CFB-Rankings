@@ -108,7 +108,9 @@ cbs_backfill_wayback <- function(raw_dir = "data/raw", from = 2022) {
 }
 
 slugify <- function(x) {
-  x <- tolower(iconv(gsub("&", "", x), to = "ASCII//TRANSLIT"))
+  # stringi, not iconv: iconv's transliteration is platform-dependent ("San José" becomes
+  # "San Jos'e" on macOS and can become "San Jos?" on Linux)
+  x <- tolower(stringi::stri_trans_general(gsub("&", "", x), "Latin-ASCII"))
   gsub("^-|-$", "", gsub("-+", "-", gsub("[^a-z0-9]+", "-", x)))
 }
 
