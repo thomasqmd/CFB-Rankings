@@ -11,38 +11,43 @@ model_config <- function() {
     # The retry lengthens warmup and sampling but keeps adapt_delta moderate: a much smaller step
     # size makes chains stall in the neck of the random-walk funnel (small tau)
     retry_adapt_delta = 0.95, retry_warmup = 1000, retry_sampling = 2000,
-    # Priors are centred on full-season posterior means pooled over 2014-2025, with sd = 2x the
-    # between-season sd, from vague-prior refits (target prior_refits -> pool_priors() ->
-    # priors_from_pool()). They only matter in the first weeks; by mid-season each season's own
-    # data dominates. check_build.R warns when the pooled refits drift from these values.
-    # The values below were pooled under the static Student-t margin model; the random-walk,
-    # family and total priors further down are provisional until the next pooling.
-    hfa_mean = 2.4, hfa_sd = 0.801,
-    tier_mean = c(-29.2, -61.2), tier_sd = c(3.45, 7.31),      # FCS, non-D1 offsets vs. FBS
-    b_prev_mean = 0.779, b_prev_sd = 0.0867,                    # year-to-year carry-over
-    sigma_team_mean = c(6.73, 6.32, 13.6), sigma_team_sd = c(1.45, 1.56, 9.35),
-    sigma_conf_prior = c(2.95, 2.53),
-    lambda_prior = c(.7623, .0486), kappa_prior = c(.7729, .0594),
-    sigma_eff_prior = c(14.255, .681), sigma_m_prior = c(8.011, .806),
-    nu_prior = c(2, 0.1), nu_lower = 1,                      # Gamma(shape, rate) truncated to nu > nu_lower
+    # Every structural prior is pooled from vague-prior refits of each complete season's final week
+    # (target prior_refits -> pool_priors() -> priors_from_pool(), with the `pool` rule below):
+    # centred on the recency-weighted mean of the per-season posterior means, with the
+    # random-effects predictive sd for a new season. Pooled 2026-10-11 from the 2015-2025 refits
+    # under this model with the scale-t margin family (the margin_comparison choice since the
+    # refits use a wide tau prior); check_build.R warns when the refits drift from these values.
+    pool = list(half_life = 3, sd_rule = "predictive", sd_mult = 2, sd_floor = 0),
+    hfa_mean = 2.44, hfa_sd = 0.369,
+    tier_mean = c(-28.4, -60.5), tier_sd = c(0.486, 1.22),     # FCS, non-D1 offsets vs. FBS
+    b_prev_mean = 0.591, b_prev_sd = 0.0386,                    # year-to-year carry-over
+    sigma_team_mean = c(5.00, 4.98, 11.4), sigma_team_sd = c(1.25, 0.476, 1.71),
+    sigma_conf_prior = c(2.43, 0.330),
+    lambda_prior = c(0.787, 0.0188), kappa_prior = c(0.747, 0.0228),
+    sigma_eff_prior = c(14.0, 0.169), sigma_m_prior = c(6.60, 0.401),
+    nu_prior = c(56.2, 1.83), nu_lower = 1,                    # Gamma(shape, rate) truncated to nu > nu_lower
     # Margin family: "t" (Student-t), "normal", "mixture" (two-normal scale mixture) or "scale_t"
     # (t whose scale grows with the expected margin). The published family is picked by the
     # margin_comparison target (choose_margin_family()); this is the incumbent it must beat.
     margin_family = "t",
-    sigma_gap_prior = c(0, 10), p_wide_prior = c(2, 2), gamma_prior = c(0, 0.3),
+    sigma_gap_prior = c(0, 10), p_wide_prior = c(2, 2), gamma_prior = c(0.282, 0.0144),
     # Weekly random walk of ratings within a season (FALSE = static ratings)
     dynamic = TRUE,
-    # Weekly step sd of r and t (normal truncated at 0). The data identify tau_r only weakly
-    # (2025 full season: 0.59 +- 0.34 under a half-normal(0, 1)), and a prior with much mass
-    # near 0 makes a funnel with the steps; these keep it away from 0. tau_t: 1.09 +- 0.30.
-    tau_r_prior = c(0.6, 0.25), tau_t_prior = c(1.0, 0.3),
-    # Total model (offence / defence). Priors from 2022-2025 FBS games: ~26.4 points per team,
-    # summed offensive PPA ~13.5 (sd 18.8), slope of the total on it ~0.54
+    # Weekly step sd of r and t (normal truncated at 0). One season identifies tau_r only weakly
+    # (posterior sd ~0.33), and a prior with much mass near 0 makes a funnel with the steps
+    tau_r_prior = c(1.57, 0.280), tau_t_prior = c(0.989, 0.106),
+    # Total model (offence / defence)
     use_total = TRUE,
-    base_prior = c(26.5, 2), t_tier_mean = c(0, 0), t_tier_sd = c(6, 10),
-    sigma_t_team_prior = c(4, 2), sigma_conf_t_prior = c(2, 1.5), b_prev_t_prior = c(0.5, 0.25),
-    lambda_t_prior = c(0.8, 0.3), alpha_es_prior = c(13.5, 8), kappa_t_prior = c(0.55, 0.2),
-    sigma_es_prior = c(17, 4), sigma_tot_prior = c(12.5, 2),
+    base_prior = c(27.2, 0.641), t_tier_mean = c(-0.985, 0.102), t_tier_sd = c(0.816, 4.98),
+    sigma_t_team_prior = c(4.05, 0.243), sigma_conf_t_prior = c(0.770, 0.0843), b_prev_t_prior = c(0.480, 0.125),
+    lambda_t_prior = c(1.08, 0.107), alpha_es_prior = c(14.3, 1.41), kappa_t_prior = c(0.462, 0.0318),
+    sigma_es_prior = c(16.6, 0.538), sigma_tot_prior = c(12.8, 0.324),
+    # Preseason terms (stan/power.stan header). Returning production, talent and the rating two
+    # seasons back improve weeks 0-3 out of sample (target prior_variants); a separate FCS carry-over
+    # and a wider spread after a coaching change did not, and stay off (their priors are unpooled)
+    b_prev_tier = FALSE, use_ret = TRUE, use_tal = TRUE, use_prev2 = TRUE, use_coach = FALSE,
+    b_ret_prior = c(0.113, 0.0729), c_ret_prior = c(7.04, 4.11), b_tal_prior = c(1.87, 0.355),
+    b_prev2_prior = c(0.144, 0.0392), b_prev_low_prior = c(0.62, 0.1), delta_coach_prior = c(0, 0.3),
     # Model variants (the published model uses all of these; the ablations switch one off)
     use_eff = TRUE,                  # efficiency likelihood
     conf_level = TRUE,               # conference effects (FALSE = teams pooled to the tier only)
@@ -127,6 +132,28 @@ prev_deviation <- function(teams, prior, value = "rating", sd = paste0(value, "_
   list(dev = dplyr::coalesce(x$dev, 0), sd = ifelse(is.na(x$dev), 0, dplyr::coalesce(x$prev_sd, 0)))
 }
 
+#' Preseason covariates for FBS teams (0 for other tiers and for teams without the data):
+#' returning production share centred within FBS, talent composite standardised within FBS,
+#' and a new-head-coach indicator
+#' @param preseason tibble(team_id, ret_ppa, talent, coach_change) from read_season(), or NULL
+preseason_covariates <- function(teams, preseason) {
+  n <- nrow(teams)
+  none <- list(ret = rep(0, n), tal = rep(0, n), coach_new = rep(0, n))
+  if (is.null(preseason) || nrow(preseason) == 0) return(none)
+  x <- teams |> dplyr::left_join(preseason, by = "team_id")
+  fbs <- teams$tier == 1L
+  centre <- function(v, scale = FALSE) {
+    v[!fbs] <- NA
+    ok <- !is.na(v)
+    if (sum(ok) < 2) return(rep(0, n))
+    out <- v - mean(v[ok])
+    if (scale) out <- out / stats::sd(v[ok])
+    dplyr::coalesce(out, 0)
+  }
+  list(ret = centre(x$ret_ppa), tal = centre(x$talent, scale = TRUE),
+       coach_new = ifelse(fbs, dplyr::coalesce(as.numeric(x$coach_change), 0), 0))
+}
+
 #' Random-walk states: one per (team, week with a game), grouped by team and in week order within
 #' a team (Stan sums each team's steps over its block). Week 1 is
 #' the time origin (the preseason level r0 is the week-1 rating), so a team's first state steps
@@ -159,7 +186,8 @@ walk_states <- function(played, n_teams, week) {
 #' @param week week_seq to fit through
 #' @param prior tibble(team_id, rating, rating_sd, total_t, total_t_sd) from the previous
 #'   season's final snapshot, or NULL
-prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_config()) {
+#' @param prior2 the same from two seasons back (only its ratings are used), or NULL
+prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_config(), prior2 = NULL) {
   games <- season_data$games
   teams <- season_teams(games)
   confs <- teams |> dplyr::distinct(conf_key, tier) |> dplyr::arrange(tier, conf_key) |>
@@ -182,6 +210,8 @@ prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_conf
   carry <- if (isFALSE(cfg$carry_over)) NULL else prior
   prev <- prev_deviation(teams, carry)
   prev_t <- prev_deviation(teams, carry, "total_t")
+  prev2 <- prev_deviation(teams, if (isFALSE(cfg$carry_over)) NULL else prior2)
+  cov <- preseason_covariates(teams, season_data$preseason)
   ws <- walk_states(played, nrow(teams), week)
   use_eff <- !isFALSE(cfg$use_eff)
   fam <- margin_family_code(cfg$margin_family %||% "t")
@@ -201,6 +231,10 @@ prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_conf
     has_total = as.integer(played$has_total), total = played$total,
     margin_family = fam, dynamic = as.integer(!isFALSE(cfg$dynamic)),
     use_total = as.integer(!isFALSE(cfg$use_total)), conf_level = as.integer(!isFALSE(cfg$conf_level)),
+    ret = cov$ret, tal = cov$tal, prev2_dev = prev2$dev, coach_new = cov$coach_new,
+    b_prev_tier = as.integer(isTRUE(cfg$b_prev_tier)), use_ret = as.integer(isTRUE(cfg$use_ret)),
+    use_tal = as.integer(isTRUE(cfg$use_tal)), use_prev2 = as.integer(isTRUE(cfg$use_prev2)),
+    use_coach = as.integer(isTRUE(cfg$use_coach)),
     compute_ll = 0L
   )
 
@@ -232,7 +266,12 @@ model_vars <- function(stan_data) {
     if (stan_data$use_total == 1L) c("base_raw[1]", "t_tier_raw[1]", "t_tier_raw[2]", "sigma_conf_t_raw[1]",
                                      "sigma_t_team_raw[1]", "b_prev_t_raw[1]", "lambda_t_raw[1]",
                                      "alpha_es_raw[1]", "sigma_es_raw[1]", "kappa_t_raw[1]", "sigma_tot_raw[1]"),
-    if (stan_data$use_total == 1L && stan_data$dynamic == 1L) "tau_t_raw[1]")
+    if (stan_data$use_total == 1L && stan_data$dynamic == 1L) "tau_t_raw[1]",
+    if (isTRUE(stan_data$b_prev_tier == 1L)) "b_prev_low_raw[1]",
+    if (isTRUE(stan_data$use_ret == 1L)) c("b_ret_raw[1]", "c_ret_raw[1]"),
+    if (isTRUE(stan_data$use_tal == 1L)) "b_tal_raw[1]",
+    if (isTRUE(stan_data$use_prev2 == 1L)) "b_prev2_raw[1]",
+    if (isTRUE(stan_data$use_coach == 1L)) "delta_coach_raw[1]")
 }
 
 #' Summaries of sampler health for the gates
@@ -261,7 +300,7 @@ fit_power <- function(input, cfg = model_config(), compute_ll = FALSE, strict = 
   mod <- cmdstanr::cmdstan_model(cfg$stan_file)
   data <- input$stan_data
   data$compute_ll <- as.integer(compute_ll)
-  run <- function(warmup, adapt_delta, sampling) {
+  run <- function(warmup, adapt_delta, sampling, seed) {
     mod$sample(
       data = data, chains = cfg$chains, parallel_chains = cfg$chains,
       iter_warmup = warmup, iter_sampling = sampling, adapt_delta = adapt_delta,
@@ -269,12 +308,14 @@ fit_power <- function(input, cfg = model_config(), compute_ll = FALSE, strict = 
     )
   }
   t0 <- Sys.time()
-  fit <- run(cfg$iter_warmup, cfg$adapt_delta, cfg$iter_sampling)
+  fit <- run(cfg$iter_warmup, cfg$adapt_delta, cfg$iter_sampling, seed)
   health <- sampler_health(fit, cfg, data)
   attempts <- 1L
   if (!health$passed) {
-    # Longer warmup, smaller steps, and twice the draws (low-ESS misses are usually just short chains)
-    fit <- run(cfg$retry_warmup, cfg$retry_adapt_delta, cfg$retry_sampling)
+    # Longer warmup, smaller steps, and twice the draws (low-ESS misses are usually just short chains).
+    # A new seed: the same one replays the same initial values, and a chain whose adaptation
+    # collapsed there (step size ~1e-4, every draw at max treedepth) collapses again
+    fit <- run(cfg$retry_warmup, cfg$retry_adapt_delta, cfg$retry_sampling, seed + 1L)
     health <- sampler_health(fit, cfg, data)
     attempts <- 2L
   }
@@ -295,7 +336,9 @@ par_names <- c("hfa", "sigma_m", "sigma_marg", "sigma_w", "sigma_marg_w", "p_wid
                "sigma_team[1]", "sigma_team[2]", "sigma_team[3]", "tau_r",
                "base_raw[1]", "tau_t_raw[1]", "sigma_tot_raw[1]", "sigma_es_raw[1]", "kappa_t_raw[1]",
                "lambda_t_raw[1]", "alpha_es_raw[1]", "b_prev_t_raw[1]", "sigma_t_team_raw[1]",
-               "sigma_conf_t_raw[1]", "t_tier_raw[1]", "t_tier_raw[2]")
+               "sigma_conf_t_raw[1]", "t_tier_raw[1]", "t_tier_raw[2]",
+               "b_prev_low_raw[1]", "b_ret_raw[1]", "c_ret_raw[1]", "b_tal_raw[1]", "b_prev2_raw[1]",
+               "delta_coach_raw[1]")
 
 #' Posterior draws needed downstream, as plain matrices/vectors (so the CmdStan CSVs can be deleted).
 #' r (and t) are the ratings at the snapshot week; states = TRUE adds the weekly states the
@@ -316,7 +359,9 @@ extract_draws <- function(fit, compute_ll = FALSE, states = FALSE, family = NULL
   nm_map <- c(base = "base_raw[1]", tau_t = "tau_t_raw[1]", sigma_tot = "sigma_tot_raw[1]", sigma_es = "sigma_es_raw[1]",
               kappa_t = "kappa_t_raw[1]", lambda_t = "lambda_t_raw[1]", alpha_es = "alpha_es_raw[1]",
               b_prev_t = "b_prev_t_raw[1]", sigma_t_team = "sigma_t_team_raw[1]", sigma_conf_t = "sigma_conf_t_raw[1]",
-              `t_tier[2]` = "t_tier_raw[1]", `t_tier[3]` = "t_tier_raw[2]")
+              `t_tier[2]` = "t_tier_raw[1]", `t_tier[3]` = "t_tier_raw[2]",
+              b_prev_low = "b_prev_low_raw[1]", b_ret = "b_ret_raw[1]", c_ret = "c_ret_raw[1]",
+              b_tal = "b_tal_raw[1]", b_prev2 = "b_prev2_raw[1]", delta_coach = "delta_coach_raw[1]")
   for (nm in names(nm_map)) if (nm_map[[nm]] %in% names(par)) names(par)[names(par) == nm_map[[nm]]] <- nm
   if ("sigma_tot" %in% names(par)) par$sigma_tot_marg <- sqrt(par$sigma_tot^2 + par$kappa_t^2 * par$sigma_es^2)
   out <- list(r = get("r"), par = par, family = family)

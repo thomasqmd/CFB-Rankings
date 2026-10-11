@@ -198,6 +198,52 @@ parse_teams <- function(raw) {
   dplyr::bind_rows(rows)
 }
 
+#' Returning production per team-season (percent of PPA and of usage)
+parse_returning <- function(raw) {
+  if (length(raw) == 0) {
+    return(tibble::tibble(season = integer(0), team = character(0), ret_ppa = numeric(0), ret_usage = numeric(0)))
+  }
+  rows <- lapply(raw, function(r) {
+    tibble::tibble(season = int(r$season), team = chr(r$team), ret_ppa = num(r$percentPPA), ret_usage = num(r$usage))
+  })
+  dplyr::bind_rows(rows)
+}
+
+#' Talent composite per team-season (num() also reads the string form some years use)
+parse_talent <- function(raw) {
+  if (length(raw) == 0) {
+    return(tibble::tibble(season = integer(0), team = character(0), talent = numeric(0)))
+  }
+  rows <- lapply(raw, function(t) {
+    tibble::tibble(season = int(t$year), team = chr(t$team), talent = num(t$talent))
+  })
+  dplyr::bind_rows(rows)
+}
+
+#' One row per coach per season entry (a coach who moved teams has one row for each team)
+parse_coaches <- function(raw) {
+  rows <- lapply(raw, function(coach) {
+    dplyr::bind_rows(lapply(coach$seasons, function(s) {
+      tibble::tibble(season = int(s$year), team_id = int(s$teamId), coach_id = int(coach$id))
+    }))
+  })
+  out <- dplyr::bind_rows(rows)
+  if (nrow(out) == 0) return(tibble::tibble(season = integer(0), team_id = integer(0), coach_id = integer(0)))
+  out
+}
+
+#' Coach change per team: 1 when none of the season's coaches also coached that team in `prev`
+#' (last season's parse_coaches()), NA when the team has no rows in `prev`
+coach_changes <- function(coaches, prev) {
+  ids <- unique(coaches$team_id)
+  change <- vapply(ids, function(id) {
+    before <- prev$coach_id[prev$team_id %in% id]
+    if (length(before) == 0) return(NA_integer_)
+    as.integer(!any(coaches$coach_id[coaches$team_id %in% id] %in% before))
+  }, integer(1))
+  tibble::tibble(team_id = as.integer(ids), coach_change = unname(change))
+}
+
 # ------------------------------------------------------------------------------
 # DuckDB store
 # ------------------------------------------------------------------------------
@@ -265,6 +311,41 @@ sync_teams <- function(con, refresh = FALSE, raw_dir = "data/raw") {
   invisible(nrow(teams))
 }
 
+#' Preseason inputs (returning production, talent, coach change) for seasons not yet stored.
+#' A season whose returning-production response is empty is skipped, so a later sync retries it.
+sync_preseason <- function(con, seasons, raw_dir = "data/raw") {
+  if (!DBI::dbExistsTable(con, "teams")) return(invisible(0L))
+  have <- if (DBI::dbExistsTable(con, "preseason")) DBI::dbGetQuery(con, "SELECT DISTINCT season FROM preseason")$season else integer(0)
+  teams <- DBI::dbReadTable(con, "teams")
+  fetch <- function(name, path, s) cfbd_cached(name, s, path, list(year = s), raw_dir = raw_dir, refresh = FALSE)$data
+  build <- function(s) {
+    ret <- parse_returning(fetch("returning", "player/returning", s))
+    if (nrow(ret) == 0) {
+      # not published yet: drop the cached empty response so the next sync asks again
+      unlink(file.path(raw_dir, sprintf("returning_%d.json", s)))
+      return(NULL)
+    }
+    talent <- parse_talent(fetch("talent", "talent", s))
+    coaches <- parse_coaches(fetch("coaches", "coaches", s))
+    prev <- parse_coaches(fetch("coaches", "coaches", s - 1L))
+    ret$team_id <- teams$team_id[match(ret$team, teams$school)]
+    talent$team_id <- teams$team_id[match(talent$team, teams$school)]
+    dplyr::full_join(dplyr::select(ret, team_id, ret_ppa, ret_usage), dplyr::select(talent, team_id, talent), by = "team_id") |>
+      dplyr::full_join(coach_changes(coaches, prev), by = "team_id") |>
+      dplyr::filter(team_id %in% teams$team_id) |>
+      dplyr::mutate(season = as.integer(s), .before = team_id)
+  }
+  n <- 0L
+  for (s in setdiff(seasons, have)) {
+    df <- tryCatch(build(s), error = \(e) {
+      warning("[preseason] ", s, " skipped: ", conditionMessage(e), call. = FALSE)
+      NULL
+    })
+    n <- n + db_replace_season(con, "preseason", df, s)
+  }
+  invisible(n)
+}
+
 #' Drop tables from the pre-2026-09 schema (cfbfastR schedules + play-by-play store)
 drop_legacy_tables <- function(con) {
   legacy_meta <- DBI::dbExistsTable(con, "sync_metadata") &&
@@ -297,6 +378,7 @@ sync_all <- function(seasons, db_path = "data/cfb.duckdb", full_refresh = FALSE,
                 min_refresh_hours = if (full_refresh) 0 else min_refresh_hours)
   }
   if (full_refresh || !DBI::dbExistsTable(con, "teams")) sync_teams(con, refresh = full_refresh, raw_dir = raw_dir)
+  sync_preseason(con, seasons, raw_dir = raw_dir)
   # CBS Sports 138: archive this week's live ranking while a season is being played
   live <- any(!vapply(seasons, \(s) { m <- meta[meta$season == s, ]; nrow(m) == 1 && season_is_final(s, m$last_sync) }, logical(1)))
   sync_cbs138(con, raw_dir = raw_dir, live = live)
@@ -305,10 +387,19 @@ sync_all <- function(seasons, db_path = "data/cfb.duckdb", full_refresh = FALSE,
     "SELECT season, COUNT(*) AS games, SUM(CASE WHEN completed THEN 1 ELSE 0 END) AS completed,
             SUM(COALESCE(home_points, 0) + COALESCE(away_points, 0)) AS points
      FROM games WHERE season IN (%s) GROUP BY season ORDER BY season", paste(seasons, collapse = ",")))
-  # New CBS rankings must invalidate that season's data target too
+  # New polls and CBS rankings must invalidate that season's data target too (the AP poll comes
+  # out on Sunday afternoon, often after a sync that already has every game of the week)
+  if (DBI::dbExistsTable(con, "polls")) {
+    pl <- DBI::dbGetQuery(con, "SELECT season, COUNT(*) AS polls FROM polls GROUP BY season")
+    fp <- merge(fp, pl, all.x = TRUE)
+  }
   if (DBI::dbExistsTable(con, "cbs_rankings")) {
     cbs <- DBI::dbGetQuery(con, "SELECT season, COUNT(DISTINCT updated) AS cbs_rankings FROM cbs_rankings GROUP BY season")
     fp <- merge(fp, cbs, all.x = TRUE)
+  }
+  if (DBI::dbExistsTable(con, "preseason")) {
+    pre <- DBI::dbGetQuery(con, "SELECT season, COUNT(*) AS preseason FROM preseason GROUP BY season")
+    fp <- merge(fp, pre, all.x = TRUE)
   }
   fp
 }
@@ -328,6 +419,12 @@ read_season <- function(season, db_path = "data/cfb.duckdb") {
   lines <- if (DBI::dbExistsTable(con, "lines")) q("SELECT * FROM lines WHERE season = %d") else NULL
   polls <- if (DBI::dbExistsTable(con, "polls")) q("SELECT * FROM polls WHERE season = %d") else NULL
   cbs <- if (DBI::dbExistsTable(con, "cbs_rankings")) q("SELECT * FROM cbs_rankings WHERE season = %d") else NULL
+  preseason <- if (DBI::dbExistsTable(con, "preseason")) {
+    q("SELECT team_id, ret_ppa, ret_usage, talent, coach_change FROM preseason WHERE season = %d")
+  } else {
+    tibble::tibble(team_id = integer(0), ret_ppa = numeric(0), ret_usage = numeric(0),
+                   talent = numeric(0), coach_change = integer(0))
+  }
 
   side <- function(prefix) {
     stats |> dplyr::transmute(game_id, "{prefix}_team" := team,
@@ -341,7 +438,7 @@ read_season <- function(season, db_path = "data/cfb.duckdb") {
     dplyr::arrange(week_seq, start_date, game_id)
 
   polls <- dplyr::bind_rows(polls, cbs_as_polls(cbs, games))
-  list(season = as.integer(season), games = games, polls = polls)
+  list(season = as.integer(season), games = games, polls = polls, preseason = preseason)
 }
 
 read_teams <- function(db_path = "data/cfb.duckdb") {

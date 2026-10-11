@@ -1,6 +1,6 @@
 ---
 title: "Two Rankings from One Posterior: A Bayesian Power Rating and a Wins-Above-Benchmark Resume for College Football"
-abstract: "A college football ranking is asked two questions: which team is better, and which has earned more. The first is predictive and should use margin of victory; the second is retrodictive and should reward only results. We answer both from one Bayesian model. Team strength, in points on a neutral field, is observed through the regulation margin and an efficiency margin built from expected points added, modelled jointly so that one performance is not counted twice, pooled within conferences and divisional tiers, carried over between seasons, and allowed to drift from week to week as a random walk. The shape of the margin distribution is chosen among four families by leave-one-out cross-validation, and a parallel model for the total score splits strength into offence and defence. The power rating is the posterior of strength. The resume, Wins Above Benchmark, counts the wins a team has beyond those the twelfth-best team would expect against the same schedule, computed per posterior draw. We evaluate the system on every week of every season since 2014 with convergence gates, posterior predictive and prior-sensitivity checks, simulation-based calibration, ablations, and a rolling out-of-sample backtest against results, closing betting lines and totals, and baseline ratings."
+abstract: "A college football ranking is asked two questions: which team is better, and which has earned more. The first is predictive and should use margin of victory; the second is retrodictive and should reward only results. We answer both from one Bayesian model. Team strength, in points on a neutral field, is observed through the regulation margin and an efficiency margin built from expected points added, modelled jointly so that one performance is not counted twice, pooled within conferences and divisional tiers, carried over between seasons with roster information, and allowed to drift from week to week as a random walk. The shape of the margin distribution is chosen among four families by leave-one-out cross-validation, and a parallel model for the total score splits strength into offence and defence. The power rating is the posterior of strength. The resume, Wins Above Benchmark, counts the wins a team has beyond those the twelfth-best team would expect against the same schedule, computed per posterior draw. We evaluate the system on every week of every season since 2014 with convergence gates, posterior predictive and prior-sensitivity checks, simulation-based calibration, ablations, and a rolling out-of-sample backtest against results, closing betting lines and totals, and baseline ratings."
 date: last-modified
 author:
   - name: Thomas Reinke
@@ -204,12 +204,10 @@ checks <- Filter(Negate(is.null), targets::tar_read(checks, store = store))
 refits <- targets::tar_read(prior_refits, store = store)
 last_full <- targets::tar_read(last_full, store = store)
 struct <- refits
-# The published priors are pool_priors(refits): centred on the pooled full-season means under
-# vague priors, 2014 left out (and 2020 for home field), sd = 2x the between-season sd.
-pooled <- refits |>
-  filter(season != 2014, !(variable == "hfa" & season == 2020)) |>
-  group_by(variable) |>
-  summarise(pooled_mean = mean(mean), between_sd = sd(mean), typical_post_sd = median(sd), .groups = "drop")
+# The published priors are pool_priors(refits, pool = cfg$pool) (R/07_analysis.R): recency-weighted
+# means of the full-season posterior means under vague priors, 2014 left out (and 2020 for home
+# field), with the random-effects predictive sd for a new season.
+pooled <- targets::tar_read(pooled_priors, store = store)
 
 seasons <- sort(unique(params$season))
 first_season <- min(seasons)
@@ -379,10 +377,16 @@ sym_lab <- c(hfa = "\\eta", b_prev = "\\beta", lambda = "\\lambda", kappa = "\\k
              `base_raw[1]` = "\\theta", `t_tier_raw[1]` = "m^t_2", `t_tier_raw[2]` = "m^t_3",
              `sigma_conf_t_raw[1]` = "\\omega_t", `sigma_t_team_raw[1]` = "\\tau^t", `b_prev_t_raw[1]` = "\\beta_t",
              `lambda_t_raw[1]` = "\\lambda_t", `alpha_es_raw[1]` = "\\alpha_s", `sigma_es_raw[1]` = "\\sigma_s",
-             `kappa_t_raw[1]` = "\\kappa_t", `sigma_tot_raw[1]` = "\\sigma_x", `tau_t_raw[1]` = "\\phi_t")
+             `kappa_t_raw[1]` = "\\kappa_t", `sigma_tot_raw[1]` = "\\sigma_x", `tau_t_raw[1]` = "\\phi_t",
+             `b_ret_raw[1]` = "\\beta_q", `c_ret_raw[1]` = "\\gamma_q", `b_tal_raw[1]` = "\\gamma_a",
+             `b_prev2_raw[1]` = "\\beta_2", `b_prev_low_raw[1]` = "\\beta_{\\mathrm{low}}", `delta_coach_raw[1]` = "\\delta_c")
 var_tex <- setNames(paste0("$", sym_lab, "$"), names(sym_lab))
 # Parameters of the total model (they share nothing with the margin model, @sec-total)
-total_vars <- grep("_raw\\[", names(sym_lab), value = TRUE)
+total_vars <- c("base_raw[1]", "t_tier_raw[1]", "t_tier_raw[2]", "sigma_conf_t_raw[1]", "sigma_t_team_raw[1]",
+                "b_prev_t_raw[1]", "lambda_t_raw[1]", "alpha_es_raw[1]", "sigma_es_raw[1]", "kappa_t_raw[1]",
+                "sigma_tot_raw[1]", "tau_t_raw[1]")
+# Preseason terms of @eq-hier
+pre_vars <- c("b_ret_raw[1]", "c_ret_raw[1]", "b_tal_raw[1]", "b_prev2_raw[1]", "b_prev_low_raw[1]", "delta_coach_raw[1]")
 sym_list <- function(v) {
   s <- paste0("$", sym_lab[v], "$")
   if (length(s) <= 1) return(s)
@@ -469,7 +473,7 @@ These methods disagree partly because they answer different questions. A *predic
 
 This paper keeps the two apart but derives both from one posterior distribution. The contributions are four.
 
-1. A **power model** (@sec-power) for team strength in points on a neutral field, observed through the regulation scoreboard margin and through an efficiency margin built from expected points added per play [@yurkoNflWARReproducibleMethod2019]. The margin is modelled *conditionally* on the efficiency residual, so the two signals share one latent strength without being treated as independent evidence, and their relative weight is estimated rather than set. Strength is pooled within conferences and within three divisional tiers, carried over from the previous season by an estimated coefficient, and moves through the season as a random walk whose step size is estimated. The shape of the margin distribution is one of four families, chosen by cross-validation on every complete season (@sec-family); the published one is the `r fam_name[[fam]]`. A parallel model for the total score, observed through the final score and summed offensive efficiency, splits each rating into offence and defence without changing it (@sec-total).
+1. A **power model** (@sec-power) for team strength in points on a neutral field, observed through the regulation scoreboard margin and through an efficiency margin built from expected points added per play [@yurkoNflWARReproducibleMethod2019]. The margin is modelled *conditionally* on the efficiency residual, so the two signals share one latent strength without being treated as independent evidence, and their relative weight is estimated rather than set. Strength is pooled within conferences and within three divisional tiers, carried over from the two previous seasons by estimated coefficients, shifted before the season by roster information (returning production and recruited talent), and moves through the season as a random walk whose step size is estimated. The shape of the margin distribution is one of four families, chosen by cross-validation on every complete season (@sec-family); the published one is the `r fam_name[[fam]]`. A parallel model for the total score, observed through the final score and summed offensive efficiency, splits each rating into offence and defence without changing it (@sec-total).
 2. A result on how much the efficiency signal adds (@sec-info). Under a Gaussian version of the model the gain in per-game Fisher information about strength has a closed form, and at the fitted parameters it is `r fmt(100 * min(info$gain), 1)`--`r fmt(100 * max(info$gain), 1)`\% --- small, and explained by the estimated scale of efficiency being close to the value at which the gain vanishes. An ablation backtest measures the same thing out of sample (@sec-ablation).
 3. A **resume** measure, Wins Above Benchmark (@sec-resume): for each posterior draw, the number of wins a team has beyond those the draw's twelfth-best FBS team would be expected to earn against the same opponents at the same venues. It is additive over games, never rewards a loss, is centred at zero for a team exactly as strong as the benchmark, and inherits uncertainty in the opponents, the benchmark and the ranks directly from the posterior.
 4. A **validation** of the whole system (@sec-computation, @sec-checks, @sec-backtest) on every week of every season from `r first_season` to `r current`: `r n_snap` weekly posteriors fitted by the No-U-Turn sampler, of which `r n_pass` pass the convergence gates; posterior predictive checks, which reproduce the spread, the blowouts and home-field advantage but miss the share of one-score games in `r n_w7_fail` of `r nrow(w7)` seasons; prior-sensitivity diagnostics, which flag `r n_flagged_any` of `r nrow(flag_counts)` structural parameters in at least one season; simulation-based calibration; ablations and baselines; and a rolling backtest of `r fmt(bt_all$games)` games, each predicted from the posterior fitted through the week before, scored against the result and the closing betting line.
@@ -536,11 +540,13 @@ tibble::tribble(
   "$\\alpha_c$", "mean strength of conference $c$", "\\texttt{mu\\_conf}",
   "$\\tau_\\ell$", "within-conference spread of tier $\\ell$", "\\texttt{sigma\\_team}",
   "$d_i, s_i, \\beta$", "last season's relative rating, its posterior sd, and the carry-over", "\\texttt{prev\\_dev}, \\texttt{prev\\_sd}, \\texttt{b\\_prev}",
+  "$q_i, a_i, d^{(2)}_i$", "returning production, talent composite, and the relative rating two seasons back", "\\texttt{ret}, \\texttt{tal}, \\texttt{prev2\\_dev}",
+  "$\\beta_q, \\gamma_q, \\gamma_a, \\beta_2$", "their coefficients in the preseason level", "\\texttt{b\\_ret}, \\texttt{c\\_ret}, \\texttt{b\\_tal}, \\texttt{b\\_prev2}",
   "$B^{(s)}$", "strength of the benchmark team in draw $s$", "\\texttt{bench}",
   "$\\pi_g$", "probability that the benchmark wins game $g$'s fixture", "\\texttt{p\\_bench}",
   "$R_i^{(s)}$", "rank of team $i$ within its tier in draw $s$", "\\texttt{rank\\_draws}"
 ) |>
-  ktab(align = "lll")
+  ktab(align = paste0(">{\\raggedright\\arraybackslash}p{", c("2.6cm", "7.6cm", "4.8cm"), "}"))
 ```
 
 # Data {#sec-data}
@@ -556,6 +562,8 @@ $$
 which is on the scale of points. It measures how well each offence moved the ball regardless of how drives ended, so it is less exposed than the scoreboard to turnovers returned for touchdowns, missed field goals and fourth-down variance. It is used only when both offences have at least `r cfg$min_plays` non-garbage plays, and is missing otherwise --- in practice for most games against lower-division opponents, which the provider does not chart.
 
 **Total.** For the total model (@sec-total), $x_g$ is the final combined score and $e^+_g = \overline{\mathrm{PPA}}_{h(g)} \, n_{h(g)} + \overline{\mathrm{PPA}}_{a(g)} \, n_{a(g)}$ the summed offensive efficiency, available exactly when $e_g$ is. The total of a game decided in overtime is inflated by the extra possessions, so for those games $x_g$ is treated as missing and only $e^+_g$ is used.
+
+**Preseason information.** Three quantities from before the season enter the preseason level of each FBS team (@sec-hierarchy): the share of last season's offensive production, measured in PPA, that returns (the provider's *returning production*); the 247Sports team talent composite, a recruiting-based measure of the roster [@cfbd2026], available from `r first_season + 1`; and the team's final rating two seasons back. Returning production is centred and the talent composite standardised within FBS each season; both are zero for FCS and lower-division teams, which the provider does not cover. A head-coach change was also built as a candidate input and not adopted (@sec-loso).
 
 **Tiers and conferences.** Each team is assigned to FBS, FCS or a single pooled tier for Division II, III and NAIA opponents, and to its conference in that season. An independent is not a conference, so each independent (`r fmt(n_fbs_ind)` FBS programmes over the period, among them `r paste(head(fbs_ind, 4), collapse = ", ")`) gets a conference effect of its own, drawn from its tier like any conference's; the lower-division opponents share one.
 
@@ -661,11 +669,14 @@ A team's strength starts the season at a preseason level, pooled at two levels -
 ::: {.defn label="Strength hierarchy."}
 For team $i$ in conference $c(i)$ of tier $\ell(i)$, the preseason (week-1) level is
 $$
-r^0_i = \alpha_{c(i)} + \beta\, d_i + \bigl(\tau_{\ell(i)}^2 + \beta^2 s_i^2\bigr)^{1/2} z_i, \qquad
+\begin{aligned}
+r^0_i &= \alpha_{c(i)} + \beta_i\, d_i + \gamma_q\, q_i + \gamma_a\, a_i + \beta_2\, d^{(2)}_i + \bigl(\tau_{\ell(i)}^2 + \beta_i^2 s_i^2\bigr)^{1/2} z_i, \\
+\beta_i &= \beta + \beta_q\, q_i, \qquad
 \alpha_c = m_{\ell(c)} + \omega\, u_c, \qquad
 z_i, u_c \overset{\text{iid}}{\sim} \mathcal{N}(0, 1),
+\end{aligned}
 $$ {#eq-hier}
-with $m_1 = 0$. Here $d_i$ is team $i$'s final power rating in the previous season minus the mean final rating of its current tier, $s_i$ is the posterior standard deviation of that rating, and $d_i = s_i = 0$ when there is no previous rating (the first season, and teams new to the data).
+with $m_1 = 0$. Here $d_i$ is team $i$'s final power rating in the previous season minus the mean final rating of its current tier, $s_i$ is the posterior standard deviation of that rating, and $d_i = s_i = 0$ when there is no previous rating (the first season, and teams new to the data); $d^{(2)}_i$ is the same deviation two seasons back. For FBS teams, $q_i$ is the share of last season's production that returns and $a_i$ the standardised talent composite (@sec-data), both zero for other teams and when missing. Returning production enters twice: as a level, $\gamma_q q_i$, and through the carry-over $\beta_i$, so that a team returning more of its roster may keep more of last season's deviation.
 :::
 
 ::: {.defn label="Weekly random walk."}
@@ -680,7 +691,7 @@ Only the weeks in which a team plays carry a state, so a season adds about a doz
 
 The parameterisation is non-centred [@papaspiliopoulosGeneralFrameworkParametrization2007] throughout, in $z_i$, $u_c$ and the steps $\varepsilon_{i,k}$: in early weeks each team has one or two games and the data barely constrain $z_i$, which is the regime in which a centred hierarchy produces the funnel geometry that defeats Hamiltonian samplers [@betancourtConceptualIntroductionHamiltonian2017]. The random walk has a funnel of its own, between $\phi_r$ and the steps, and the data identify $\phi_r$ only weakly, which is why its prior is informative and keeps it away from zero (@sec-priors).
 
-The carry-over $\beta$ does the work of a preseason rating. In week 0 no game has been played and the posterior of $r_i$ is centred on $\beta d_i$ plus its conference and tier means; as games accumulate, the team effect $z_i$ and the steps take over. Because $d_i$ is measured against the tier and not the conference, it carries conference strength over as well, so preseason predictions of non-conference games are informative from the first week.
+The carry-over $\beta$ does most of the work of a preseason rating. In week 0 no game has been played and the posterior of $r_i$ is centred on $\beta_i d_i + \gamma_q q_i + \gamma_a a_i + \beta_2 d^{(2)}_i$ plus its conference and tier means; as games accumulate, the team effect $z_i$ and the steps take over. The roster terms and the second season back were each adopted because they improve out-of-sample predictions in the first weeks (@sec-loso). Because $d_i$ is measured against the tier and not the conference, it carries conference strength over as well, so preseason predictions of non-conference games are informative from the first week.
 
 @fig-tau shows the estimated step by season. At the posterior mean of a typical complete season, $\phi_r = `r fmt(median(rw_s$tau[rw_s$season %in% complete]), 2)`$ points per week: over a twelve-week regular season a team's strength drifts by about $`r fmt(median(rw_s$tau[rw_s$season %in% complete]) * sqrt(12), 1)`$ points (one sd), small next to the spread of FBS strengths but not negligible next to the margin of a close game. Whether that drift improves predictions over static ratings is tested directly in @sec-ablation.
 
@@ -852,7 +863,11 @@ The total model shares no parameter with the margin model of @eq-lik, and its li
 
 ## Priors {#sec-priors}
 
-The structural parameters --- tier offsets, spreads, the carry-over, home field and the likelihood scales --- describe the sport rather than any team. In the first weeks of a season, with about one game per team, the data cannot estimate them, and a vague prior leaves the sampler in a funnel. They are therefore given informative priors, set from history. Each complete season's final snapshot (about 1,550 games) is refitted under deliberately vague priors (@sec-supp-justify), and each published prior is centred at the mean of those full-season posterior means, with standard deviation twice their between-season standard deviation. The refits are the `prior_refits` target of the pipeline. The twelve priors of @tbl-priors were pooled in this way under an earlier version of the model, with static ratings and a Student-$t$ margin, and have not yet been re-pooled; the table's refit columns are under the published model, so they show directly how far the pooled values have moved since.
+The structural parameters --- tier offsets, spreads, the carry-over and the preseason terms, home field, the likelihood scales, the random-walk steps and the total model --- describe the sport rather than any team. In the first weeks of a season, with about one game per team, the data cannot estimate them, and a vague prior leaves the sampler in a funnel. They are therefore given informative priors, set from history. Each complete season's final snapshot (about 1,550 games) is refitted under deliberately vague priors (@sec-supp-justify); the refits are the `prior_refits` target of the pipeline. The season-by-season posterior means $\hat\theta_s$, with posterior standard deviations $v_s$, are then pooled as in a random-effects meta-analysis. Each prior is centred at the weighted mean of the $\hat\theta_s$, with weights $w_s = 2^{-|s - s^\ast|/h}$ that halve every $h = `r cfg$pool$half_life`$ seasons away from the season $s^\ast$ the prior is for, and its standard deviation is the predictive standard deviation for a new season,
+$$
+\sigma_{\text{prior}}^2 = \max\bigl(\hat\sigma_b^2 - \bar v^2,\, 0\bigr) + \hat\sigma_b^2 / n_{\text{eff}},
+$$ {#eq-pool}
+where $\hat\sigma_b$ is the weighted between-season standard deviation of the $\hat\theta_s$, $\bar v^2$ the weighted mean of the $v_s^2$ and $n_{\text{eff}} = (\sum_s w_s)^2 / \sum_s w_s^2$. The first term is the season-to-season variation in excess of what estimation noise alone produces; the second is the uncertainty of the centre. The recency weights let the priors follow trends, such as the fall in scoring after the clock rules of 2023. An earlier version used equal weights and twice the between-season standard deviation, which counts estimation noise as variation and made the priors wider than the history supports; both choices were made on out-of-sample predictions of the first weeks (@sec-loso).
 
 Two seasons are left out of the pooling. In `r first_season`, the first season of the data, there is no carry-over ($d_i = 0$ for every team), so the conference effects absorb team strength that later seasons attribute to $\beta d_i$, and $\omega$ is `r fmt(struct$mean[struct$variable == "sigma_conf" & struct$season == first_season], 1)` points against `r fmt(median(struct$mean[struct$variable == "sigma_conf" & struct$season != first_season]), 1)` in a typical later season; it measures a different quantity. And 2020, played largely without crowds, is left out for $\eta$ (@fig-hfa). @tbl-priors lists the priors with the range of the full-season posterior means under the vague priors and under the published priors.
 
@@ -901,13 +916,13 @@ noise_pars <- pooled |> filter(variable %in% names(labs), between_sd < 1.3 * typ
 wide_pars <- pooled |> filter(variable %in% names(labs), between_sd >= 1.3 * typical_post_sd) |> pull(variable)
 ```
 
-Some parameters vary between seasons and others hardly at all, and the table cannot distinguish real change from estimation noise by itself. Comparing the two standard deviations can: for `r length(noise_pars)` of the `r length(labs)` parameters (`r sym_list(noise_pars)`) the between-season standard deviation of the posterior means is less than 1.3 times the typical within-season posterior standard deviation, which is about what sampling noise alone would produce. For these the rule "prior sd = twice the between-season sd" measures noise, not season-to-season change, and makes the priors conservative: wider than the sport's true variation.
+Some parameters vary between seasons and others hardly at all, and the table cannot distinguish real change from estimation noise by itself. Comparing the two standard deviations can: for `r length(noise_pars)` of the `r length(labs)` parameters (`r sym_list(noise_pars)`) the between-season standard deviation of the posterior means is less than 1.3 times the typical within-season posterior standard deviation, which is about what sampling noise alone would produce. For these the first term of @eq-pool vanishes and the prior standard deviation is the uncertainty of the centre alone: the history gives no evidence that the parameter changes from season to season.
 
-The remaining parameters were not pooled (@tbl-priors-other). The shape parameters of the margin family keep weakly informative priors: $\nu$ a $\mathrm{Gamma}(`r cfg$nu_prior[1]`, `r cfg$nu_prior[2]`)$ prior truncated to $\nu > `r cfg$nu_lower`$ [@juarezModelBasedClusteringNonGaussian2010], which lets the data choose between heavy and nearly normal tails. The random-walk steps get informative priors set from a preliminary full-season fit, for the reason given in @sec-hierarchy: the data identify $\phi_r$ only weakly, and a prior with much mass near zero produces a funnel between the step size and the steps. The total model's priors were set from the FBS games of 2022--2025 (about `r fmt(cfg$base_prior[1], 1)` points per team), and are wide next to what a season of data determines. The vague-prior refits estimate these parameters too, and the last column of @tbl-priors-other gives their range.
+The remaining parameters (@tbl-priors-other) are pooled in the same way. The degrees of freedom $\nu$ get the Gamma prior with the pooled mean and standard deviation, truncated to $\nu > `r cfg$nu_lower`$. The random-walk steps are refitted under a wide prior centred away from zero, $\phi_r \sim \mathcal N^+(0.8, 0.8^2)$ and $\phi_t \sim \mathcal N^+(1, 0.8^2)$: one with its mode at zero puts the sampler in the funnel between the step size and the steps (@sec-hierarchy). Before this version the refits kept the published step prior, $\phi_r \sim \mathcal N^+(0.6, 0.25^2)$; a season's posterior standard deviation of $\phi_r$ is about as large as that prior's, so pooling under it largely returned the prior. Under the wide prior the full-season estimates of $\phi_r$ range from `r fmt(min(struct$mean[struct$variable == "tau_r"]), 2)` to `r fmt(max(struct$mean[struct$variable == "tau_r"]), 2)` points per week. The total-model priors and the coefficients of the preseason terms are pooled likewise.
 
 ```{r}
 #| label: tbl-priors-other
-#| tbl-cap: !expr 'paste0("Priors not pooled from the refits: normal, truncated to the support where a parameter is constrained, unless stated. The last column is the range over complete seasons of the full-season posterior mean under the vague priors of @sec-supp-justify; the random-walk steps keep their published priors there. Shape parameters of families other than the published ", fam_name[[fam]], " are omitted.")'
+#| tbl-cap: !expr 'paste0("Priors of the margin family, the random walk, the total model and the preseason terms, pooled from the refits like those of @tbl-priors: normal, truncated to the support where a parameter is constrained, unless stated. The last column is the range over complete seasons of the full-season posterior mean under the vague priors of @sec-supp-justify. Shape parameters of families other than the published ", fam_name[[fam]], " and preseason terms the published model does not use are omitted.")'
 oth <- tibble::tribble(
   ~variable, ~what, ~mean, ~sd,
   "nu", "degrees of freedom", NA, NA,
@@ -926,19 +941,29 @@ oth <- tibble::tribble(
   "alpha_es_raw[1]", "intercept of summed efficiency", cfg$alpha_es_prior[1], cfg$alpha_es_prior[2],
   "sigma_es_raw[1]", "noise of summed efficiency", cfg$sigma_es_prior[1], cfg$sigma_es_prior[2],
   "kappa_t_raw[1]", "loading of the total on it", cfg$kappa_t_prior[1], cfg$kappa_t_prior[2],
-  "sigma_tot_raw[1]", "noise of the total", cfg$sigma_tot_prior[1], cfg$sigma_tot_prior[2]
+  "sigma_tot_raw[1]", "noise of the total", cfg$sigma_tot_prior[1], cfg$sigma_tot_prior[2],
+  "b_ret_raw[1]", "carry-over per unit returning production", cfg$b_ret_prior[1], cfg$b_ret_prior[2],
+  "c_ret_raw[1]", "level per unit returning production", cfg$c_ret_prior[1], cfg$c_ret_prior[2],
+  "b_tal_raw[1]", "level per sd of talent", cfg$b_tal_prior[1], cfg$b_tal_prior[2],
+  "b_prev2_raw[1]", "carry-over from two seasons back", cfg$b_prev2_prior[1], cfg$b_prev2_prior[2],
+  "b_prev_low_raw[1]", "carry-over of lower tiers", cfg$b_prev_low_prior[1], cfg$b_prev_low_prior[2],
+  "delta_coach_raw[1]", "log scale of $\\tau$ after a coaching change", cfg$delta_coach_prior[1], cfg$delta_coach_prior[2]
 )
 fam_vars <- switch(fam, normal = character(0), t = "nu", mixture = c("p_wide", "sigma_w"), scale_t = c("nu", "gamma_m"))
+pre_on <- c(`b_ret_raw[1]` = isTRUE(cfg$use_ret), `c_ret_raw[1]` = isTRUE(cfg$use_ret), `b_tal_raw[1]` = isTRUE(cfg$use_tal),
+            `b_prev2_raw[1]` = isTRUE(cfg$use_prev2), `b_prev_low_raw[1]` = isTRUE(cfg$b_prev_tier),
+            `delta_coach_raw[1]` = isTRUE(cfg$use_coach))
 oth |>
   filter(!variable %in% c("nu", "gamma_m", "p_wide", "sigma_w") | variable %in% fam_vars) |>
+  filter(!variable %in% names(pre_on) | variable %in% names(pre_on)[pre_on]) |>
   left_join(struct |> group_by(variable) |> summarise(lo = min(mean), hi = max(mean), .groups = "drop"), by = "variable") |>
   transmute(Parameter = var_tex[variable], Meaning = what,
             Prior = case_when(
-              variable == "nu" ~ sprintf("$\\mathrm{Gamma}(%s, %s)$, $\\nu > %s$", cfg$nu_prior[1], cfg$nu_prior[2], cfg$nu_lower),
+              variable == "nu" ~ sprintf("$\\mathrm{Gamma}(%s, %s)$, $\\nu > %s$", fmt(cfg$nu_prior[1], 1), fmt(cfg$nu_prior[2], 2), cfg$nu_lower),
               variable == "p_wide" ~ sprintf("$\\mathrm{Beta}(%s, %s)$", cfg$p_wide_prior[1], cfg$p_wide_prior[2]),
               TRUE ~ sprintf("$\\mathcal{N}(%s, %s^2)$", fmt(mean, 2), fmt(sd, 2))),
             `Vague-prior refits` = ifelse(is.na(lo), "--", sprintf("%s to %s", fmt(lo, 2), fmt(hi, 2)))) |>
-  ktab(align = "llll")
+  ktab(align = c("l", ">{\\raggedright\\arraybackslash}p{4.6cm}", "l", "l"))
 ```
 
 The priors are empirical Bayes at the level of the sport, and two consequences need checking. First, a season's own data help set its prior, so saying that its posterior lies inside that prior would be circular. @sec-supp-justify therefore also builds, for each season, the prior pooled from the *other* seasons only, and asks whether the season's own estimate lies inside it. Second, the early-week backtest of @sec-backtest for, say, 2016 uses priors informed by later seasons. @sec-loso refits those weeks under leave-one-season-out priors and measures the difference. @sec-supp-induced gives the priors they induce on team strengths, win probabilities and margins, and @sec-supp-perturb refits the model under widened and shifted priors.
@@ -1317,7 +1342,7 @@ fc_conf <- fc |> filter(conflict > 0)
 nu_s <- sens_all |> filter(variable == "nu")
 ```
 
-`r sum(fc$weak > 0)` of the `r nrow(fc)` parameters are flagged for a weak likelihood in any season`r if (any(fc$weak > 0)) paste0(", in at most ", max(fc$weak), " season(s) each") else ""`. Prior--data conflict flags are more common: `r paste0(fc_conf$lab, " in ", fc_conf$conflict, " of ", fc_conf$n, collapse = "; ")`. Three groups stand out. The lower-division offset $m_3$ and spread $\tau_3$, and the FCS offset $m_2$, are identified each season by a few dozen lopsided cross-tier games, and a conflict in one season reflects that season's departure from the pooled mean on which the prior is centred (@sec-priors); none of the three enters an FBS rating except through those cross-tier games. Home field $\eta$ and $\sigma_m$ are flagged when a season sits at the edge of the historical range (for $\eta$: `r { x <- sens_all$season[sens_all$variable == "hfa" & grepl("conflict", sens_all$diagnosis)]; if (length(x)) paste(x, collapse = ", ") else "no season" }`). The degrees of freedom $\nu$ are the special case. Both of its sensitivities are large (median `r fmt(median(nu_s$prior), 2)` to the prior and `r fmt(median(nu_s$likelihood), 2)` to the likelihood, against the threshold of 0.05), and priorsense calls any parameter that is sensitive to both a prior--data conflict. For $\nu$ that label is misleading: the posterior means, `r fmt(min(info$nu), 0)`--`r fmt(max(info$nu), 0)`, sit in the bulk of the $\mathrm{Gamma}(2, 0.1)$ prior, so prior and data do not disagree about where $\nu$ lies. Rather, the likelihood informs $\nu$ but only weakly once it exceeds about 15, where the $t$ and normal laws are hard to tell apart, so the shape of the prior's tail still moves the posterior. @sec-supp-perturb refits with the prior bounded at $\nu > 3$. The sensitivity of $\nu$ matters for the tails of the predictive distribution, not for the ratings. `r { x <- flag_counts |> filter(variable == "tau_r"); if (nrow(x)) paste0("The random-walk step $\\phi_r$ is flagged in ", x$conflict + x$weak, " of ", x$n, " seasons, as expected of a parameter the data identify only weakly and whose prior is informative on purpose (@sec-hierarchy). ") else "" }``r { x <- flag_counts |> filter(variable %in% total_vars); if (nrow(x)) paste0("Of the ", nrow(x), " parameters of the total model, ", sum(x$conflict + x$weak > 0), " are flagged in some season; they affect the reported offence, defence and totals, not the power rating or the resume.") else "" }`
+`r sum(fc$weak > 0)` of the `r nrow(fc)` parameters are flagged for a weak likelihood in any season`r if (any(fc$weak > 0)) paste0(", in at most ", max(fc$weak), " season(s) each") else ""`. Prior--data conflict flags are the rule rather than the exception: `r sum(fc$conflict >= fc$n - 1)` of the `r nrow(fc)` parameters are flagged in all seasons or all but one. That is what the pooling of @sec-priors produces, and not a sign that the seasons disagree with their history. Each prior carries the information of several seasons (@eq-pool), so for `r sum(pooled$prior_sd < pooled$typical_post_sd)` of the `r nrow(pooled)` pooled parameters its standard deviation is smaller than that of a single season's full-data posterior; power-scaling either the prior or the likelihood then moves the posterior, and priorsense labels a parameter that is sensitive to both a conflict. Whether a season actually departs from its prior is answered directly by the leave-one-season-out column of @tbl-supp-justify, which compares each season's own estimate with the prior pooled from the other seasons. The degrees of freedom $\nu$ are identified only weakly once they exceed about 15, where the $t$ and normal laws are hard to tell apart (posterior means `r fmt(min(info$nu), 0)`--`r fmt(max(info$nu), 0)`), so their posterior follows the pooled $\mathrm{Gamma}(`r fmt(cfg$nu_prior[1], 1)`, `r fmt(cfg$nu_prior[2], 2)`)$ prior closely; @sec-supp-perturb refits with it and the prior on $\gamma$ widened fivefold. The sensitivity of $\nu$ matters for the tails of the predictive distribution, not for the ratings. `r { x <- flag_counts |> filter(variable %in% total_vars); if (nrow(x)) paste0("Of the ", nrow(x), " parameters of the total model, ", sum(x$conflict + x$weak > 0), " are flagged in some season; they affect the reported offence, defence and totals, not the power rating or the resume.") else "" }` How much the priors move the published products themselves is the subject of @sec-supp-perturb.
 
 ## Leave-one-out Cross-validation {#sec-loo}
 
@@ -1551,9 +1576,36 @@ base_cmp |>
   ktab(align = "llrrrrr")
 ```
 
-## Priors Set Without the Season {#sec-loso}
+## Priors and Preseason Terms Out of Sample {#sec-loso}
 
-The published priors pool every complete season, so the early weeks of, say, 2016 are predicted with priors informed by 2017--`r last_full`. To measure what that borrows, weeks 0--3 of every season from `r first_season + 1` are refitted with priors pooled from the *other* seasons only, and their predictions of weeks 1--4 scored against the published ones on the same `r fmt(nrow(loso_cmp))` games. The leave-one-season-out predictions have a mean absolute error of `r fmt(mean(abs(loso_cmp$e_l)), 2)` points against `r fmt(mean(abs(loso_cmp$e_m)), 2)` for the published ones, and a Brier score of `r fmt(mean(loso_cmp$b_l), 4)` against `r fmt(mean(loso_cmp$b_m), 4)`: the leakage from pooling is `r if (abs(mean(abs(loso_cmp$e_l)) - mean(abs(loso_cmp$e_m))) < 0.1) "negligible" else "measurable"` in the weeks where the priors matter most, and none at all later, when the data dominate them.
+```{r}
+pv <- targets::tar_read(prior_variant_summary, store = store)
+pv_all <- pv$overall
+pv_get <- function(v, col) pv_all[[col]][pv_all$variant == v]
+pv_before <- "Before (2026-10-10 priors)"
+pv_eq <- "Published, equal weights and sd x 2"
+pv_drop <- grep("^Without ", pv_all$variant, value = TRUE)
+```
+
+The pooling rule of @sec-priors and the preseason terms of @eq-hier were chosen on predictions of the first weeks, where the priors matter most, with each season's priors set without that season. For each variant, every complete season's final week is refitted under the vague priors with the variant's model; for each season from `r first_season + 1` the priors are then pooled from the *other* seasons only, weeks 0--3 are fitted with short chains, and each fit predicts the following week. @tbl-prior-variants compares the published settings, on the same `r fmt(pv_get("Published", "games"))` games, with the priors in use before this version (no preseason terms, equal weights and twice the between-season sd, the random-walk step prior $\mathcal N^+(0.6, 0.25^2)$, pooled from every season including the one predicted), with the published model under the earlier pooling rule, and with the published model without each of its preseason terms.
+
+```{r}
+#| label: tbl-prior-variants
+#| tbl-cap: !expr 'paste0("Predictions of weeks 1--4 from fits through weeks 0--3, ", first_season + 1, "--", last_full, ", under priors pooled without the season predicted (the first row excepted). Differences are from the published settings (positive = worse), with paired bootstrap standard errors over games; the last two columns are the coverage of the central 80\\% and 95\\% predictive intervals.")'
+pv_all |>
+  mutate(variant = factor(variant, levels = c("Published", pv_before, pv_eq, pv_drop))) |>
+  arrange(variant) |>
+  transmute(Settings = as.character(variant), MAE = fmt(mae, 2),
+            `$\\Delta$ MAE` = ifelse(variant == "Published", "--", sprintf("%s (%s)", fmt(d_mae, 3), fmt(d_mae_sd, 3))),
+            `$\\Delta$ log loss` = ifelse(variant == "Published", "--", sprintf("%s (%s)", fmt(d_logloss, 4), fmt(d_logloss_sd, 4))),
+            `$\\Delta$ CRPS` = ifelse(variant == "Published", "--", sprintf("%s (%s)", fmt(d_crps, 3), fmt(d_crps_sd, 3))),
+            `80\\%` = pct(cover80), `95\\%` = pct(cover95)) |>
+  ktab(align = c(">{\\raggedright\\arraybackslash}p{4cm}", rep("r", 6)))
+```
+
+Against the priors in use before, the published settings lower the mean absolute error of these predictions by `r fmt(pv_get(pv_before, "d_mae"), 2)` points and the CRPS by `r fmt(pv_get(pv_before, "d_crps"), 2)`, and bring the coverage of the 80\% interval from `r pct(pv_get(pv_before, "cover80"))` to `r pct(pv_get("Published", "cover80"))`, although the earlier priors had the advantage of being pooled from the season they predict. Each preseason term contributes: dropping `r knitr::combine_words(tolower(sub("^Without ", "", pv_drop)), oxford_comma = FALSE)` raises the mean absolute error by `r knitr::combine_words(fmt(sapply(pv_drop, pv_get, "d_mae"), 2), oxford_comma = FALSE)` points respectively. Two other candidates were tested in the same way and not adopted, since neither improved the log loss or the CRPS by more than its standard error: a separate carry-over for FCS and lower-division teams, and a wider preseason spread $\tau$ for teams with a new head coach. The pooling rule mostly affects calibration: the earlier rule's wider priors make the predictive intervals too wide in the first weeks.
+
+The leakage of pooling itself can be measured on the published settings alone. Weeks 0--3 of every season from `r first_season + 1` refitted with priors pooled from the *other* seasons predict weeks 1--4 with a mean absolute error of `r fmt(mean(abs(loso_cmp$e_l)), 2)` points against `r fmt(mean(abs(loso_cmp$e_m)), 2)` for the published predictions of the same `r fmt(nrow(loso_cmp))` games, and a Brier score of `r fmt(mean(loso_cmp$b_l), 4)` against `r fmt(mean(loso_cmp$b_m), 4)`: the leakage is `r if (abs(mean(abs(loso_cmp$e_l)) - mean(abs(loso_cmp$e_m))) < 0.1) "negligible" else "measurable"` in the weeks where the priors matter most, and none at all later, when the data dominate them.
 
 ## Preseason Ratings {#sec-preseason}
 
@@ -1570,7 +1622,7 @@ beta_s <- final_full |> select(season, b_prev) |>
 portal <- 2021
 ```
 
-Week-1 games are predicted from the preseason posterior, which rests on last season's final ratings through the carry-over $\beta$. The preseason power ranks agree with the preseason AP poll on the teams it ranks (rank correlation `r fmt(min(pre_ap$rho_ap, na.rm = TRUE), 2)`--`r fmt(max(pre_ap$rho_ap, na.rm = TRUE), 2)` by season), although the poll uses information the model lacks --- recruiting, coaching changes, returning starters and transfers. Against the season's final ratings, the preseason ratings have a rank correlation of `r fmt(min(pre_fin$rho_fin), 2)`--`r fmt(max(pre_fin$rho_fin), 2)`. A comparison with preseason SP+ would be the natural next check, but CFBD publishes SP+ only as an end-of-season rating.
+Week-1 games are predicted from the preseason posterior, which rests on last season's final ratings through the carry-over $\beta$. The preseason power ranks agree with the preseason AP poll on the teams it ranks (rank correlation `r fmt(min(pre_ap$rho_ap, na.rm = TRUE), 2)`--`r fmt(max(pre_ap$rho_ap, na.rm = TRUE), 2)` by season), although the poll uses information the model lacks --- coaching changes, the quality of individual returning starters and incoming transfers; the model sees returning production and the talent composite only as two team-level numbers. Against the season's final ratings, the preseason ratings have a rank correlation of `r fmt(min(pre_fin$rho_fin), 2)`--`r fmt(max(pre_fin$rho_fin), 2)`. A comparison with preseason SP+ would be the natural next check, but CFBD publishes SP+ only as an end-of-season rating.
 
 The transfer portal and the one-time transfer exception, from `r portal`, might be expected to weaken the link between seasons. @fig-beta shows $\beta$ by season. The mean estimate is `r fmt(mean(beta_s$v_mean[beta_s$season < portal & beta_s$season > first_season]), 2)` for `r first_season + 1`--`r portal - 1` and `r fmt(mean(beta_s$v_mean[beta_s$season >= portal]), 2)` for `r portal`--`r last_full`; with posterior standard deviations of about `r fmt(median(beta_s$v_sd), 2)` per season, `r if (abs(mean(beta_s$v_mean[beta_s$season >= portal]) - mean(beta_s$v_mean[beta_s$season < portal & beta_s$season > first_season])) < 2 * median(beta_s$v_sd) / sqrt(3)) "the data show no clear change" else "the change is larger than the estimation noise"`.
 
@@ -1593,25 +1645,25 @@ beta_s |>
 
 ## Tuned Choices {#sec-tuned}
 
-Every choice that was tuned or set from data is listed in @tbl-tuned, with the data it used. Several used the same seasons that the backtest reports, which makes the reported backtest slightly optimistic for those choices; @sec-loso bounds the effect for the pooled priors. The margin family was chosen on in-sample LOO at each season's final week, not on the backtest, but on the same seasons.
+Every choice that was tuned or set from data is listed in @tbl-tuned, with the data it used. Several used the same seasons that the backtest reports, which makes the reported backtest slightly optimistic for those choices; @sec-loso bounds the effect for the pooled priors, and the pooling rule and preseason terms were themselves chosen on leave-one-season-out predictions. The margin family was chosen on in-sample LOO at each season's final week, not on the backtest, but on the same seasons.
 
 ```{r}
 #| label: tbl-tuned
 #| tbl-cap: "Every tuned or data-driven setting, how it was set, and whether the data overlap the reported backtest."
 tibble::tribble(
   ~Setting, ~Value, ~`How set`, ~`Overlaps backtest`,
-  "Structural priors (12 parameters)", "Table~\\ref{tbl-priors}", "Pooled full-season refits under vague priors, all complete seasons (static Student-$t$ model)", "Yes (Section~\\ref{sec-loso})",
+  "Structural priors", "Tables~\\ref{tbl-priors}, \\ref{tbl-priors-other}", "Pooled full-season refits under vague priors, all complete seasons (Equation~\\ref{eq-pool})", "Yes (Section~\\ref{sec-loso})",
+  "Pooling rule", paste0("half-life ", cfg$pool$half_life, " seasons, predictive sd"), "Early-week predictions, leave-one-season-out priors (Section~\\ref{sec-loso})", "Yes",
+  "Preseason terms", "returning production, talent, two seasons back", "Early-week predictions, leave-one-season-out priors (Section~\\ref{sec-loso})", "Yes",
   "Margin family", fam_name[[fam]], "Pooled PSIS-LOO, final week of every complete season (Section~\\ref{sec-family})", "Yes",
-  "Random-walk step priors $\\phi_r, \\phi_t$", "Table~\\ref{tbl-priors-other}", "Preliminary full-season fit, 2025", "Yes",
-  "Total-model priors", "Table~\\ref{tbl-priors-other}", "FBS games, 2022--2025", "Yes",
   "Seasons left out of the pooling", paste0(first_season, "; 2020 for $\\eta$"), "Structural reasons, not tuned", "No",
   "Benchmark rank $b$", as.character(cfg$benchmark_rank), "Playoff size (Section~\\ref{sec-bench})", "No",
-  "Family shape priors", if (has_nu) paste0("Gamma(", cfg$nu_prior[1], ", ", cfg$nu_prior[2], "), $\\nu > ", cfg$nu_lower, "$") else "Table~\\ref{tbl-priors-other}", "Literature default, weakly informative", "No",
+  "Family shape priors", "Table~\\ref{tbl-priors-other}", if (has_nu) "$\\nu$ pooled like the structural priors" else "Weakly informative", if (has_nu) "Yes" else "No",
   "Minimum plays for $e_g$", as.character(cfg$min_plays), "Judgement", "No",
   "Garbage-time filter", "provider's", "CFBD definition", "No",
   "Sampler and gates", paste0(cfg$chains, " chains, ", cfg$iter_warmup, "/", cfg$iter_sampling), "Conventional thresholds", "No"
 ) |>
-  ktab(align = "llll")
+  ktab(align = paste0(">{\\raggedright\\arraybackslash}p{", c("3.2cm", "3.6cm", "5.2cm", "2.4cm"), "}"))
 ```
 
 # The `r last_full` Season {#sec-results}
@@ -1915,7 +1967,7 @@ The design principle of this paper is that a ranking should say which question i
 1. *The margin distribution near zero.* The model underpredicts one-score games in `r n_w7_fail` of `r nrow(w7)` seasons (@sec-ppc), and neither a two-normal scale mixture nor a scale that grows with the mismatch removes the misfit, although the latter improves the LOO density considerably (@sec-family). The remaining reason is that margins are integers with spikes at key numbers (3 and 7) and at zero (overtime games, whose regulation margin is zero by construction), while the likelihood is continuous. This affects spread and cover probabilities rather than win probabilities. Alternatives that respect the discreteness are models for the two scores themselves, such as the bivariate Poisson of @karlisAnalysisSportsData2003 or the hierarchical score model of @baioBayesianHierarchicalModel2010, or a rounded (interval-censored) version of the present likelihood. They should be compared on the margin's LOO density.
 2. *One step size for every team and week.* The random walk of @eq-walk moves every team by Gaussian steps of the same size, so a team that loses its quarterback in October is pulled down only gradually, at the rate the whole sport's drift allows, and a slow decline and a sudden one look alike. Heavier-tailed steps, or a step size that varies by team or by part of the season, would let a rating jump; the data identify even one step size only weakly (@sec-hierarchy), so such extensions would need informative structure, such as injury reports, rather than more parameters alone.
 3. *Asymmetric garbage time.* The efficiency margin excludes garbage time (the provider's definition), but the scoreboard margin cannot: a team that leads by 30 and rests its starters concedes late points that enter $y_g$ but not $e_g$. That shrinks the scoreboard margin of lopsided games relative to their efficiency margin, which the model can only absorb in $\lambda$ (the efficiency scale per point of margin) and $\kappa$; both are therefore averages over close and lopsided games. A margin-dependent $\lambda$, or a garbage-time-filtered scoreboard margin, would separate the two.
-4. *Priors from the whole history.* The structural priors use every complete season (@sec-priors). The leave-one-season-out comparison of @sec-loso bounds what that borrows; a strictly prospective version would set each season's priors from earlier seasons only.
+4. *Priors from the whole history.* The structural priors use every complete season (@sec-priors), weighted towards the recent ones. The leave-one-season-out comparisons of @sec-loso bound what that borrows; a strictly prospective version would set each season's priors from earlier seasons only. The preseason terms use only two team-level roster numbers; player-level returning production, incoming transfers and coaching staffs would sharpen the first weeks further, where the model still trails the market most (@sec-bt-accuracy).
 5. *A simple total model.* Offence and defence come from a total model that is Gaussian, independent of the margin given the ratings, and blind to the score of overtime games (@sec-total). It trails the closing over/under (@sec-bt-accuracy), and the priors of the total model and of the random-walk steps are provisional: they were set from preliminary fits rather than pooled from the vague-prior refits as the other structural priors were, and the twelve pooled priors themselves date from the static Student-$t$ model (@sec-priors). Re-pooling all of them under the published model is the next step.
 6. *Games are exchangeable.* Motivation, rest, travel, injuries and weather are all absent, and home field is one number per season for every venue (@fig-hfa); the gap to the closing line in @sec-backtest is a measure of how much they matter.
 
@@ -2381,11 +2433,11 @@ In week 1, `r nrow(low_c)` of `r n_distinct(contraction$variable)` structural pa
 
 ## Justification of the Informative Priors {#sec-supp-justify}
 
-Informative priors need a justification that does not come from the data they are applied to. Ours come from the history of the sport. The structural parameters describe the game rather than any team --- how much a home field is worth, how noisy a margin is, how far FCS teams sit below FBS teams, how much of a team's strength carries over a summer --- and they should change little from year to year. The `prior_refits` target checks this directly: it refits the full-season posterior of every complete season, each with about 1,550 games, under deliberately vague priors --- $\eta \sim \mathcal N(0, 10^2)$, tier offsets $\mathcal N(0, 100^2)$, $\beta$ nearly uniform on $(0, 1)$, half-normal priors with scale 25 on $\tau_\ell$ and $\omega$, scale 2 on $\lambda$ and $\kappa$, and scale 50 on $\sigma_e$ and $\sigma_m$, and comparably wide priors on the total model and the family's shape parameters --- so that a season's estimate owes nothing to the published priors. The exception is the random-walk step, which keeps its published prior, because under a vague one the sampler stalls in the funnel at small $\phi_r$ (@sec-hierarchy). @fig-supp-justify plots the resulting per-season posteriors against the priors now in use, and @tbl-supp-justify gives the numbers.
+Informative priors need a justification that does not come from the data they are applied to. Ours come from the history of the sport. The structural parameters describe the game rather than any team --- how much a home field is worth, how noisy a margin is, how far FCS teams sit below FBS teams, how much of a team's strength carries over a summer --- and they should change little from year to year. The `prior_refits` target checks this directly: it refits the full-season posterior of every complete season, each with about 1,550 games, under deliberately vague priors --- $\eta \sim \mathcal N(0, 10^2)$, tier offsets $\mathcal N(0, 100^2)$, $\beta$ nearly uniform on $(0, 1)$, half-normal priors with scale 25 on $\tau_\ell$ and $\omega$, scale 2 on $\lambda$ and $\kappa$, and scale 50 on $\sigma_e$ and $\sigma_m$, and comparably wide priors on the total model and the family's shape parameters --- so that a season's estimate owes nothing to the published priors. The random-walk steps get wide priors centred away from zero, $\mathcal N^+(0.8, 0.8^2)$ for $\phi_r$ and $\mathcal N^+(1, 0.8^2)$ for $\phi_t$, because under one with its mode at zero the sampler stalls in the funnel at small $\phi_r$ (@sec-hierarchy); $\nu$ gets $\mathrm{Gamma}(2, 0.05)$, with mean 40, and the preseason coefficients normal priors several times wider than their estimates. @fig-supp-justify plots the resulting per-season posteriors against the priors now in use, and @tbl-supp-justify gives the numbers.
 
 ```{r}
 #| label: fig-supp-justify
-#| fig-cap: "Per-season full-season posteriors under vague priors (points: mean; bars: $\\pm 2$ posterior sd) against the prior now in use (line: prior mean; bands: $\\pm 1$ and $\\pm 2$ prior sd). The priors are centred on the pooled mean of the seasons after the first and are twice as wide as the between-season spread."
+#| fig-cap: "Per-season full-season posteriors under vague priors (points: mean; bars: $\\pm 2$ posterior sd) against the prior now in use (line: prior mean; bands: $\\pm 1$ and $\\pm 2$ prior sd). The priors are centred on the recency-weighted mean of the seasons after the first, with the predictive standard deviation of @eq-pool."
 #| fig-scap: "Per-season posteriors against the priors"
 #| fig-width: 6.5
 #| fig-asp: 0.95
@@ -2410,15 +2462,9 @@ struct |>
 
 ```{r}
 #| label: tbl-supp-justify
-#| tbl-cap: "Empirical basis of the structural priors: the pooled mean of the per-season full-season posterior means under vague priors, their between-season standard deviation, the typical (median) within-season posterior sd, and the prior now in use. \\emph{Ratio} is the prior sd over the between-season sd; \\emph{LOSO} is the share of seasons whose own estimate lies within two prior sds of the prior pooled from the other seasons."
+#| tbl-cap: "Empirical basis of the structural priors: the pooled mean of the per-season full-season posterior means under vague priors, their between-season standard deviation, the typical within-season posterior sd (root mean square), and the prior now in use. \\emph{Ratio} is the prior sd over the between-season sd; \\emph{LOSO} is the share of seasons whose own estimate lies within two standard deviations of the prior pooled from the other seasons, counting the estimate's own posterior sd."
 # Leave-one-season-out: is each season's estimate inside the prior pooled from the others?
-pool_seasons <- setdiff(complete, first_season)
-loso_z <- map_dfr(pool_seasons, function(s0) {
-  others <- refits |> filter(season %in% setdiff(pool_seasons, s0), !(variable == "hfa" & season == 2020)) |>
-    group_by(variable) |> summarise(m = mean(mean), sdp = 2 * sd(mean), .groups = "drop")
-  refits |> filter(season == s0) |> inner_join(others, by = "variable") |>
-    transmute(season = s0, variable, z = (mean - m) / sdp)
-}) |> filter(!(variable == "hfa" & season == 2020))
+loso_z <- targets::tar_read(prior_loso_check, store = store)
 loso_cov <- loso_z |> group_by(variable) |> summarise(cov = mean(abs(z) <= 2)) |> (\(d) setNames(d$cov, d$variable))()
 pooled |>
   filter(variable %in% names(pm_lab)) |>
@@ -2432,7 +2478,7 @@ pooled |>
   ktab(align = "lrrrrrrr")
 ```
 
-Four points qualify this justification. First, pooling every complete season is empirical Bayes at the level of the sport, and saying that a season's estimate lies inside a prior partly built from it would be circular. The last column of @tbl-supp-justify avoids that: for each season it pools the *other* seasons only and asks whether the season's own estimate lies within two prior standard deviations of that leave-one-season-out prior. For every parameter it does in `r pct(min(loso_cov[pri$variable], na.rm = TRUE))` or more of seasons, so a new season should be expected to fall inside its prior. Second, `r first_season` is left out of the pooling for the structural reason given in @sec-priors, and 2020 for $\eta$. Third, the prior standard deviation is twice the between-season spread of the posterior means, and that spread is itself inflated by estimation noise: for `r sym_list(noise_pars)` it is about the size of the within-season posterior sd. The priors are therefore somewhat wider than the true season-to-season variation of the sport, which errs on the side of letting each season's data speak. Fourth, the parameters of @tbl-priors-other are not pooled at all: `r if (has_nu) "the degrees of freedom $\\nu$ keep the weakly informative $\\mathrm{Gamma}(2, 0.1)$ prior of @juarezModelBasedClusteringNonGaussian2010, which puts most of its mass between about 3 and 50 and so lets the data choose between heavy and nearly normal tails, and " else ""`the random-walk and total-model priors are provisional (@sec-priors). The twelve pooled priors are also a version behind: @fig-supp-justify shows the refits under the published model against priors pooled under the static Student-$t$ model, and `r { dz <- pooled |> inner_join(pri, by = "variable") |> mutate(z = abs(pooled_mean - mean) / sd); paste0(sum(dz$z > 0.5), " of the ", nrow(dz), " prior means are more than half a prior sd from the current pooled mean", if (any(dz$z > 0.5)) paste0(" (", sym_list(dz$variable[dz$z > 0.5]), ")") else "") }`.
+Four points qualify this justification. First, pooling every complete season is empirical Bayes at the level of the sport, and saying that a season's estimate lies inside a prior partly built from it would be circular. The last column of @tbl-supp-justify avoids that: for each season it pools the *other* seasons only and asks whether the season's own estimate lies within two standard deviations of that leave-one-season-out prior, where the standard deviation combines the prior's with the estimate's own posterior standard deviation. For every parameter it does in `r pct(min(loso_cov[pri$variable], na.rm = TRUE))` or more of seasons, so a new season should be expected to fall inside its prior. Second, `r first_season` is left out of the pooling for the structural reason given in @sec-priors, and 2020 for $\eta$. Third, the prior standard deviation removes estimation noise from the between-season spread (@eq-pool). For `r sym_list(noise_pars)` that spread is about the size of the within-season posterior sd, so their priors are narrow, as narrow as the uncertainty of a mean over about `r fmt(median(pooled$n_eff), 0)` effective seasons. That is the right width if the parameter is the same every season, and the leave-one-season-out column checks it. Fourth, the priors in use are copied into the configuration from one run of the refits and lag them by a rebuild: `r { dz <- pooled |> inner_join(pri, by = "variable") |> mutate(z = abs(pooled_mean - mean) / sd); paste0(sum(dz$z > 0.5), " of the ", nrow(dz), " prior means ", if (sum(dz$z > 0.5) == 1) "is" else "are", " more than half a prior sd from the current pooled mean", if (any(dz$z > 0.5)) paste0(" (", sym_list(dz$variable[dz$z > 0.5]), ")") else "") }`.
 
 ## Induced Priors {#sec-supp-induced}
 
@@ -2470,7 +2516,7 @@ ip$draws |>
 
 ```{r}
 #| label: fig-supp-induced
-#| fig-cap: !expr 'paste0("Prior predictive distributions of three statistics of the ", last_full, " regulation margins, simulated from the priors alone; the vertical line is the observed value. The SD panel omits the ", pct(mean(ip$draws$sd_margin > 60), 1), " of draws above 60 points, all with $\\nu < 3$ (see text).")'
+#| fig-cap: !expr 'paste0("Prior predictive distributions of three statistics of the ", last_full, " regulation margins, simulated from the priors alone; the vertical line is the observed value.", if (any(ip$draws$sd_margin > 60)) paste0(" The SD panel omits the ", pct(mean(ip$draws$sd_margin > 60), 1), " of draws above 60 points (see text).") else "")'
 #| fig-scap: "Prior predictive checks"
 #| fig-width: 6.5
 #| fig-asp: 0.32
@@ -2493,7 +2539,7 @@ ipq <- function(v, p) quantile(ip$draws[[v]], p, names = FALSE)
 ip_in <- map_lgl(names(ip_lab), \(v) ip$observed[[v]] >= ipq(v, 0.025) & ip$observed[[v]] <= ipq(v, 0.975))
 ```
 
-The induced priors are on the scale of the sport: before any game, the model expects the best FBS team to be about `r fmt(ipq("top_minus_12", 0.5), 0)` points better than the twelfth (90\% prior interval `r fmt(ipq("top_minus_12", 0.05), 0)`--`r fmt(ipq("top_minus_12", 0.95), 0)`), an even game to be won at home `r pct(ipq("p_home_even", 0.5))` of the time, and margins with a standard deviation of about `r fmt(ipq("sd_margin", 0.5), 0)` points. `r sum(ip_in)` of the three observed statistics lie inside the central 95\% of their prior predictive distribution`r if (!all(ip_in)) paste0("; the exception is the ", paste(tolower(ip_lab[!ip_in]), collapse = " and "), ", the statistic the fitted model also misses (@sec-ppc)") else ""`. Three induced quantities deserve care. The first is a warning. The $\mathrm{Gamma}(2, 0.1)$ prior on $\nu$ puts `r pct(mean(ip$draws$nu < 3), 1)` of its mass below 3, where the $t$ law has little or no variance, and those draws produce prior-predictive seasons with a margin standard deviation above 50 points (`r pct(mean(ip$draws$sd_margin > 50), 1)` of draws; 99th percentile `r fmt(ipq("sd_margin", 0.99), 0)`). This is harmless here, because $\nu$ is estimated between `r fmt(min(info$nu), 0)` and `r fmt(max(info$nu), 0)` in every season and its posterior contracts well (@fig-supp-contraction), but it is precisely the kind of implausible implication a prior on one parameter can have for an observable, and a prior bounded away from Cauchy tails (say $\nu > 3$) would be a defensible tightening. The spread of FBS strengths combines $\omega$, $\tau_1$ and $\beta d_i$, so a prior that looks modest for each piece can imply a wide or narrow league; the table shows it lands at a plausible `r fmt(ipq("sd_fbs", 0.5), 0)` points. And the prior on $\bar\sigma = (\sigma_m^2 + \kappa^2\sigma_e^2)^{1/2}$, which with the family's shape parameters sets every win probability and therefore every $\pi_g$ in the resume, is induced by three separate priors; its 90\% prior interval, `r fmt(ipq("sigma_marg", 0.05), 1)`--`r fmt(ipq("sigma_marg", 0.95), 1)` points, is narrow, which is appropriate only because each of the three is well estimated in every season (@fig-supp-justify).
+The induced priors are on the scale of the sport: before any game, the model expects the best FBS team to be about `r fmt(ipq("top_minus_12", 0.5), 0)` points better than the twelfth (90\% prior interval `r fmt(ipq("top_minus_12", 0.05), 0)`--`r fmt(ipq("top_minus_12", 0.95), 0)`), an even game to be won at home `r pct(ipq("p_home_even", 0.5))` of the time, and margins with a standard deviation of about `r fmt(ipq("sd_margin", 0.5), 0)` points. `r sum(ip_in)` of the three observed statistics lie inside the central 95\% of their prior predictive distribution`r if (!all(ip_in)) paste0("; the exception is the ", paste(tolower(ip_lab[!ip_in]), collapse = " and "), ", the statistic the fitted model also misses (@sec-ppc)") else ""`. Three induced quantities deserve care. The first is the tail of the margin law. A vague prior on $\nu$ such as $\mathrm{Gamma}(2, 0.1)$ puts `r pct(pgamma(3, 2, 0.1), 1)` of its mass below 3, where the $t$ law has little or no variance, and such draws produce prior-predictive seasons with a margin standard deviation of 50 points or more: an implausible implication of a prior on one parameter for an observable. The pooled prior avoids it, because every season's vague-prior estimate of $\nu$ lies between `r fmt(min(struct$mean[struct$variable == "nu"]), 0)` and `r fmt(max(struct$mean[struct$variable == "nu"]), 0)` (@tbl-priors-other): `r pct(mean(ip$draws$nu < 3), 1)` of its draws fall below 3, and the 99th percentile of the prior-predictive margin standard deviation is `r fmt(ipq("sd_margin", 0.99), 0)` points. The spread of FBS strengths combines $\omega$, $\tau_1$ and $\beta d_i$, so a prior that looks modest for each piece can imply a wide or narrow league; the table shows it lands at a plausible `r fmt(ipq("sd_fbs", 0.5), 0)` points. And the prior on $\bar\sigma = (\sigma_m^2 + \kappa^2\sigma_e^2)^{1/2}$, which with the family's shape parameters sets every win probability and therefore every $\pi_g$ in the resume, is induced by three separate priors; its 90\% prior interval, `r fmt(ipq("sigma_marg", 0.05), 1)`--`r fmt(ipq("sigma_marg", 0.95), 1)` points, is narrow, which is appropriate only because each of the three is well estimated in every season (@fig-supp-justify).
 
 ## Posterior Predictive Checks {#sec-supp-ppc}
 
@@ -2730,19 +2776,20 @@ if (!is.null(ps)) {
 
 ## Sensitivity to the Prior: Perturbation Refits {#sec-supp-perturb}
 
-Power-scaling is a local check: it asks what happens under small multiplicative changes to the prior. The requirement that matters in practice is global --- that a reasonable analyst with a different prior would publish essentially the same ratings. We therefore refit both posteriors under four joint alternatives for every structural prior: all prior standard deviations doubled, all multiplied by five (close to vague on the scale of these parameters), and all prior means moved up, or down, by one prior standard deviation. The last two move every mean at once in the same direction, a deliberately harsh test. A fifth alternative bounds the degrees of freedom at $\nu > 3$, the tightening suggested by the induced priors (@sec-supp-induced). Joint changes can cancel, so each prior group is also widened fivefold on its own. @tbl-supp-perturb-par gives the structural posteriors and @tbl-supp-perturb-out compares what is published: the FBS power ratings and the resume. @tbl-supp-perturb-single gives the one-at-a-time results, and @tbl-supp-perturb-2020 repeats the joint alternatives for 2020, the most atypical season.
+Power-scaling is a local check: it asks what happens under small multiplicative changes to the prior. The requirement that matters in practice is global --- that a reasonable analyst with a different prior would publish essentially the same ratings. We therefore refit both posteriors under four joint alternatives for every structural prior: all prior standard deviations doubled, all multiplied by five (close to vague on the scale of these parameters), and all prior means moved up, or down, by one prior standard deviation. The last two move every mean at once in the same direction, a deliberately harsh test. The family's shape parameters ($\nu$ and $\gamma$) are pooled like the others and move with them; the mean and standard deviation of the Gamma prior on $\nu$ are moved and matched back to a Gamma. Joint changes can cancel, so each prior group is also widened fivefold on its own. @tbl-supp-perturb-par gives the structural posteriors and @tbl-supp-perturb-out compares what is published: the FBS power ratings and the resume. @tbl-supp-perturb-single gives the one-at-a-time results, and @tbl-supp-perturb-2020 repeats the joint alternatives for 2020, the most atypical season.
 
 ```{r}
 ps_all <- targets::tar_read(prior_sensitivity, store = store)
-sc_joint <- c("Baseline", "SD x 2", "SD x 5", "Means + 1 SD", "Means - 1 SD", "nu > 3")
+sc_joint <- c("Baseline", "SD x 2", "SD x 5", "Means + 1 SD", "Means - 1 SD")
 grp_tex <- c(hfa = "$\\eta$", tier = "$m_2, m_3$", b_prev = "$\\beta$", sigma_team = "$\\tau_\\ell$",
              sigma_conf = "$\\omega$", lambda = "$\\lambda$", kappa = "$\\kappa$", sigma_eff = "$\\sigma_e$",
-             sigma_m = "$\\sigma_m$", tau = "$\\phi_r, \\phi_t$", total = "total-model")
+             sigma_m = "$\\sigma_m$", tau = "$\\phi_r, \\phi_t$", family = if (fam == "scale_t") "$\\nu, \\gamma$" else "$\\nu$",
+             total = "total-model", preseason = "preseason terms")
 grp_tex <- grp_tex[names(grp_tex) %in% unique(sub("SD x 5: ", "", map_chr(ps_all, "scenario")))]
 sc_single <- paste0("SD x 5: ", names(grp_tex))
 sc_levels <- c(sc_joint, sc_single)
 sc_tex <- c(Baseline = "Baseline", `SD x 2` = "SD $\\times$ 2", `SD x 5` = "SD $\\times$ 5",
-            `Means + 1 SD` = "Means $+$1 SD", `Means - 1 SD` = "Means $-$1 SD", `nu > 3` = "$\\nu > 3$",
+            `Means + 1 SD` = "Means $+$1 SD", `Means - 1 SD` = "Means $-$1 SD",
             setNames(paste0(grp_tex, " sd $\\times$ 5"), sc_single))
 ps_par <- map_dfr(ps_all, \(x) mutate(x$par, fit = x$fit, scenario = x$scenario))
 ps_rat <- map_dfr(ps_all, \(x) mutate(x$ratings, fit = x$fit, scenario = x$scenario))
@@ -2857,12 +2904,11 @@ perturb_2020 |>
             `Max rank $\\Delta$ (top 25)` = max_rank, `Top-12 changes` = fmt(top12, 0)) |>
   ktab(align = "llrrrrrr")
 p20 <- perturb_2020 |> filter(fit == "final")
-nu3 <- perturb_out |> filter(scenario == "nu > 3")
 ```
 
 At the end of the season the prior is immaterial to what is published: under every alternative the FBS power ratings correlate with the baseline at $\rho `r if (min(pf$rho_power) >= 0.9995) "> 0.999" else paste("\\ge", fmt(min(pf$rho_power), 3))`$, no team's rating moves by more than `r fmt(max(pf$max_power), 1)` points (mean `r fmt(max(pf$mad_power), 2)`), and `r if (max(pf$top12) == 0) "the resume top 12 is unchanged" else paste0("at most ", fmt(max(pf$top12), 0), " team(s) enter or leave the resume top 12")`. More strikingly, the week-1 ratings are also robust, although several structural posteriors there stay close to their priors (@sec-supp-prior): widening every prior fivefold moves no FBS rating by more than `r fmt(p1$max_power[p1$scenario == "SD x 5"], 1)` points, shifting every prior mean by one prior standard deviation moves none by more than `r fmt(max(p1$max_power[grepl("Means", p1$scenario)]), 1)`, and the ratings keep their order ($\rho \ge `r fmt(min(p1$rho_power), 3)`$). The reason is that a week-1 rating rests mainly on the carry-over $\beta d_i$ from last season's final ratings, and $\beta$ is estimated from the week-1 games together with last season's ratings, whatever its prior; the priors on the scales and offsets change how much each team is shrunk towards its conference, which moves ratings by a point or two, not their order. The structural priors therefore stabilise the sampler in data-poor weeks (@sec-priors) without determining what is published. The priors on lower-division offsets and spreads, which the diagnostics flag most, affect FBS ratings only through the handful of cross-tier games.
 
-One prior group at a time (@tbl-supp-perturb-single), the largest effect in the final fit comes from widening the prior on `r grp_tex[sub("SD x 5: ", "", as.character(ps_single_max$scenario[ps_single_max$fit == "final"]))]`, which moves no FBS rating by more than `r fmt(ps_single_max$max_power[ps_single_max$fit == "final"], 1)` points; in week 1 it is the prior on `r grp_tex[sub("SD x 5: ", "", as.character(ps_single_max$scenario[ps_single_max$fit == "first"]))]`, at `r fmt(ps_single_max$max_power[ps_single_max$fit == "first"], 1)` points. Bounding $\nu > 3$ moves no final rating by more than `r fmt(nu3$max_power[nu3$fit == "final"], 2)` points, as expected when every season's $\nu$ is estimated well above 3. For 2020 (@tbl-supp-perturb-2020), a season with atypical home field, few early games and a spring FCS season, the final ratings under the joint alternatives keep a rank correlation of at least `r fmt(min(p20$rho_power), 3)` and no rating moved by more than `r fmt(max(p20$max_power), 1)` points.
+One prior group at a time (@tbl-supp-perturb-single), the largest effect in the final fit comes from widening the prior on `r grp_tex[sub("SD x 5: ", "", as.character(ps_single_max$scenario[ps_single_max$fit == "final"]))]`, which moves no FBS rating by more than `r fmt(ps_single_max$max_power[ps_single_max$fit == "final"], 1)` points; in week 1 it is the prior on `r grp_tex[sub("SD x 5: ", "", as.character(ps_single_max$scenario[ps_single_max$fit == "first"]))]`, at `r fmt(ps_single_max$max_power[ps_single_max$fit == "first"], 1)` points. For 2020 (@tbl-supp-perturb-2020), a season with atypical home field, few early games and a spring FCS season, the final ratings under the joint alternatives keep a rank correlation of at least `r fmt(min(p20$rho_power), 3)` and no rating moved by more than `r fmt(max(p20$max_power), 1)` points.
 
 ## Simulation-based Calibration {#sec-supp-sbc}
 
@@ -2873,11 +2919,12 @@ The checks so far ask whether the model fits the data. Simulation-based calibrat
 #| fig-cap: !expr 'paste0("Simulation-based calibration, ", n_distinct(sbc$ranks$sim), " simulated seasons. Histograms of the rank of the true value among ", sbc$n_rank_draws, " posterior draws, in 10 bins; the band is the central 99\\% range of a bin count under uniformity (for the team-level quantities, pooled over all FBS teams, so the band is narrow). The label gives the coverage of the central 80\\% posterior interval.")'
 #| fig-scap: "Simulation-based calibration"
 #| fig-width: 6.5
-#| fig-asp: 0.75
+#| fig-asp: 0.95
 sbc_r <- sbc$ranks |> mutate(bin = pmin(floor(rank / ((sbc$n_rank_draws + 1) / 10)), 9))
 sbc_lab <- c(hfa = "eta", b_prev = "beta", sigma_m = "sigma[m]", lambda = "lambda", kappa = "kappa",
              sigma_conf = "omega", nu = "nu", gamma_m = "gamma", p_wide = "p[w]", sigma_w = "sigma[w]",
-             tau_r = "phi[r]", `Power rating` = "Power~rating", WAB = "WAB",
+             tau_r = "phi[r]", b_ret = "beta[q]", c_ret = "gamma[q]", b_tal = "gamma[a]", b_prev2 = "beta[2]",
+             b_prev_low = "beta[low]", delta_coach = "delta[c]", `Power rating` = "Power~rating", WAB = "WAB",
              `Power rank` = "Power~rank", `Resume rank` = "Resume~rank")
 sbc_lab <- sbc_lab[names(sbc_lab) %in% unique(sbc$ranks$quantity)]
 sbc_cnt <- sbc_r |> count(quantity, bin) |> group_by(quantity) |> mutate(N = sum(n)) |> ungroup()

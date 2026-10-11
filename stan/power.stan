@@ -31,6 +31,13 @@
 //            t0 has the same structure with its own conference spread, tier offsets and carry-over.
 // prev_dev is last season's final rating relative to its tier's mean (0 when unknown); prev_sd
 // is its posterior sd, integrated out: s_team = sqrt(sigma_team^2 + (b_prev prev_sd)^2).
+// Optional preseason terms (each behind a switch, 0 for teams without the data):
+//   b_prev_tier  FCS and non-D1 teams get their own carry-over b_prev_low
+//   use_ret      carry-over b_prev + b_ret * ret and a level shift c_ret * ret, where ret is the
+//                share of last season's production that returns (centred within FBS)
+//   use_tal      level shift b_tal * tal (roster talent composite, standardised within FBS)
+//   use_prev2    level shift b_prev2 * prev2_dev (the rating two seasons back vs. its tier mean)
+//   use_coach    sigma_team scaled by exp(delta_coach) for teams with a new head coach
 //
 // Dynamics: a team's state at each week it plays ("states", in week order per team) is its
 // previous state plus tau * sqrt(weeks elapsed) * N(0, 1); the first state steps from r0 (the
@@ -128,6 +135,23 @@ data {
   vector[2] sigma_es_prior;
   vector[2] sigma_tot_prior;
 
+  // Preseason covariates (0 where unknown) and their priors
+  vector[N_teams] ret;
+  vector[N_teams] tal;
+  vector[N_teams] prev2_dev;
+  vector<lower=0, upper=1>[N_teams] coach_new;
+  int<lower=0, upper=1> b_prev_tier;
+  int<lower=0, upper=1> use_ret;
+  int<lower=0, upper=1> use_tal;
+  int<lower=0, upper=1> use_prev2;
+  int<lower=0, upper=1> use_coach;
+  vector[2] b_prev_low_prior;
+  vector[2] b_ret_prior;
+  vector[2] c_ret_prior;
+  vector[2] b_tal_prior;
+  vector[2] b_prev2_prior;
+  vector[2] delta_coach_prior;
+
   int<lower=1, upper=4> margin_family;
   int<lower=0, upper=1> dynamic;
   int<lower=0, upper=1> use_total;
@@ -190,6 +214,14 @@ parameters {
   vector<lower=0, upper=1>[is_mix] p_wide_raw;
   vector<lower=0>[is_sct] gamma_raw;
 
+  // Preseason terms
+  vector<lower=0, upper=1>[b_prev_tier] b_prev_low_raw;
+  vector[use_ret] b_ret_raw;
+  vector[use_ret] c_ret_raw;
+  vector[use_tal] b_tal_raw;
+  vector[use_prev2] b_prev2_raw;
+  vector[use_coach] delta_coach_raw;
+
   // Total model
   vector[use_total] base_raw;
   vector[use_total ? 2 : 0] t_tier_raw;
@@ -210,8 +242,18 @@ parameters {
 transformed parameters {
   vector[3] mu_tier = append_row(0, mu_tier_raw);
   vector[N_conf] mu_conf = mu_tier[conf_tier] + conf_level * sigma_conf * conf_raw;
-  vector[N_teams] r0 = mu_conf[team_conf] + b_prev * prev_dev
-                       + sqrt(square(sigma_team[team_tier]) + square(b_prev * prev_sd)) .* z;
+  vector[N_teams] r0;
+  {
+    vector[N_teams] carry = rep_vector(b_prev, N_teams);
+    vector[N_teams] s_team = sigma_team[team_tier];
+    if (b_prev_tier) for (i in 1:N_teams) if (team_tier[i] > 1) carry[i] = b_prev_low_raw[1];
+    if (use_ret) carry += b_ret_raw[1] * ret;
+    if (use_coach) s_team = s_team .* exp(delta_coach_raw[1] * coach_new);
+    r0 = mu_conf[team_conf] + carry .* prev_dev + sqrt(square(s_team) + square(carry .* prev_sd)) .* z;
+    if (use_ret) r0 += c_ret_raw[1] * ret;
+    if (use_tal) r0 += b_tal_raw[1] * tal;
+    if (use_prev2) r0 += b_prev2_raw[1] * prev2_dev;
+  }
   real sigma_marg = sqrt(square(sigma_m) + square(kappa * sigma_eff));
   // Family parameters as scalars (defaults where the family does not use them)
   real tau_r = 0;
@@ -275,6 +317,12 @@ transformed parameters {
             + normal_lpdf(sigma_tot_raw | sigma_tot_prior[1], sigma_tot_prior[2]);
     if (dyn_t) lprior += normal_lpdf(tau_t_raw | tau_t_prior[1], tau_t_prior[2]);
   }
+  if (b_prev_tier) lprior += normal_lpdf(b_prev_low_raw | b_prev_low_prior[1], b_prev_low_prior[2]);
+  if (use_ret) lprior += normal_lpdf(b_ret_raw | b_ret_prior[1], b_ret_prior[2])
+                         + normal_lpdf(c_ret_raw | c_ret_prior[1], c_ret_prior[2]);
+  if (use_tal) lprior += normal_lpdf(b_tal_raw | b_tal_prior[1], b_tal_prior[2]);
+  if (use_prev2) lprior += normal_lpdf(b_prev2_raw | b_prev2_prior[1], b_prev2_prior[2]);
+  if (use_coach) lprior += normal_lpdf(delta_coach_raw | delta_coach_prior[1], delta_coach_prior[2]);
 }
 
 model {

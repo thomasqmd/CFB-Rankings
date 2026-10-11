@@ -380,7 +380,9 @@ summarise_snapshot <- function(input, draws, health, cfg = model_config()) {
     sigma_m = mean(par$sigma_m), sigma_eff = mean(par$sigma_eff), sigma_conf = mean(par$sigma_conf),
     sigma_team_fbs = mean(par$`sigma_team[1]`), sigma_team_fcs = mean(par$`sigma_team[2]`),
     sigma_team_nond1 = mean(par$`sigma_team[3]`),
-    base = m(par$base), tau_t = m(par$tau_t), sigma_tot = m(par$sigma_tot_marg), b_prev_t = m(par$b_prev_t)
+    base = m(par$base), tau_t = m(par$tau_t), sigma_tot = m(par$sigma_tot_marg), b_prev_t = m(par$b_prev_t),
+    b_prev_low = m(par$b_prev_low), b_ret = m(par$b_ret), c_ret = m(par$c_ret), b_tal = m(par$b_tal),
+    b_prev2 = m(par$b_prev2), delta_coach = m(par$delta_coach)
   ) |> dplyr::bind_cols(health)
 
   game_ids <- function(df) df |> dplyr::mutate(team_id = teams$team_id[team]) |> dplyr::select(-team)

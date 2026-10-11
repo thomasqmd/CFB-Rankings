@@ -34,20 +34,32 @@ vague_config <- function(cfg = model_config()) {
   cfg$sigma_conf_prior <- c(0, 25)
   cfg$lambda_prior <- c(0, 2); cfg$kappa_prior <- c(0, 2)
   cfg$sigma_eff_prior <- c(0, 50); cfg$sigma_m_prior <- c(0, 50)
-  # tau keeps the published prior: the data identify it only weakly, and a vague prior just
-  # puts the sampler in the funnel at small tau
+  # tau: wide, but centred away from 0 (a prior with its mode at 0 puts the sampler in the funnel
+  # of the random walk); nu: Gamma(2, 0.05), mean 40
+  cfg$tau_r_prior <- c(0.8, 0.8); cfg$tau_t_prior <- c(1, 0.8)
+  cfg$nu_prior <- c(2, 0.05)
   cfg$sigma_gap_prior <- c(0, 25); cfg$gamma_prior <- c(0, 1)
   cfg$base_prior <- c(25, 20); cfg$t_tier_mean <- c(0, 0); cfg$t_tier_sd <- c(50, 50)
   cfg$sigma_t_team_prior <- c(0, 25); cfg$sigma_conf_t_prior <- c(0, 25); cfg$b_prev_t_prior <- c(0.5, 1)
   cfg$lambda_t_prior <- c(0, 2); cfg$alpha_es_prior <- c(0, 50); cfg$kappa_t_prior <- c(0, 2)
   cfg$sigma_es_prior <- c(0, 50); cfg$sigma_tot_prior <- c(0, 50)
+  cfg$b_prev_low_prior <- c(0.5, 1); cfg$b_ret_prior <- c(0, 2); cfg$c_ret_prior <- c(0, 50)
+  cfg$b_tal_prior <- c(0, 10); cfg$b_prev2_prior <- c(0, 1); cfg$delta_coach_prior <- c(0, 1)
+  cfg
+}
+
+#' Longer chains than the published ones, for full-season fits under the vague priors: under the
+#' wide random-walk priors the tails of the step sizes mix slowly
+long_chains <- function(cfg) {
+  cfg$iter_warmup <- 1000L; cfg$iter_sampling <- 2000L
+  cfg$retry_warmup <- 1500L; cfg$retry_sampling <- 4000L
   cfg
 }
 
 #' Refit each season's final snapshot under the vague priors
 #' @param final_inputs list of final-week inputs, one per complete season
 run_prior_refits <- function(final_inputs, cfg = model_config(), workers = 2L, seed = 2026) {
-  vcfg <- vague_config(cfg)
+  vcfg <- long_chains(vague_config(cfg))
   res <- parallel::mclapply(final_inputs, function(input) {
     input <- apply_priors(input, vcfg)
     f <- fit_power(input, vcfg, seed = seed)
@@ -58,26 +70,48 @@ run_prior_refits <- function(final_inputs, cfg = model_config(), workers = 2L, s
   dplyr::bind_rows(res)
 }
 
-#' Pool the vague-prior refits into priors: centred on the mean over seasons, sd = 2x the
-#' between-season sd. 2014 is left out (no carry-over that season, so conference effects
-#' absorb team strength), as is 2020 for home field (no crowds). `drop` removes more seasons
-#' (leave-one-season-out).
-pool_priors <- function(refits, drop = integer(0), exclude = 2014L, hfa_exclude = 2020L, sd_mult = 2) {
-  refits |>
-    dplyr::filter(!season %in% c(exclude, drop), !(variable == "hfa" & season %in% hfa_exclude)) |>
+#' Pool the vague-prior refits into priors. 2014 is left out (no carry-over that season, so
+#' conference effects absorb team strength), as is 2020 for home field (no crowds). `drop` removes
+#' more seasons (leave-one-season-out). Seasons are weighted by recency, 0.5^(|season - target| /
+#' half_life), where target is the season the priors are for: the dropped season when one is
+#' dropped, else the season after the last refit. The prior is centred on the weighted mean; its sd
+#' is sd_mult x the between-season sd (sd_rule = "mult") or the random-effects predictive sd for a
+#' new season (sd_rule = "predictive"): the between-season sd in excess of the one-season posterior
+#' sd, plus the uncertainty of the mean, floored at sd_floor x the one-season posterior sd.
+#' The defaults come from model_config()$pool.
+pool_priors <- function(refits, drop = integer(0), exclude = 2014L, hfa_exclude = 2020L,
+                        pool = model_config()$pool, target = NULL) {
+  half_life <- pool$half_life %||% Inf
+  x <- refits |>
+    dplyr::filter(!season %in% c(exclude, drop), !(variable == "hfa" & season %in% hfa_exclude))
+  target <- target %||% if (length(drop) == 1) drop else max(x$season) + 1L
+  x |>
+    dplyr::mutate(w = 0.5^(abs(season - target) / half_life)) |>
     dplyr::group_by(variable) |>
-    dplyr::summarise(pooled_mean = mean(mean), between_sd = stats::sd(mean), typical_post_sd = stats::median(sd),
-                     min = min(mean), max = max(mean), n_seasons = dplyr::n(), .groups = "drop") |>
-    dplyr::mutate(prior_sd = sd_mult * between_sd)
+    dplyr::summarise(
+      pooled_mean = stats::weighted.mean(mean, w),
+      between_sd = sqrt(sum(w * (mean - pooled_mean)^2) / (sum(w) - sum(w^2) / sum(w))),
+      typical_post_sd = sqrt(stats::weighted.mean(sd^2, w)),
+      n_eff = sum(w)^2 / sum(w^2),
+      min = min(mean), max = max(mean), n_seasons = dplyr::n(), .groups = "drop") |>
+    dplyr::mutate(
+      excess_sd = sqrt(pmax(between_sd^2 - typical_post_sd^2, 0)),
+      predictive_sd = pmax(sqrt(excess_sd^2 + between_sd^2 / n_eff), (pool$sd_floor %||% 0) * typical_post_sd),
+      prior_sd = if (identical(pool$sd_rule, "predictive")) predictive_sd else (pool$sd_mult %||% 2) * between_sd)
 }
 
-#' cfg with its structural priors replaced by pooled ones (nu, the mixture's sigma_w / p_wide
-#' keep their own priors; parameters absent from the refits keep cfg's)
+#' cfg with its structural priors replaced by pooled ones (the mixture's sigma_w / p_wide keep
+#' their own priors; parameters absent from the refits keep cfg's). nu's Gamma prior matches the
+#' pooled mean and sd.
 priors_from_pool <- function(cfg, pooled) {
   m <- stats::setNames(pooled$pooled_mean, pooled$variable)
   s <- stats::setNames(pooled$prior_sd, pooled$variable)
   pair <- function(v) if (v %in% names(m)) unname(c(m[[v]], s[[v]]))
+  if ("nu" %in% names(m)) cfg$nu_prior <- unname(c(m[["nu"]]^2 / s[["nu"]]^2, m[["nu"]] / s[["nu"]]^2))
   for (x in list(c("tau_r_prior", "tau_r"), c("tau_t_prior", "tau_t_raw[1]"), c("gamma_prior", "gamma_m"),
+                 c("b_prev_low_prior", "b_prev_low_raw[1]"), c("b_ret_prior", "b_ret_raw[1]"),
+                 c("c_ret_prior", "c_ret_raw[1]"), c("b_tal_prior", "b_tal_raw[1]"),
+                 c("b_prev2_prior", "b_prev2_raw[1]"), c("delta_coach_prior", "delta_coach_raw[1]"),
                  c("base_prior", "base_raw[1]"), c("sigma_t_team_prior", "sigma_t_team_raw[1]"),
                  c("sigma_conf_t_prior", "sigma_conf_t_raw[1]"), c("b_prev_t_prior", "b_prev_t_raw[1]"),
                  c("lambda_t_prior", "lambda_t_raw[1]"), c("alpha_es_prior", "alpha_es_raw[1]"),
@@ -100,6 +134,20 @@ priors_from_pool <- function(cfg, pooled) {
   cfg
 }
 
+#' Each season's vague-prior estimate against the prior pooled from the other seasons: z is its
+#' distance from that prior's mean in units of sqrt(prior sd^2 + its own posterior sd^2), the sd of
+#' a new season's estimate under the prior
+loso_prior_check <- function(refits, pool = model_config()$pool, exclude = 2014L, hfa_exclude = 2020L) {
+  seasons <- setdiff(sort(unique(refits$season)), exclude)
+  dplyr::bind_rows(lapply(seasons, function(s0) {
+    p <- pool_priors(refits, drop = s0, exclude = exclude, hfa_exclude = hfa_exclude, pool = pool)
+    refits |>
+      dplyr::filter(season == s0, !(variable == "hfa" & season %in% hfa_exclude)) |>
+      dplyr::inner_join(dplyr::select(p, variable, pooled_mean, prior_sd), by = "variable") |>
+      dplyr::transmute(season, variable, z = (mean - pooled_mean) / sqrt(prior_sd^2 + sd^2))
+  }))
+}
+
 #' Early-week predictions under leave-one-season-out priors: season s's weeks 0-3 are refit
 #' with priors pooled from the other seasons only, and predict the following week
 #' @param season_inputs list (named by season) of each season's weekly inputs
@@ -113,7 +161,7 @@ run_loso_backtest <- function(season_inputs, refits, cfg = model_config(), max_w
     input <- season_inputs[[s]][[jobs$i[j]]]
     nxt <- dplyr::filter(input$future, week_seq == input$week + 1L)
     if (nrow(nxt) == 0) return(NULL)
-    lcfg <- priors_from_pool(cfg, pool_priors(refits, drop = as.integer(s)))
+    lcfg <- priors_from_pool(cfg, pool_priors(refits, drop = as.integer(s), pool = cfg$pool))
     f <- fit_power(apply_priors(input, lcfg), lcfg, seed = seed)
     draws <- extract_draws(f$fit, family = lcfg$margin_family); unlink(f$fit$output_files())
     predict_games(draws, nxt, input$week) |>
@@ -121,6 +169,150 @@ run_loso_backtest <- function(season_inputs, refits, cfg = model_config(), max_w
                     nu = mean(draws$par$nu), .before = 1)
   }, mc.cores = workers, mc.preschedule = FALSE)
   dplyr::bind_rows(res)
+}
+
+#' Early-week comparison of prior settings (plans/todo.md, Phase 0). Each variant is a list of
+#' cfg changes: model switches, `pool` settings or prior overrides. Its priors are pooled, leaving
+#' out the season predicted, from vague-prior refits of every season's final week under the
+#' variant's model (variants with the same model switches share refits); weeks min_week..max_week
+#' of each season are then fitted with short chains and predict the following week. A variant
+#' with `fixed_priors = TRUE` keeps its cfg priors instead (no pooling); `after_pool` (a list of
+#' cfg changes) overrides pooled priors.
+#' @param season_data,priors,priors2,weeks lists named by season (priors = final_prior of s - 1,
+#'   priors2 = final_prior of s - 2 or NULL)
+#' @return list(refits = vague-prior refits by model key, preds = predictions by variant)
+run_prior_variants <- function(season_data, priors, priors2, weeks, variants, cfg = model_config(),
+                               min_week = 0L, max_week = 3L, workers = 4L, seed = 2026, refits = NULL,
+                               refit_cfg = fast_config(cfg, chains = 4L, warmup = 500L, sampling = 500L)) {
+  seasons <- names(season_data)
+  model_switches <- c("b_prev_tier", "use_ret", "use_tal", "use_prev2", "use_coach", "margin_family",
+                      "dynamic", "use_total", "use_eff", "conf_level", "carry_over")
+  vcfgs <- lapply(variants, \(v) utils::modifyList(cfg, v[setdiff(names(v), c("fixed_priors", "after_pool"))]))
+  key_of <- function(x) paste(vapply(model_switches, \(k) as.character(x[[k]] %||% NA), character(1)), collapse = "|")
+  keys <- vapply(vcfgs, key_of, character(1))
+  pooled_variants <- !vapply(variants, \(v) isTRUE(v$fixed_priors), logical(1))
+  need <- setdiff(unique(keys[pooled_variants]), unique(refits$key))
+  if (length(need)) {
+    jobs <- expand.grid(key = need, season = seasons, stringsAsFactors = FALSE)
+    new <- parallel::mclapply(seq_len(nrow(jobs)), function(j) {
+      s <- jobs$season[j]
+      vc <- vcfgs[[match(jobs$key[j], keys)]]
+      rc <- vague_config(utils::modifyList(vc, refit_cfg[c("chains", "iter_warmup", "iter_sampling", "gates")]))
+      input <- prepare_week_input(season_data[[s]], max(weeks[[s]]), priors[[s]], rc, priors2[[s]])
+      f <- suppressWarnings(fit_power(input, rc, seed = seed))
+      d <- posterior::summarise_draws(f$fit$draws(variables = model_vars(input$stan_data)), "mean", "sd")
+      unlink(f$fit$output_files())
+      d |> dplyr::mutate(key = jobs$key[j], season = input$season, n_games = nrow(input$played),
+                         passed = f$health$passed, .before = 1)
+    }, mc.cores = workers, mc.preschedule = FALSE)
+    bad <- vapply(new, inherits, logical(1), "try-error")
+    if (any(bad)) stop("refit failed: ", conditionMessage(attr(new[[which(bad)[1]]], "condition")))
+    refits <- dplyr::bind_rows(refits, new)
+  }
+  tasks <- do.call(rbind, lapply(names(variants), function(v) do.call(rbind, lapply(seasons, function(s) {
+    w <- weeks[[s]]
+    w <- w[w >= min_week & w <= max_week & w < max(w)]
+    if (length(w)) data.frame(variant = v, season = s, week = w, stringsAsFactors = FALSE)
+  }))))
+  preds <- parallel::mclapply(seq_len(nrow(tasks)), function(j) {
+    tk <- tasks[j, ]
+    i <- match(tk$variant, names(variants))
+    vc <- utils::modifyList(fast_config(vcfgs[[i]]), list(margin_family = vcfgs[[i]]$margin_family))
+    if (pooled_variants[i]) {
+      rf <- dplyr::filter(refits, key == keys[i]) |> dplyr::select(-key)
+      vc <- priors_from_pool(vc, pool_priors(rf, drop = as.integer(tk$season), pool = vc$pool))
+    }
+    vc <- utils::modifyList(vc, variants[[i]]$after_pool %||% list())
+    input <- prepare_week_input(season_data[[tk$season]], tk$week, priors[[tk$season]], vc, priors2[[tk$season]])
+    nxt <- dplyr::filter(input$future, week_seq == tk$week + 1L)
+    if (nrow(nxt) == 0) return(NULL)
+    f <- suppressWarnings(fit_power(input, vc, seed = seed))
+    draws <- extract_draws(f$fit, family = vc$margin_family); unlink(f$fit$output_files())
+    predict_games(draws, nxt, tk$week) |>
+      dplyr::mutate(variant = tk$variant, season = as.integer(tk$season), week = tk$week,
+                    sigma = mean(draws$par$sigma_marg), nu = mean(draws$par$nu),
+                    passed = f$health$passed, .before = 1)
+  }, mc.cores = workers, mc.preschedule = FALSE)
+  bad <- vapply(preds, inherits, logical(1), "try-error")
+  if (any(bad)) stop("variant fit failed: ", conditionMessage(attr(preds[[which(bad)[1]]], "condition")))
+  list(refits = refits, preds = dplyr::bind_rows(preds))
+}
+
+#' The structural priors in use before the 2026-10 rework (pooled under the static Student-t
+#' model with equal weights and sd = 2x the between-season sd; tau, nu and the total model set by
+#' hand) and no preseason terms: the reference for prior_variants
+priors_2026_10_10 <- function() {
+  list(hfa_mean = 2.4, hfa_sd = 0.801, tier_mean = c(-29.2, -61.2), tier_sd = c(3.45, 7.31),
+       b_prev_mean = 0.779, b_prev_sd = 0.0867, sigma_team_mean = c(6.73, 6.32, 13.6),
+       sigma_team_sd = c(1.45, 1.56, 9.35), sigma_conf_prior = c(2.95, 2.53),
+       lambda_prior = c(.7623, .0486), kappa_prior = c(.7729, .0594), sigma_eff_prior = c(14.255, .681),
+       sigma_m_prior = c(8.011, .806), nu_prior = c(2, 0.1), tau_r_prior = c(0.6, 0.25), tau_t_prior = c(1.0, 0.3),
+       base_prior = c(26.5, 2), t_tier_mean = c(0, 0), t_tier_sd = c(6, 10), sigma_t_team_prior = c(4, 2),
+       sigma_conf_t_prior = c(2, 1.5), b_prev_t_prior = c(0.5, 0.25), lambda_t_prior = c(0.8, 0.3),
+       alpha_es_prior = c(13.5, 8), kappa_t_prior = c(0.55, 0.2), sigma_es_prior = c(17, 4),
+       sigma_tot_prior = c(12.5, 2), gamma_prior = c(0, 0.3),
+       b_prev_tier = FALSE, use_ret = FALSE, use_tal = FALSE, use_prev2 = FALSE, use_coach = FALSE)
+}
+
+preseason_labels <- c(b_prev_tier = "FCS carry-over", use_ret = "returning production", use_tal = "talent",
+                      use_prev2 = "two-season carry-over", use_coach = "coaching change")
+
+#' Variants for the prior_variants target: the old priors, the published priors (pooled leaving
+#' the season out), the published model with equal-weight / 2x-sd pooling, and the published model
+#' without each preseason term it uses
+prior_variant_set <- function(cfg = model_config()) {
+  on <- names(preseason_labels)[vapply(names(preseason_labels), \(k) isTRUE(cfg[[k]]), logical(1))]
+  c(
+    list("Before (2026-10-10 priors)" = c(priors_2026_10_10(), fixed_priors = TRUE),
+         "Published" = list(),
+         "Published, equal weights and sd x 2" = list(pool = list(half_life = Inf, sd_rule = "mult", sd_mult = 2, sd_floor = 0))),
+    if (length(on)) stats::setNames(lapply(on, \(k) stats::setNames(list(FALSE), k)), paste("Without", preseason_labels[on]))
+  )
+}
+
+#' Per-game scores of run_prior_variants() predictions (absolute error, log loss, CRPS and
+#' interval coverage from the predictive quantiles), joined to the results and closing lines
+score_variant_predictions <- function(preds, games_all) {
+  res <- games_all |>
+    dplyr::filter(completed, !is.na(home_points), !is.na(away_points)) |>
+    dplyr::transmute(season, game_id, week_seq, margin = home_points - away_points,
+                     home_win = as.integer(home_points > away_points), vegas_margin = -spread,
+                     fbs_game = home_class %in% "fbs" & away_class %in% "fbs")
+  preds |>
+    dplyr::inner_join(res, by = c("season", "game_id")) |>
+    dplyr::filter(week_seq == week + 1L) |>
+    dplyr::mutate(
+      abs_err = abs(pred_margin - margin),
+      logloss = -(home_win * log(pmax(pred_home_wp, 1e-6)) + (1 - home_win) * log(pmax(1 - pred_home_wp, 1e-6))),
+      crps = crps_quantiles(margin, pred_q),
+      cover80 = margin >= quantile_at(pred_q, 0.10) & margin <= quantile_at(pred_q, 0.90),
+      cover95 = margin >= quantile_at(pred_q, 0.025) & margin <= quantile_at(pred_q, 0.975),
+      vegas_abs_err = abs(vegas_margin - margin)
+    ) |>
+    dplyr::select(-pred_q)
+}
+
+#' Each variant against a reference on the same games: mean differences in absolute error, log
+#' loss and CRPS (negative = better than the reference) with paired bootstrap sds, and coverage
+compare_variants <- function(scores, reference, by_week = FALSE, B = 1000L, seed = 1) {
+  set.seed(seed)
+  ref <- scores |> dplyr::filter(variant == reference) |>
+    dplyr::select(season, week, game_id, r_ae = abs_err, r_ll = logloss, r_crps = crps)
+  d <- scores |> dplyr::inner_join(ref, by = c("season", "week", "game_id"))
+  if (by_week) d <- dplyr::group_by(d, variant, week) else d <- dplyr::group_by(d, variant)
+  boot_sd <- function(x) {
+    n <- length(x)
+    stats::sd(replicate(B, mean(x[sample.int(n, n, replace = TRUE)])))
+  }
+  # differences are summarised before the means overwrite the per-game columns
+  d |> dplyr::summarise(
+    games = dplyr::n(),
+    d_mae = mean(abs_err - r_ae), d_mae_sd = boot_sd(abs_err - r_ae),
+    d_logloss = mean(logloss - r_ll), d_logloss_sd = boot_sd(logloss - r_ll),
+    d_crps = mean(crps - r_crps), d_crps_sd = boot_sd(crps - r_crps),
+    mae = mean(abs_err), logloss = mean(logloss), crps = mean(crps),
+    cover80 = mean(cover80), cover95 = mean(cover95), mae_vegas = mean(vegas_abs_err, na.rm = TRUE),
+    fits_passed = mean(passed), .groups = "drop")
 }
 
 # ---- Ablations and baselines --------------------------------------------------------
@@ -147,7 +339,9 @@ ablation_variants <- function(cfg = model_config()) {
 #' Rolling backtest of each variant: fit through week w with short chains, predict week w + 1.
 #' Every variant predicts exactly the same games.
 #' @param season_data,priors,weeks lists named by season (priors = final_prior of season - 1)
-run_ablation <- function(season_data, priors, weeks, cfg = model_config(), workers = 4L, seed = 2026) {
+#' @param priors2 list named by season of final_prior of season - 2 (NULL entries allowed)
+run_ablation <- function(season_data, priors, weeks, cfg = model_config(), workers = 4L, seed = 2026,
+                         priors2 = list()) {
   variants <- ablation_variants(cfg)
   tasks <- do.call(rbind, lapply(names(season_data), function(s) {
     w <- weeks[[s]]
@@ -156,7 +350,7 @@ run_ablation <- function(season_data, priors, weeks, cfg = model_config(), worke
   res <- parallel::mclapply(seq_len(nrow(tasks)), function(j) {
     tk <- tasks[j, ]
     vcfg <- utils::modifyList(fast_config(cfg), variants[[tk$variant]])
-    input <- prepare_week_input(season_data[[tk$season]], tk$week, priors[[tk$season]], vcfg)
+    input <- prepare_week_input(season_data[[tk$season]], tk$week, priors[[tk$season]], vcfg, priors2[[tk$season]])
     nxt <- dplyr::filter(input$future, week_seq == tk$week + 1L)
     if (nrow(nxt) == 0) return(NULL)
     f <- suppressWarnings(fit_power(input, vcfg, seed = seed))
@@ -467,7 +661,9 @@ run_sbc <- function(input, cfg = model_config(), n_sims = 100L, workers = 2L, n_
     }
     scal <- c("hfa", "b_prev", "sigma_m", "lambda", "kappa", "sigma_conf",
               if (family %in% c("t", "scale_t")) "nu", if (!isFALSE(cfg$dynamic)) "tau_r",
-              if (family == "mixture") c("p_wide", "sigma_w"), if (family == "scale_t") "gamma_m")
+              if (family == "mixture") c("p_wide", "sigma_w"), if (family == "scale_t") "gamma_m",
+              if (isTRUE(cfg$b_prev_tier)) "b_prev_low", if (isTRUE(cfg$use_ret)) c("b_ret", "c_ret"),
+              if (isTRUE(cfg$use_tal)) "b_tal", if (isTRUE(cfg$use_prev2)) "b_prev2", if (isTRUE(cfg$use_coach)) "delta_coach")
     scal_post <- as.matrix(draws$par[, scal])
     scal_true <- unlist(p[scal])
     dplyr::bind_rows(
@@ -496,7 +692,7 @@ run_sbc <- function(input, cfg = model_config(), n_sims = 100L, workers = 2L, n_
 #' @param season_data list of read_season() results, named by season
 run_margin_comparison <- function(season_data, cfg = model_config(), families = c("t", "mixture", "scale_t"),
                                   workers = 2L, seed = 2026) {
-  vcfg <- vague_config(cfg)
+  vcfg <- long_chains(vague_config(cfg))
   vcfg$carry_over <- FALSE
   vcfg$use_total <- FALSE
   jobs <- expand.grid(season = names(season_data), family = families, stringsAsFactors = FALSE)

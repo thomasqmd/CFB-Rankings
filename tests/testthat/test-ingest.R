@@ -54,3 +54,38 @@ test_that("the last complete season turns over on Feb 1", {
   expect_equal(last_complete_season(as.Date("2027-02-01")), 2026L)
   expect_equal(last_complete_season(as.Date("2027-07-31")), 2026L)
 })
+
+test_that("returning production and talent parse to typed columns, talent may be a string", {
+  ret <- parse_returning(list(list(season = 2025, team = "Air Force", percentPPA = 0.63, usage = 0.556)))
+  expect_equal(ret$season, 2025L); expect_equal(ret$ret_ppa, 0.63); expect_equal(ret$ret_usage, 0.556)
+  tal <- parse_talent(list(list(year = 2025, team = "Georgia", talent = 1002.98),
+                           list(year = 2025, team = "Alabama", talent = "993.55")))
+  expect_equal(tal$talent, c(1002.98, 993.55)); expect_equal(tal$team, c("Georgia", "Alabama"))
+})
+
+test_that("coaches parse to one row per coach-season entry", {
+  raw <- list(list(id = 10, seasons = list(list(teamId = 5, year = 2024), list(teamId = 6, year = 2025))))
+  co <- parse_coaches(raw)
+  expect_equal(co$season, c(2024L, 2025L)); expect_equal(co$team_id, c(5L, 6L)); expect_equal(co$coach_id, c(10L, 10L))
+})
+
+test_that("preseason parsers return typed zero-row tibbles for empty input", {
+  types <- function(x) vapply(x, typeof, character(1))
+  r <- parse_returning(list())
+  expect_equal(nrow(r), 0); expect_equal(types(r), c(season = "integer", team = "character", ret_ppa = "double", ret_usage = "double"))
+  tal <- parse_talent(list())
+  expect_equal(nrow(tal), 0); expect_equal(types(tal), c(season = "integer", team = "character", talent = "double"))
+  co <- parse_coaches(list())
+  expect_equal(nrow(co), 0); expect_equal(types(co), c(season = "integer", team_id = "integer", coach_id = "integer"))
+})
+
+test_that("coach change: kept coach 0, new coach 1, same coach id on the same team 0, absent team NA", {
+  co <- function(team, coach) tibble::tibble(season = 2025L, team_id = as.integer(team), coach_id = as.integer(coach))
+  prev <- dplyr::bind_rows(co(1, 10), co(2, 20), co(3, 30), co(5, 50), co(6, 60))
+  now <- dplyr::bind_rows(co(1, 10), co(2, 21), co(3, 30), co(4, 40), co(6, 50))
+  out <- coach_changes(now, prev)
+  expect_equal(out$team_id, c(1L, 2L, 3L, 4L, 6L))
+  expect_equal(out$coach_change, c(0L, 1L, 0L, NA, 1L))
+  expect_type(out$coach_change, "integer")
+  expect_true(all(is.na(coach_changes(now, parse_coaches(list()))$coach_change)))
+})

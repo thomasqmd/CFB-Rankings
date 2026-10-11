@@ -611,8 +611,18 @@ viewof gamesConf = Inputs.select(confKeys(fbs), { label: "Conference", format: c
   }).sort((a, b) => (a.date).localeCompare(b.date) || Math.abs(m(a) ?? 99) - Math.abs(m(b) ?? 99))
   const fav = (g, x) => x == null ? htl.html`<span class="muted">–</span>`
     : htl.html`<span>${x >= 0 ? g.team : g.opp}</span> <strong class="num">−${Math.abs(x).toFixed(1)}</strong>`
-  const scored = played.filter(g => m(g) != null && g.line != null)
-  const err = f => d3.mean(scored, g => Math.abs(f(g) - (g.pts - g.opp_pts)))
+  // Model vs. Vegas on games with a pre-game prediction, a closing line and its win probability:
+  // MAE of the margin and Brier score of the win probability (lower is better for both)
+  const vsVegas = gs => {
+    const r = gs.filter(g => g.result != null && m(g) != null && wp(g) != null && g.line != null && g.line_wp != null)
+    const mae = f => d3.mean(r, g => Math.abs(f(g) - (g.pts - g.opp_pts)))
+    const brier = f => d3.mean(r, g => (f(g) - (g.pts > g.opp_pts ? 1 : 0)) ** 2)
+    return { n: r.length, mae: mae(m), maeV: mae(g => g.line), brier: brier(wp), brierV: brier(g => g.line_wp) }
+  }
+  const wkStats = vsVegas(played)
+  const seasonStats = vsVegas(d3.groups(G.filter(d => d.s === season && d.wk <= gamesWeek), d => d.game_id).map(([, s]) => s[0]))
+  const statLine = (lab, x) => htl.html`${lab}: MAE model <strong>${x.mae.toFixed(1)}</strong> vs Vegas <strong>${x.maeV.toFixed(1)}</strong>,
+    Brier model <strong>${x.brier.toFixed(3)}</strong> vs Vegas <strong>${x.brierV.toFixed(3)}</strong> (${x.n} games).`
   const tr = g => {
     const mm = m(g), actual = g.result == null ? null : g.pts - g.opp_pts
     const edge = mm != null && g.line != null ? mm - g.line : null
@@ -634,7 +644,9 @@ viewof gamesConf = Inputs.select(confKeys(fbs), { label: "Conference", format: c
   }
   return htl.html`<p class="explain">Spreads are the <strong>model's predicted margin</strong> from the snapshot before kickoff
   (${upcoming ? "latest snapshot" : "previous week's snapshot"}) next to the closing line. Favourite shown with its spread.
-  ${scored.length ? htl.html`This week so far: model MAE <strong>${err(m).toFixed(1)}</strong> vs Vegas <strong>${err(g => g.line).toFixed(1)}</strong> over ${scored.length} games; model closer in ${scored.filter(g => Math.abs(m(g) - (g.pts - g.opp_pts)) < Math.abs(g.line - (g.pts - g.opp_pts))).length}.` : ""}</p>
+  ${wkStats.n ? statLine("This week so far", wkStats) : ""}
+  ${seasonStats.n ? statLine(`Season through this week`, seasonStats) : ""}
+  ${wkStats.n || seasonStats.n ? "Lower is better for both." : ""}</p>
   <div class="table-wrap"><table class="cfb-table">
     <thead><tr><th>Team</th><th></th><th>Opponent</th><th>Model spread</th><th>Fav. win prob.</th><th class="num hide-sm" title="Projected score (team first) and total">Proj.</th><th class="hide-sm" title="Closing line and over/under">Vegas</th><th class="hide-sm" title="Where the model differs from the closing line">Edge</th><th>Result</th><th title="Which prediction was closer to the final margin">Closer</th></tr></thead>
     <tbody>${shown.map(tr)}</tbody></table></div>`
@@ -865,9 +877,10 @@ margin, and an efficiency margin (net expected points added per play, garbage ti
 The model learns how much to trust each and accounts for their correlation within a game.
 A second part of the model does the same for game totals, which splits strength into
 **offence** and **defence** and gives projected scores. Teams share information within their
-conference and division, and the preseason starting point is last season's final rating,
-regressed toward the average by an amount estimated from the data. Home field is estimated
-each season.
+conference and division. The preseason starting point combines the final ratings of the last
+two seasons with roster information (the share of last season's production that returns, and
+the 247Sports talent composite), weighted by amounts estimated from past seasons. Home field is
+estimated each season.
 
 **Resume** asks what a playoff-bubble team, the #12 FBS team by Power, would have done with the
 same schedule. Each win adds 1 − P(bubble team wins that game). Each loss subtracts P(bubble team

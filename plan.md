@@ -309,7 +309,8 @@ TODO:
 
 ### Follow-ups after the model changes (2026-10-06)
 
-- [ ] **Re-pool the priors.** The margin priors in `model_config()` were pooled under the static
+- [x] **Re-pool the priors.** Superseded by `plans/todo.md` (2026-10-11: new pooling rule, τ/ν/total
+      priors pooled, preseason terms). Original note: the margin priors in `model_config()` were pooled under the static
       t model; τ, the total model and the family priors are provisional. After the rebuild,
       `check_build.R` prints the pooled values from `prior_refits` when they drift; copy them in
       and rebuild.

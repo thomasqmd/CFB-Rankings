@@ -4,7 +4,7 @@
 #   sync (CFBD -> DuckDB)
 #     -> data_<s>                 one season's games, efficiency, lines, polls
 #     -> weeks_<s>                concluded weeks
-#     -> inputs_<s> [per week]    Stan inputs (prior = final ratings of season s-1)
+#     -> inputs_<s> [per week]    Stan inputs (priors = final ratings of seasons s-1, s-2)
 #     -> snaps_<s>  [per week]    Power + Resume summaries for that week
 #     -> checks_<s>               PPC, prior sensitivity, LOO for the latest week
 #   -> snapshots, backtest, dashboard_data -> Quarto dashboard + reports
@@ -47,6 +47,7 @@ DB_PATH <- "data/cfb.duckdb"
 season_targets <- function(s) {
   sym <- function(x) as.symbol(paste0(x, "_", s))
   prior <- if (s == FIRST_SEASON) quote(NULL) else call("final_prior", as.symbol(paste0("snaps_", s - 1L)))
+  prior2 <- if (s - 2L < FIRST_SEASON) quote(NULL) else call("final_prior", as.symbol(paste0("snaps_", s - 2L)))
   is_current <- s == CURRENT_SEASON
   list(
     tar_target_raw(paste0("data_", s), bquote({ sync; read_season(.(s), db_path = .(DB_PATH)) })),
@@ -56,7 +57,7 @@ season_targets <- function(s) {
       concluded_weeks(.(sym("data"))$games, min_share = .(if (is_current) 0.9 else 0))
     ))),
     tar_target_raw(paste0("inputs_", s),
-      bquote(prepare_week_input(.(sym("data")), .(sym("weeks")), prior = .(prior), cfg = cfg)),
+      bquote(prepare_week_input(.(sym("data")), .(sym("weeks")), prior = .(prior), cfg = cfg, prior2 = .(prior2))),
       pattern = bquote(map(.(sym("weeks")))), iteration = "list"),
     tar_target_raw(paste0("snaps_", s),
       bquote(run_snapshot(.(sym("inputs")), cfg = cfg)),
@@ -80,6 +81,12 @@ complete_data_call <- as.call(c(quote(list), setNames(lapply(paste0("data_", COM
 ablation_call <- function(prefix) {
   as.call(c(quote(list), setNames(lapply(paste0(prefix, "_", ABLATION_SEASONS), as.symbol), ABLATION_SEASONS)))
 }
+# Final ratings of season s - k for each season s in `seasons` (NULL before the first season)
+prior_list_call <- function(seasons, k) {
+  as.call(c(quote(list), setNames(lapply(seasons, \(s) if (s - k < FIRST_SEASON) NULL else
+    call("final_prior", as.symbol(paste0("snaps_", s - k)))), seasons)))
+}
+VARIANT_SEASONS <- (FIRST_SEASON + 1L):LAST_FULL
 # Final-week input of each complete season
 final_inputs_call <- bquote(lapply(stats::setNames(.(as.call(c(quote(list), input_syms(COMPLETE)))), COMPLETE),
                                    \(x) x[[length(x)]]))
@@ -135,6 +142,10 @@ list(
   tar_target_raw("prior_refits",
     bquote(run_prior_refits(.(final_inputs_call), cfg = cfg, workers = FIT_WORKERS)),
     deployment = "main"),
+  # The priors the refits imply under the published pooling rule (check_build.R compares them
+  # with model_config())
+  tar_target(pooled_priors, pool_priors(prior_refits, pool = cfg$pool)),
+  tar_target(prior_loso_check, loso_prior_check(prior_refits, pool = cfg$pool)),
   # Weeks 0-3 of each season under priors pooled from the other seasons only
   tar_target_raw("loso_backtest", bquote(run_loso_backtest(
     .(as.call(c(quote(list), setNames(input_syms((FIRST_SEASON + 1L):LAST_FULL), (FIRST_SEASON + 1L):LAST_FULL)))),
@@ -144,7 +155,19 @@ list(
     .(ablation_call("data")),
     .(as.call(c(quote(list), setNames(lapply(ABLATION_SEASONS - 1L, \(s) call("final_prior", as.symbol(paste0("snaps_", s)))),
                                       ABLATION_SEASONS)))),
-    .(ablation_call("weeks")), cfg = cfg, workers = 2L * FIT_WORKERS)), deployment = "main"),
+    .(ablation_call("weeks")), cfg = cfg, workers = 2L * FIT_WORKERS,
+    priors2 = .(prior_list_call(ABLATION_SEASONS, 2L)))), deployment = "main"),
+  # Early-week comparison of prior settings: the priors before the 2026-10 rework, the published
+  # ones, and the published model without each preseason term (plans/todo.md)
+  tar_target_raw("prior_variants", bquote(run_prior_variants(
+    .(as.call(c(quote(list), setNames(lapply(paste0("data_", VARIANT_SEASONS), as.symbol), VARIANT_SEASONS)))),
+    .(prior_list_call(VARIANT_SEASONS, 1L)), .(prior_list_call(VARIANT_SEASONS, 2L)),
+    .(as.call(c(quote(list), setNames(lapply(paste0("weeks_", VARIANT_SEASONS), as.symbol), VARIANT_SEASONS)))),
+    prior_variant_set(cfg), cfg = cfg, workers = 2L * FIT_WORKERS)), deployment = "main"),
+  tar_target(prior_variant_scores, score_variant_predictions(prior_variants$preds, games_all)),
+  tar_target(prior_variant_summary, list(
+    overall = compare_variants(prior_variant_scores, "Published"),
+    by_week = compare_variants(prior_variant_scores, "Published", by_week = TRUE))),
   tar_target(baselines, run_baselines(season_data, weeks_all)),
   tar_target(external_ratings, run_external_ratings(COMPLETE, teams_meta)),
   tar_target_raw("final_refits",

@@ -70,10 +70,15 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
     dplyr::filter(week == last) |>
     dplyr::select(season, game_id, team_id, wab_game, p_bench)
 
+  # The closing line as a home win probability (the backtest recentres the model's predictive
+  # distribution on the line), so the dashboard can compare Brier scores with Vegas
+  line_wp <- backtest$games |> dplyr::filter(!is.na(line_wp)) |> dplyr::select(season, game_id, line_wp)
+
   fbs_ids <- unique(ratings$team_id[ratings$tier == 1L])
   g <- games_all |>
     dplyr::left_join(pre, by = c("season", "game_id")) |>
     dplyr::left_join(future, by = c("season", "game_id")) |>
+    dplyr::left_join(line_wp, by = c("season", "game_id")) |>
     dplyr::mutate(eff_margin = ifelse(!is.na(home_ppa) & !is.na(away_ppa),
                                       home_ppa * home_plays - away_ppa * away_plays, NA_real_))
   side <- function(df, home) {
@@ -94,7 +99,8 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
       fut_pts = round(if (home) fut_hp else fut_ap, 1), fut_opp_pts = round(if (home) fut_ap else fut_hp, 1),
       ou = over_under,
       eff = round(sgn * eff_margin, 1),
-      line = round(-sgn * spread, 1)
+      line = round(-sgn * spread, 1),
+      line_wp = round(if (home) line_wp else 1 - line_wp, 3)
     )
   }
   game_rows <- dplyr::bind_rows(side(g, TRUE), side(g, FALSE)) |>

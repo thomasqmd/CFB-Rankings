@@ -84,9 +84,10 @@ prior_groups <- list(
   hfa = c("hfa_mean", "hfa_sd"), tier = c("tier_mean", "tier_sd"), b_prev = c("b_prev_mean", "b_prev_sd"),
   sigma_team = c("sigma_team_mean", "sigma_team_sd"), sigma_conf = "sigma_conf_prior",
   lambda = "lambda_prior", kappa = "kappa_prior", sigma_eff = "sigma_eff_prior", sigma_m = "sigma_m_prior",
-  tau = c("tau_r_prior", "tau_t_prior"),
+  tau = c("tau_r_prior", "tau_t_prior"), family = c("nu_prior", "gamma_prior"),
   total = c("base_prior", "t_tier_mean", "t_tier_sd", "sigma_t_team_prior", "sigma_conf_t_prior", "b_prev_t_prior",
-            "lambda_t_prior", "alpha_es_prior", "kappa_t_prior", "sigma_es_prior", "sigma_tot_prior")
+            "lambda_t_prior", "alpha_es_prior", "kappa_t_prior", "sigma_es_prior", "sigma_tot_prior"),
+  preseason = c("b_prev_low_prior", "b_ret_prior", "c_ret_prior", "b_tal_prior", "b_prev2_prior", "delta_coach_prior")
 )
 
 #' Every prior setting the Stan model reads, copied from cfg
@@ -95,15 +96,23 @@ prior_fields <- c("hfa_mean", "hfa_sd", "tier_mean", "tier_sd", "b_prev_mean", "
                   "sigma_eff_prior", "sigma_m_prior", "nu_prior", "nu_lower", "tau_r_prior", "sigma_gap_prior",
                   "p_wide_prior", "gamma_prior", "base_prior", "t_tier_mean", "t_tier_sd", "sigma_t_team_prior",
                   "sigma_conf_t_prior", "b_prev_t_prior", "tau_t_prior", "lambda_t_prior", "alpha_es_prior",
-                  "kappa_t_prior", "sigma_es_prior", "sigma_tot_prior")
+                  "kappa_t_prior", "sigma_es_prior", "sigma_tot_prior", "b_prev_low_prior", "b_ret_prior",
+                  "c_ret_prior", "b_tal_prior", "b_prev2_prior", "delta_coach_prior")
 
 #' A copy of cfg with the chosen structural priors widened (sd * sd_mult) and/or shifted
 #' (mean + shift * sd, before widening); `groups` limits the change to some priors
-#' (one-at-a-time perturbation). nu_lower raises the lower bound of the nu prior.
+#' (one-at-a-time perturbation). nu_lower raises the lower bound of the nu prior. The nu prior
+#' is Gamma(shape, rate): its mean and sd are moved instead and matched back to a Gamma.
 perturb_priors <- function(cfg, sd_mult = 1, shift = 0, groups = names(prior_groups), nu_lower = NULL) {
   for (g in groups) {
-    fields <- prior_groups[[g]]
+    fields <- intersect(prior_groups[[g]], names(cfg))
     for (f in fields[grepl("_prior$", fields)]) {
+      if (f == "nu_prior") {
+        m <- cfg$nu_prior[1] / cfg$nu_prior[2]; s <- sqrt(cfg$nu_prior[1]) / cfg$nu_prior[2]
+        m <- max(m + shift * s, 2); s <- s * sd_mult
+        cfg$nu_prior <- c((m / s)^2, m / s^2)
+        next
+      }
       cfg[[f]][1] <- cfg[[f]][1] + shift * cfg[[f]][2]
       cfg[[f]][2] <- cfg[[f]][2] * sd_mult
     }
@@ -116,6 +125,7 @@ perturb_priors <- function(cfg, sd_mult = 1, shift = 0, groups = names(prior_gro
   # b_prev and b_prev_t live in (0, 1); step sds are positive
   cfg$b_prev_mean <- min(max(cfg$b_prev_mean, 0.05), 0.95)
   cfg$b_prev_t_prior[1] <- min(max(cfg$b_prev_t_prior[1], 0.05), 0.95)
+  if (!is.null(cfg$b_prev_low_prior)) cfg$b_prev_low_prior[1] <- min(max(cfg$b_prev_low_prior[1], 0.05), 0.95)
   if (!is.null(nu_lower)) cfg$nu_lower <- nu_lower
   cfg
 }
@@ -130,7 +140,7 @@ apply_priors <- function(input, cfg) {
 }
 
 #' Joint scenarios move every structural prior at once; one-at-a-time scenarios widen a
-#' single prior group fivefold; "nu > 3" bounds the degrees of freedom away from Cauchy tails.
+#' single prior group fivefold.
 prior_scenarios <- function(one_at_a_time = TRUE) {
   joint <- tibble::tribble(
     ~scenario,          ~sd_mult, ~shift, ~group,  ~nu_lower,
@@ -138,8 +148,7 @@ prior_scenarios <- function(one_at_a_time = TRUE) {
     "SD x 2",            2,        0,     "all",   NA,
     "SD x 5",            5,        0,     "all",   NA,
     "Means + 1 SD",      1,        1,     "all",   NA,
-    "Means - 1 SD",      1,       -1,     "all",   NA,
-    "nu > 3",            1,        0,     "none",  3
+    "Means - 1 SD",      1,       -1,     "all",   NA
   )
   if (!one_at_a_time) return(joint)
   single <- tibble::tibble(scenario = paste0("SD x 5: ", names(prior_groups)), sd_mult = 5, shift = 0,
@@ -203,9 +212,21 @@ draw_prior_params <- function(input, cfg = model_config()) {
     sigma_gap = if (family == "mixture") rtn(cfg$sigma_gap_prior[1], cfg$sigma_gap_prior[2], 0) else 0,
     gamma_m = if (family == "scale_t") rtn(cfg$gamma_prior[1], cfg$gamma_prior[2], 0) else 0
   )
+  # Preseason terms (0 when switched off)
+  on <- function(flag) isTRUE(sd_[[flag]] == 1L)
+  p$b_prev_low <- if (on("b_prev_tier")) rtn(cfg$b_prev_low_prior[1], cfg$b_prev_low_prior[2], 0, 1) else p$b_prev
+  p$b_ret <- if (on("use_ret")) stats::rnorm(1, cfg$b_ret_prior[1], cfg$b_ret_prior[2]) else 0
+  p$c_ret <- if (on("use_ret")) stats::rnorm(1, cfg$c_ret_prior[1], cfg$c_ret_prior[2]) else 0
+  p$b_tal <- if (on("use_tal")) stats::rnorm(1, cfg$b_tal_prior[1], cfg$b_tal_prior[2]) else 0
+  p$b_prev2 <- if (on("use_prev2")) stats::rnorm(1, cfg$b_prev2_prior[1], cfg$b_prev2_prior[2]) else 0
+  p$delta_coach <- if (on("use_coach")) stats::rnorm(1, cfg$delta_coach_prior[1], cfg$delta_coach_prior[2]) else 0
+  zero <- rep(0, nrow(tm))
+  ret <- sd_$ret %||% zero; tal <- sd_$tal %||% zero; prev2 <- sd_$prev2_dev %||% zero; coach <- sd_$coach_new %||% zero
+  carry <- ifelse(tm$tier > 1L, p$b_prev_low, p$b_prev) + p$b_ret * ret
+  s_team <- p$sigma_team[tm$tier] * exp(p$delta_coach * coach)
   alpha <- p$mu_tier[sd_$conf_tier] + p$sigma_conf * stats::rnorm(length(sd_$conf_tier))
-  p$r <- alpha[tm$conf_idx] + p$b_prev * sd_$prev_dev +
-    sqrt(p$sigma_team[tm$tier]^2 + (p$b_prev * sd_$prev_sd)^2) * stats::rnorm(nrow(tm))
+  p$r <- alpha[tm$conf_idx] + carry * sd_$prev_dev + p$c_ret * ret + p$b_tal * tal + p$b_prev2 * prev2 +
+    sqrt(s_team^2 + (carry * sd_$prev_sd)^2) * stats::rnorm(nrow(tm))
   p$r_state <- numeric(sd_$N_states)
   for (k in seq_len(sd_$N_states)) {
     from <- if (sd_$state_prev[k] == 0) p$r[sd_$state_team[k]] else p$r_state[sd_$state_prev[k]]

@@ -145,8 +145,8 @@ if (nrow(bs)) cat(sprintf("      %d so far: %d games, MAE %.2f (Vegas %.2f), acc
 # little (new data, new carry-over), so flag a prior mean that has drifted by > 0.5 prior sd
 section("Priors vs. the vague-prior refits")
 if (tar_exist_objects("prior_refits") && !"prior_refits" %in% errs$name) {
-  pooled <- pool_priors(tar_read(prior_refits))
   cfg <- tar_read(cfg)
+  pooled <- pool_priors(tar_read(prior_refits), pool = cfg$pool)
   now <- priors_from_pool(cfg, pooled)
   pairs <- list(hfa = c(cfg$hfa_mean, now$hfa_mean, cfg$hfa_sd), b_prev = c(cfg$b_prev_mean, now$b_prev_mean, cfg$b_prev_sd),
                 fcs = c(cfg$tier_mean[1], now$tier_mean[1], cfg$tier_sd[1]), nond1 = c(cfg$tier_mean[2], now$tier_mean[2], cfg$tier_sd[2]),
@@ -163,7 +163,13 @@ if (tar_exist_objects("prior_refits") && !"prior_refits" %in% errs$name) {
                 lambda_t = c(cfg$lambda_t_prior[1], now$lambda_t_prior[1], cfg$lambda_t_prior[2]),
                 kappa_t = c(cfg$kappa_t_prior[1], now$kappa_t_prior[1], cfg$kappa_t_prior[2]),
                 sigma_t_team = c(cfg$sigma_t_team_prior[1], now$sigma_t_team_prior[1], cfg$sigma_t_team_prior[2]),
-                b_prev_t = c(cfg$b_prev_t_prior[1], now$b_prev_t_prior[1], cfg$b_prev_t_prior[2]))
+                b_prev_t = c(cfg$b_prev_t_prior[1], now$b_prev_t_prior[1], cfg$b_prev_t_prior[2]),
+                nu = c(cfg$nu_prior[1] / cfg$nu_prior[2], now$nu_prior[1] / now$nu_prior[2], sqrt(cfg$nu_prior[1]) / cfg$nu_prior[2]))
+  for (k in names(preseason_labels)) if (isTRUE(cfg[[k]])) {
+    for (f in switch(k, b_prev_tier = "b_prev_low_prior", use_ret = c("b_ret_prior", "c_ret_prior"), use_tal = "b_tal_prior",
+                     use_prev2 = "b_prev2_prior", use_coach = "delta_coach_prior"))
+      pairs[[sub("_prior$", "", f)]] <- c(cfg[[f]][1], now[[f]][1], cfg[[f]][2])
+  }
   drift <- vapply(pairs, \(x) abs(x[2] - x[1]) / x[3], numeric(1))
   report(if (any(drift > 0.5)) "WARN" else "PASS", "Prior means vs. pooled refits",
          sprintf("largest drift %.2f prior sd (%s)", max(drift), names(which.max(drift))))
@@ -173,7 +179,8 @@ if (tar_exist_objects("prior_refits") && !"prior_refits" %in% errs$name) {
                  "sigma_team_sd", "sigma_conf_prior", "lambda_prior", "kappa_prior", "sigma_eff_prior", "sigma_m_prior",
                  "tau_r_prior", "tau_t_prior", "gamma_prior", "base_prior", "t_tier_mean", "t_tier_sd",
                  "sigma_t_team_prior", "sigma_conf_t_prior", "b_prev_t_prior", "lambda_t_prior", "alpha_es_prior",
-                 "kappa_t_prior", "sigma_es_prior", "sigma_tot_prior"))
+                 "kappa_t_prior", "sigma_es_prior", "sigma_tot_prior", "nu_prior", "b_prev_low_prior", "b_ret_prior",
+                 "c_ret_prior", "b_tal_prior", "b_prev2_prior", "delta_coach_prior"))
       cat(sprintf("        %s = c(%s)\n", nm, paste(signif(now[[nm]], 4), collapse = ", ")))
   }
 } else {

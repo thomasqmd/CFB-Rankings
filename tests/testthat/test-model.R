@@ -90,3 +90,54 @@ test_that("total tendency carries over like the rating", {
   expect_equal(d$sd, c(2, 2, 2))
   expect_equal(prev_deviation(teams, prior[, 1:3], "total_t")$dev, rep(0, 3))   # older priors lack it
 })
+
+test_that("preseason covariates are centred within FBS and 0 elsewhere", {
+  teams <- tibble::tibble(team_id = 1:5, tier = c(1L, 1L, 1L, 1L, 2L))
+  pre <- tibble::tibble(team_id = c(1L, 2L, 3L, 5L), ret_ppa = c(0.8, 0.6, 0.4, 0.9),
+                        talent = c(900, 700, 500, 300), coach_change = c(1L, 0L, NA, 1L))
+  cv <- preseason_covariates(teams, pre)
+  expect_equal(cv$ret, c(0.2, 0, -0.2, 0, 0))            # team 4 has no data, team 5 is FCS
+  expect_equal(cv$tal[1:3], c(1, 0, -1))                  # standardised within FBS
+  expect_equal(cv$tal[4:5], c(0, 0))
+  expect_equal(cv$coach_new, c(1, 0, 0, 0, 0))
+  expect_equal(preseason_covariates(teams, NULL)$ret, rep(0, 5))
+})
+
+test_that("pooling: equal weights give the plain mean and sd; recency favours recent seasons", {
+  refits <- tibble::tibble(season = 2015:2024, variable = "x", mean = c(rep(1, 5), rep(3, 5)), sd = 0.5)
+  eq <- pool_priors(refits, exclude = integer(0), pool = list(half_life = Inf, sd_rule = "mult", sd_mult = 2))
+  expect_equal(eq$pooled_mean, 2)
+  expect_equal(eq$prior_sd, 2 * stats::sd(refits$mean))
+  rec <- pool_priors(refits, exclude = integer(0), pool = list(half_life = 2, sd_rule = "mult", sd_mult = 2))
+  expect_gt(rec$pooled_mean, 2.5)
+  # predictive sd: between-season sd in excess of the posterior sd, plus the sd of the mean
+  pr <- pool_priors(refits, exclude = integer(0), pool = list(half_life = Inf, sd_rule = "predictive", sd_floor = 0))
+  b <- stats::sd(refits$mean)
+  expect_equal(pr$prior_sd, sqrt(b^2 - 0.25 + b^2 / 10))
+  # all of the spread is noise -> only the sd of the mean, unless floored
+  flat <- tibble::tibble(season = 2015:2024, variable = "x", mean = rep(c(1, 1.2), 5), sd = 1)
+  expect_equal(pool_priors(flat, exclude = integer(0), pool = list(sd_rule = "predictive"))$prior_sd, stats::sd(flat$mean) / sqrt(10))
+  expect_equal(pool_priors(flat, exclude = integer(0), pool = list(sd_rule = "predictive", sd_floor = 0.5))$prior_sd, 0.5)
+  # leaving a season out centres the weights on it
+  lo <- pool_priors(refits, drop = 2016L, exclude = integer(0), pool = list(half_life = 1, sd_rule = "mult"))
+  expect_lt(lo$pooled_mean, 2)
+})
+
+test_that("pooled nu becomes a Gamma prior with the pooled mean and sd", {
+  cfg <- model_config()
+  pooled <- tibble::tibble(variable = "nu", pooled_mean = 12, prior_sd = 4)
+  out <- priors_from_pool(cfg, rbind(pooled, tibble::tibble(variable = c("hfa", "mu_tier[2]", "mu_tier[3]", "b_prev",
+    "sigma_team[1]", "sigma_team[2]", "sigma_team[3]", "sigma_conf", "lambda", "kappa", "sigma_eff", "sigma_m"),
+    pooled_mean = 1, prior_sd = 1)))
+  expect_equal(out$nu_prior[1] / out$nu_prior[2], 12)
+  expect_equal(sqrt(out$nu_prior[1]) / out$nu_prior[2], 4)
+})
+
+test_that("perturbing the Gamma nu prior moves its mean and sd, not shape and rate", {
+  cfg <- model_config()
+  m <- cfg$nu_prior[1] / cfg$nu_prior[2]; s <- sqrt(cfg$nu_prior[1]) / cfg$nu_prior[2]
+  up <- perturb_priors(cfg, sd_mult = 5, shift = 1, groups = "family")$nu_prior
+  expect_equal(up[1] / up[2], m + s)
+  expect_equal(sqrt(up[1]) / up[2], 5 * s)
+  expect_equal(perturb_priors(cfg, sd_mult = 5, groups = "hfa")$nu_prior, cfg$nu_prior)
+})
