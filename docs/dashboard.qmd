@@ -5,12 +5,13 @@ brand: false
 format:
   dashboard:
     theme:
-      light: [cosmo, styles/dashboard.scss]
-      dark: [darkly, styles/dashboard.scss]
+      light: [cosmo, styles/dashboard-light.scss, styles/dashboard.scss]
+      dark: [darkly, styles/dashboard-dark.scss, styles/dashboard.scss]
     orientation: rows
     scrolling: false
     embed-resources: true
-    respect-user-color-scheme: true
+    # Light by default (first theme listed); the toggle still switches to dark
+    respect-user-color-scheme: false
     logo: logos/TRlogo.svg
     nav-buttons:
       - icon: github
@@ -76,8 +77,10 @@ cssVar = name => getComputedStyle(document.body).getPropertyValue(name).trim()
 
 ```{ojs}
 //| output: false
+// CSS variables, not hex: OJS cells don't re-run on the light/dark toggle, but the
+// stylesheet swap re-resolves var() in the drawn SVG
 hue = {
-  return { resume: "#3a6ea5", power: "#d1622a", down: "#c1393f" }
+  return { resume: "var(--resume)", power: "var(--power)", down: "var(--down)" }
 }
 ```
 

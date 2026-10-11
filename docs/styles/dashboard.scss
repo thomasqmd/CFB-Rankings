@@ -1,8 +1,8 @@
 /*-- scss:defaults --*/
-// Colours come from _brand.yml (navy / series-1 blue / series-3 orange / ink ramp).
-$primary: #303e4e;
-$body-bg: #fcfcfb;
-$body-color: #222222;
+// Shared by both themes. Per-mode colours (Bootstrap's and the palette below) are switched by
+// $cfb-dark, set in dashboard-light.scss / dashboard-dark.scss: Quarto compiles one stylesheet per
+// mode and the toggle swaps which one is active, so each sheet carries only its own palette.
+$cfb-dark: false !default;
 $font-family-sans-serif: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif;
 $headings-font-family: $font-family-sans-serif;
 $font-family-monospace: "JetBrains Mono", ui-monospace, monospace;
@@ -10,43 +10,50 @@ $font-family-monospace: "JetBrains Mono", ui-monospace, monospace;
 /*-- scss:rules --*/
 @import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
 
-:root {
-  --ink: #222222;
-  --ink-2: #52514e;
-  --ink-3: #77756f;
-  --rule: #e1e0d9;
-  --rule-strong: #c3c2b7;
-  --surface: #fcfcfb;
-  --card: #ffffff;
-  --tint: #f3f2ee;
-  --resume: #3a6ea5;      // series-1 blue: Resume
-  --power: #d1622a;       // series-3 orange: Power
-  --up: #3a6ea5;
-  --down: #c1393f;
-  --accent: #303e4e;
-  --g1: #1baf7a;          // conference groups: Power / Group of 5-6 / Independents
-  --g2: #2a78d6;
-  --g3: #eb6834;
+// Colours come from _brand.yml (navy / series-1 blue / series-3 orange / ink ramp).
+@if $cfb-dark {
+  :root {
+    --ink: #ecebe6;
+    --ink-2: #b9b7af;
+    --ink-3: #8f8d86;
+    --rule: #34383d;
+    --rule-strong: #4a4f55;
+    --surface: #16191d;
+    --card: #1d2126;
+    --tint: #23282e;
+    --resume: #7f9fc4;
+    --power: #e58a5a;
+    --up: #7f9fc4;
+    --down: #e0787d;
+    --accent: #a9b5c3;
+    --g1: #199e70;
+    --g2: #3987e5;
+    --g3: #d95926;
+  }
+} @else {
+  :root {
+    --ink: #222222;
+    --ink-2: #52514e;
+    --ink-3: #77756f;
+    --rule: #e1e0d9;
+    --rule-strong: #c3c2b7;
+    --surface: #fcfcfb;
+    --card: #ffffff;
+    --tint: #f3f2ee;
+    --resume: #3a6ea5;      // series-1 blue: Resume
+    --power: #d1622a;       // series-3 orange: Power
+    --up: #3a6ea5;
+    --down: #c1393f;
+    --accent: #303e4e;
+    --g1: #1baf7a;          // conference groups: Power / Group of 5-6 / Independents
+    --g2: #2a78d6;
+    --g3: #eb6834;
+  }
 }
 
-body.quarto-dark {
-  --ink: #ecebe6;
-  --ink-2: #b9b7af;
-  --ink-3: #8f8d86;
-  --rule: #34383d;
-  --rule-strong: #4a4f55;
-  --surface: #16191d;
-  --card: #1d2126;
-  --tint: #23282e;
-  --resume: #7f9fc4;
-  --power: #e58a5a;
-  --up: #7f9fc4;
-  --down: #e0787d;
-  --accent: #a9b5c3;
-  --g1: #199e70;
-  --g2: #3987e5;
-  --g3: #d95926;
-}
+// Observable Plot fills tooltips with --plot-background, which it sets to white on each plot's
+// own root (class "plot-<hash>"), so it has to be overridden there, not inherited from :root
+[class^="plot-"], [class*=" plot-"] { --plot-background: var(--card); }
 
 body {
   font-family: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif !important;

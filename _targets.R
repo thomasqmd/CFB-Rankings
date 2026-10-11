@@ -75,6 +75,11 @@ input_syms <- function(s) lapply(paste0("inputs_", s), as.symbol)
 weeks_syms <- lapply(paste0("weeks_", SEASONS), as.symbol)
 last_full_inputs <- as.symbol(paste0("inputs_", LAST_FULL))
 complete_data_call <- as.call(c(quote(list), setNames(lapply(paste0("data_", COMPLETE), as.symbol), COMPLETE)))
+# Ablation seasons only, not season_data / weeks_all: those include the live season, which
+# changes every sync and would rerun the whole ablation each week
+ablation_call <- function(prefix) {
+  as.call(c(quote(list), setNames(lapply(paste0(prefix, "_", ABLATION_SEASONS), as.symbol), ABLATION_SEASONS)))
+}
 # Final-week input of each complete season
 final_inputs_call <- bquote(lapply(stats::setNames(.(as.call(c(quote(list), input_syms(COMPLETE)))), COMPLETE),
                                    \(x) x[[length(x)]]))
@@ -136,10 +141,10 @@ list(
     prior_refits, cfg = cfg, workers = FIT_WORKERS)), deployment = "main"),
   # Ablation fits run 2 chains (fast_config), so twice as many fit at once
   tar_target_raw("ablation", bquote(run_ablation(
-    season_data[as.character(.(ABLATION_SEASONS))],
+    .(ablation_call("data")),
     .(as.call(c(quote(list), setNames(lapply(ABLATION_SEASONS - 1L, \(s) call("final_prior", as.symbol(paste0("snaps_", s)))),
                                       ABLATION_SEASONS)))),
-    weeks_all[as.character(.(ABLATION_SEASONS))], cfg = cfg, workers = 2L * FIT_WORKERS)), deployment = "main"),
+    .(ablation_call("weeks")), cfg = cfg, workers = 2L * FIT_WORKERS)), deployment = "main"),
   tar_target(baselines, run_baselines(season_data, weeks_all)),
   tar_target(external_ratings, run_external_ratings(COMPLETE, teams_meta)),
   tar_target_raw("final_refits",
