@@ -7,6 +7,7 @@
 #     -> inputs_<s> [per week]    Stan inputs (priors = final ratings of seasons s-1, s-2)
 #     -> snaps_<s>  [per week]    Power + Resume summaries for that week
 #     -> checks_<s>               PPC, prior sensitivity, LOO for the latest week
+#   -> season_sim                 rest-of-season simulation (live season's latest week only)
 #   -> snapshots, backtest, dashboard_data -> Quarto dashboard + reports
 #   -> supplement                 full-draw refits for the paper's supplementary checks
 #   -> prior_refits, ablation, ... analyses for the paper (R/07_analysis.R) -> paper
@@ -132,6 +133,10 @@ list(
     inp <- .(last_full_inputs)
     induced_priors(inp[[length(inp)]], cfg = cfg)
   })),
+  # Rest-of-season simulation (conference races, CFP, bowls) for the live season only: refits its
+  # latest week (snapshots keep summaries, not draws), so no other season reruns
+  tar_target_raw("season_sim", bquote(run_season_sim(.(as.symbol(paste0("inputs_", CURRENT_SEASON))),
+                                                     .(as.symbol(paste0("data_", CURRENT_SEASON))), cfg = cfg))),
   tar_target(ratings, attach_polls(snapshots$ratings, season_data)),
   tar_target(games_all, dplyr::bind_rows(lapply(season_data, `[[`, "games"))),
   tar_target(backtest, run_backtest(snapshots$predictions, games_all, snapshots$params)),
@@ -189,7 +194,10 @@ list(
   tar_target(data_hashes, data_fingerprint(season_data)),
   tar_target(dashboard_data, build_dashboard_data(ratings, snapshots, games_all, teams_meta, backtest, cfg)),
 
-  tar_quarto(dashboard, path = "docs/dashboard.qmd", quiet = TRUE),
+  # The stylesheets and navbar logo are tracked too, so editing only them re-renders the dashboard
+  tar_quarto(dashboard, path = "docs/dashboard.qmd", quiet = TRUE,
+             extra_files = c("docs/styles/dashboard.scss", "docs/styles/dashboard-light.scss", "docs/styles/dashboard-dark.scss",
+                             "logos/TRlogo-light.svg")),
   tar_quarto(report_season, path = "docs/reports/season_retro.qmd", quiet = TRUE),
   tar_quarto(report_diagnostics, path = "docs/reports/model_diagnostics.qmd", quiet = TRUE),
   tar_quarto(paper, path = "paper/cfb-paper.qmd", quiet = TRUE)

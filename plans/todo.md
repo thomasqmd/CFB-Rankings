@@ -184,3 +184,34 @@ family under `vague_config()`. With the wide τ prior, the scale-t now beats the
       text columns. The SBC figure now labels the preseason coefficients and was made taller.
   - The remaining wide tables and long Stan lines (the blowouts, baseline, sampler and
     perturbation tables) were already wide in the committed PDF.
+
+# Rest-of-season simulation: conference races and postseason
+
+Started 2026-10-17. Two dashboard tabs fed by one new target, `season_sim` (`R/08_season_sim.R`).
+It refits only the live season's latest week, with the snapshot's data, config and seed, so its
+posterior matches the published one. No other season reruns.
+
+- [x] **Simulator.** Draw each remaining regular-season game from the posterior (1,000 draws ×
+      4 replicates). Ratings drift as one random walk per team, at the fitted τ_r.
+- [x] **Conference races.** Top two by conference win % meet in the title game; the Sun Belt
+      uses its division winners. Hosts: P4 and MAC neutral, otherwise the higher seed.
+  - Generic tiebreakers: head-to-head (round-robin record if every pair met, otherwise a team
+    that beat all the others), then record against common conference opponents, then the model
+    rating as a stand-in for each conference's computer-metric step. A team separated out
+    restarts the chain for the rest.
+  - Title games already on the schedule use the real matchup (or result).
+  - Not modelled: the Pac-12 week-13 flex games, which are not scheduled yet.
+- [x] **Postseason.** Bowl eligibility: 6 wins with at most one FCS win counted, and at least
+      .500 (the title game excluded). NDSU and Sacramento State are eligible (June 2026 rule
+      change). CFP: the final resume (WAB) ranking stands in for the committee; the five
+      highest-ranked champions plus seven at-large, seeded straight by ranking. Also each
+      team's projected position in its conference's bowl pecking order.
+- [x] **Paths.** Per remaining game, P(title game / title / CFP) after a win vs. a loss, the
+      outcome of winning out, P(title game | final conference record), and the other teams'
+      games that swing each team's odds most.
+- [x] **Dashboard.** "Conference" and "Postseason" tabs, which use the latest snapshot.
+- [ ] **Calibration check (optional).** Replay the 2025 races from mid-season snapshots and
+      compare simulated title and CFP odds with the outcomes (~10 refits, 5–10 min).
+- [ ] **Exact P4 tiebreakers (optional).** Replace the generic chain conference by conference.
+- [ ] **Specific bowl projections (skipped).** 2026 tie-ins are unchanged from 2025, but bowl
+      selection is discretionary, so only the pecking-order position is shown.

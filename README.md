@@ -75,6 +75,7 @@ Only new weeks are refit: a week's inputs contain nothing from later weeks. Fini
 | `R/05_export.R` | Compact data for the dashboard |
 | `R/06_supplement.R` | Full-draw refits and prior-perturbation study for the paper's appendix |
 | `R/07_analysis.R` | Paper analyses: vague-prior refits and pooled priors, ablations, baselines, SP+/FPI, benchmark sensitivity, margin leakage, SBC, committee validation, data hashes |
+| `R/08_season_sim.R` | Rest-of-season simulation for the live season (refits its latest week only): conference title races with generic tiebreakers, bowl eligibility, CFP field by final resume, paths and rooting interests for the dashboard's Conference and Postseason tabs |
 | `paper/cfb-paper.qmd` | Methods paper (`tar_quarto` target; references in `paper/references.bib`) |
 | `check_build.R` | Post-build checks (below) |
 | `tests/testthat/` | Unit tests (`Rscript -e 'testthat::test_dir("tests/testthat")'`) |

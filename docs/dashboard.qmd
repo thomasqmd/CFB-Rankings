@@ -12,7 +12,8 @@ format:
     embed-resources: true
     # Light by default (first theme listed); the toggle still switches to dark
     respect-user-color-scheme: false
-    logo: logos/TRlogo.svg
+    # Light version: the original navy mark disappears on the navy navbar
+    logo: logos/TRlogo-light.svg
     nav-buttons:
       - icon: github
         href: https://github.com/thomasqmd
@@ -26,6 +27,11 @@ ojs_define(
   ranks_raw = d$ranks, games_raw = d$games, snaps_raw = d$snaps, teams_raw = d$teams,
   bt_overall = d$backtest$overall, bt_season = d$backtest$by_season, bt_cal = d$backtest$calibration,
   cfg = d$config
+)
+sim <- tar_read(season_sim)
+ojs_define(
+  sim_teams = sim$teams, sim_records = sim$records, sim_paths = sim$paths, sim_root = sim$root,
+  sim_seeds = sim$seeds, sim_meta = sim$meta
 )
 ```
 
@@ -86,15 +92,22 @@ hue = {
 
 ```{ojs}
 //| output: false
-logoOf = id => { const t = TEAMS.get(id); return t ? t.logo : null }
+// Team logo, with CFBD's dark-background version swapped in by CSS under the dark theme
+logoImg = (id, size) => {
+  const t = TEAMS.get(id)
+  if (!t?.logo) return ""
+  const dim = size ? { width: size, height: size } : {}
+  return t.logo_dark
+    ? htl.html`<img class="logo-light" src=${t.logo} alt="" loading="lazy" ${dim}><img class="logo-dark" src=${t.logo_dark} alt="" loading="lazy" ${dim}>`
+    : htl.html`<img src=${t.logo} alt="" loading="lazy" ${dim}>`
+}
 ```
 
 ```{ojs}
 //| output: false
-teamCell = (id, name, sub) => {
-  const logo = logoOf(id)
-  return htl.html`<div class="team-cell">${logo ? htl.html`<img src=${logo} alt="" loading="lazy">` : ""}
-    <div><div class="name">${name}</div>${sub ? htl.html`<div class="conf">${sub}</div>` : ""}</div></div>`
+teamCell = (id, name, sub, xs) => {
+  return htl.html`<div class="team-cell">${logoImg(id)}
+    <div><div class="name">${name}</div>${sub || xs ? htl.html`<div class="conf">${sub ?? ""}${xs ? htl.html`<span class="xs-only">${sub ? " · " : ""}${xs}</span>` : ""}</div>` : ""}</div></div>`
 }
 
 // Point estimate with 80% interval on a shared scale
@@ -173,6 +186,33 @@ teamPicker = (rows, key, label, preferred) => {
   const best = [...opts].sort((a, b) => a.prk - b.prk)
   const value = opts.some(d => d.id === preferred) ? preferred : best[0]?.id
   return Inputs.select(opts.map(d => d.id), { label, format: id => opts.find(d => d.id === id).team, value })
+}
+```
+
+```{ojs}
+//| output: false
+// Greedy label placement for scatter plots: each label tries above, below, right, then left of
+// its dot and takes the first spot that doesn't overlap a label already placed. Positions are
+// estimated from the data extents and the plot's approximate size (w x h pixels).
+// Returns [[rows, {dx, dy, textAnchor}], ...], one Plot.text mark per placement.
+placeLabels = (rows, xk, yk, all, w, h) => {
+  const [x0, x1] = d3.extent(all, d => d[xk]), [y0, y1] = d3.extent(all, d => d[yk])
+  const px = d => ((d[xk] - x0) / (x1 - x0 || 1)) * w, py = d => h - ((d[yk] - y0) / (y1 - y0 || 1)) * h
+  const spots = [{ dx: 0, dy: -10, textAnchor: "middle" }, { dx: 0, dy: 13, textAnchor: "middle" },
+                 { dx: 8, dy: 0, textAnchor: "start" }, { dx: -8, dy: 0, textAnchor: "end" }]
+  const box = (d, o) => {
+    const tw = 6.3 * d.team.length, x = px(d) + o.dx, y = py(d) + o.dy
+    const left = o.textAnchor === "middle" ? x - tw / 2 : o.textAnchor === "start" ? x : x - tw
+    return [left, y - 7, left + tw, y + 7]
+  }
+  const hit = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+  const placed = [], groups = spots.map(() => [])
+  for (const d of [...rows].sort((a, b) => b[yk] - a[yk])) {
+    let k = spots.findIndex(o => !placed.some(p => hit(p, box(d, o))))
+    if (k < 0) k = 0
+    placed.push(box(d, spots[k])); groups[k].push(d)
+  }
+  return spots.map((o, k) => [groups[k], o]).filter(([g]) => g.length)
 }
 ```
 
@@ -277,6 +317,71 @@ matchup = {
 }
 ```
 
+```{ojs}
+//| output: false
+// ---- rest-of-season simulation (latest snapshot of the live season) ---------------
+rows0 = x => { try { return transpose(x) } catch (e) { return [] } }
+```
+
+```{ojs}
+//| output: false
+SIMPATH = rows0(sim_paths)
+```
+
+```{ojs}
+//| output: false
+SIMREC = rows0(sim_records)
+```
+
+```{ojs}
+//| output: false
+SIMROOT = rows0(sim_root)
+```
+
+```{ojs}
+//| output: false
+SIMSEED = rows0(sim_seeds)
+```
+
+```{ojs}
+//| output: false
+// Simulated teams with their group and current ranks from the snapshot the simulation used
+simRows = {
+  const now = new Map(R.filter(d => d.s === sim_meta.season && d.w === sim_meta.week && d.tier === 1).map(d => [d.id, d]))
+  const seeds = d3.group(SIMSEED, d => d.id)
+  return rows0(sim_teams).map(d => {
+    const s = seeds.get(d.id) ?? []
+    const xseed = d.p_cfp > 0 ? d3.sum(s, x => x.seed * x.p) / d.p_cfp : null
+    return { ...d, grp: now.get(d.id)?.grp ?? "Group", prk: now.get(d.id)?.prk, rrk_now: now.get(d.id)?.rrk,
+             seeds: new Map(s.map(x => [x.seed, x.p])), xseed }
+  })
+}
+```
+
+```{ojs}
+//| output: false
+simConfs = [...new Set(simRows.filter(d => d.cg > 0).map(d => d.conf))].sort()
+```
+
+```{ojs}
+//| output: false
+mutable racePick = null
+```
+
+```{ojs}
+//| output: false
+simBanner = htl.html`<p class="explain">Simulated ${sim_meta.sims.toLocaleString()} times from the
+  <strong>${sim_meta.season} ${sim_meta.week_label}</strong> ratings, game by game, with each team's strength drifting week to week.
+  ${season !== sim_meta.season || week !== sim_meta.week ? htl.html`<em>The season and week picked in the sidebar don't apply to this page.</em>` : ""}</p>`
+```
+
+```{ojs}
+//| output: false
+// "86% → 51%": odds after a win, then after a loss
+wl = (w, l) => w == null && l == null ? htl.html`<span class="muted">–</span>` :
+  htl.html`<span class="num wl"><span style="color:var(--up)">${fmtPct(w)}</span><span class="sep"> / </span><span style="color:var(--down)">${fmtPct(l)}</span></span>`
+```
+
 # {.sidebar}
 
 ```{ojs}
@@ -321,13 +426,13 @@ viewof confPick = Inputs.select(confKeys(fbs), { label: "Conference", format: co
 viewof search = Inputs.text({ placeholder: "Search team…", label: "Find" })
 ```
 
-## Row {height="18%"}
+## Row {.flow}
 
 ```{ojs}
 {
   const tile = (cls, label, row, value, sub) => htl.html`<div class=${"tile " + cls}>
     <div class="label">${label}</div>
-    <div class="value">${logoOf(row.id) ? htl.html`<img src=${logoOf(row.id)} width=26 height=26 alt="">` : ""}${row.team}</div>
+    <div class="value">${logoImg(row.id, 26)}${row.team}</div>
     <div class="sub">${value} · ${sub}</div></div>`
   const byP = [...fbs].sort((a, b) => a.prk - b.prk)
   const byR = hasResume ? [...fbs].sort((a, b) => a.rrk - b.rrk) : byP
@@ -340,13 +445,13 @@ viewof search = Inputs.text({ placeholder: "Search team…", label: "Find" })
     ${tile("resume", `Bubble · #${cfg.benchmark_rank} Resume`, bubble, `${fmtSigned(bubble.wab, 2)} WAB`, `${bubble.wins}–${bubble.losses}`)}
     <div class="tile"><div class="label">Biggest gap</div>${(() => {
       const g = [...fbs].filter(d => d.rrk <= 25 || d.prk <= 25).sort((a, b) => Math.abs(b.rrk - b.prk) - Math.abs(a.rrk - a.prk))[0]
-      return htl.html`<div class="value">${logoOf(g.id) ? htl.html`<img src=${logoOf(g.id)} width=26 height=26 alt="">` : ""}${g.team}</div>
+      return htl.html`<div class="value">${logoImg(g.id, 26)}${g.team}</div>
         <div class="sub">Resume #${g.rrk} · Power #${g.prk}</div>`})()}</div>
   </div>`
 }
 ```
 
-## Row {height="82%"}
+## Row
 
 ```{ojs}
 //| title: "FBS rankings"
@@ -359,17 +464,17 @@ viewof search = Inputs.text({ placeholder: "Search team…", label: "Find" })
   const wabDom = d3.extent(fbs.flatMap(d => [d.wab_lo, d.wab_hi]))
   const pwDom = d3.extent(fbs.flatMap(d => [d.pw_lo, d.pw_hi]))
   const tr = d => htl.html`<tr class="clickable" onclick=${() => goToTeam(d.id)}>
-    <td class="rank num">${d[key]}</td>
-    <td>${move(d[key], prevRows.get(d.id)?.[key])}</td>
-    <td class="team">${teamCell(d.id, d.team, d.conf)}</td>
-    <td class="num">${d.wins}–${d.losses}</td>
+    <td class="rank num">${d[key]}<div class="xs-only move-xs">${move(d[key], prevRows.get(d.id)?.[key])}</div></td>
+    <td class="hide-xs">${move(d[key], prevRows.get(d.id)?.[key])}</td>
+    <td class="team">${teamCell(d.id, d.team, d.conf, `${d.wins}–${d.losses}`)}</td>
+    <td class="num hide-xs">${d.wins}–${d.losses}</td>
     <td class="num"><strong>${fmtSigned(d.wab, 2)}</strong></td>
     <td class="hide-sm">${ibar(d.wab, d.wab_lo, d.wab_hi, wabDom, hue.resume, 90)}</td>
-    <td class="num">${d.rrk}${d.rrk_lo == null ? "" : htl.html`<span class="muted" style="font-size:0.75rem"> (${d.rrk_lo}–${d.rrk_hi})</span>`}</td>
+    <td class="num">${d.rrk}${d.rrk_lo == null ? "" : htl.html`<span class="muted iv" style="font-size:0.75rem"> (${d.rrk_lo}–${d.rrk_hi})</span>`}</td>
     <td class="num hide-sm">${fmtPct(d.p12)}</td>
     <td class="num"><strong>${fmtSigned(d.pw)}</strong></td>
     <td class="hide-sm">${ibar(d.pw, d.pw_lo, d.pw_hi, pwDom, hue.power, 90)}</td>
-    <td class="num">${d.prk}<span class="muted" style="font-size:0.75rem"> (${d.prk_lo}–${d.prk_hi})</span></td>
+    <td class="num">${d.prk}<span class="muted iv" style="font-size:0.75rem"> (${d.prk_lo}–${d.prk_hi})</span></td>
     <td class="num hide-sm" title=${d.off == null ? "" : `Offence #${d.off_rk}: ${d.off.toFixed(1)} pts scored vs. an average FBS defence\nDefence #${d.def_rk}: ${d.def.toFixed(1)} pts allowed vs. an average FBS offence`}>${d.off == null ? "–" : `${d.off_rk} / ${d.def_rk}`}</td>
     <td class="num hide-sm">${d.sos_rk ?? "–"}</td>
     <td class="num hide-sm">${fmtSigned(d.luck)}</td>
@@ -381,9 +486,9 @@ viewof search = Inputs.text({ placeholder: "Search team…", label: "Find" })
   return htl.html`<div class="table-wrap"><table class="cfb-table">
     <thead>
       <tr class="group"><th colspan=4></th><th colspan=4 class="resume">Resume</th><th colspan=4 class="power">Power</th><th colspan=3 class="hide-sm"></th><th colspan=3>Polls</th></tr>
-      <tr><th class="num">#</th><th></th><th>Team</th><th class="num">Record</th>
-        <th class="num" title="Wins above the #${cfg.benchmark_rank} team vs. this schedule">WAB</th><th class="hide-sm" title="80% interval">80%</th><th class="num" title="Median rank (80% interval)">Rank</th><th class="num hide-sm" title="Probability of a top-12 resume">Top 12</th>
-        <th class="num" title="Points vs. average FBS team, neutral field">Rating</th><th class="hide-sm" title="80% interval">80%</th><th class="num">Rank</th>
+      <tr><th class="num rank">#</th><th class="hide-xs"></th><th class="team">Team</th><th class="num hide-xs">Record</th>
+        <th class="num" title="Wins above the #${cfg.benchmark_rank} team vs. this schedule">WAB</th><th class="hide-sm" title="80% interval">80%</th><th class="num" title="Median rank (80% interval)">Rank<span class="xs-only"> (res.)</span></th><th class="num hide-sm" title="Probability of a top-12 resume">Top 12</th>
+        <th class="num" title="Points vs. average FBS team, neutral field">Rating</th><th class="hide-sm" title="80% interval">80%</th><th class="num">Rank<span class="xs-only"> (pow.)</span></th>
         <th class="num hide-sm" title="Offence rank / defence rank (hover a cell for points)">Off / Def</th>
         <th class="num hide-sm" title="Schedule strength rank (benchmark's expected loss rate)">SOS</th><th class="num hide-sm" title="Wins minus expected wins">Luck</th><th class="num hide-sm" title="Colley matrix (record only)">Colley</th>
         <th class="num">AP</th><th class="num" title="CBS Sports 138">CBS</th><th class="num">CFP</th></tr>
@@ -405,7 +510,7 @@ viewof teamConf = Inputs.select(confKeys(fbs), { label: "Conference", format: co
 viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam)
 ```
 
-## Row {height="20%"}
+## Row {.flow}
 
 ```{ojs}
 {
@@ -414,7 +519,7 @@ viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam)
   const xFinal = tRow.wins + d3.sum(future, g => g.fut_wp ?? 0)
   const fact = (label, v, color) => htl.html`<div class="fact"><div class="small-caps">${label}</div><div class="v" style=${color ? { color } : {}}>${v}</div></div>`
   return htl.html`<div class="team-header">
-    ${logoOf(tRow.id) ? htl.html`<img src=${logoOf(tRow.id)} alt="">` : ""}
+    ${logoImg(tRow.id)}
     <div><h2>${tRow.team}</h2><div class="muted">${tRow.conf} · ${tRow.wins}–${tRow.losses} through ${snap.label}</div></div>
     <div class="facts">
       ${fact("Resume", tRow.rrk == null ? "–" : `#${tRow.rrk}`, "var(--resume)")}
@@ -431,7 +536,7 @@ viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam)
 }
 ```
 
-## Row {height="80%"}
+## Row
 
 ### Column {width="66%"}
 
@@ -454,7 +559,7 @@ viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam)
     const opp = R.find(d => d.s === season && d.w === snap.w && d.id === g.opp_id)
     return htl.html`<tr>
       <td class="muted">${g.label === "Postseason" ? "Post" : g.label.replace("Week ", "")}</td>
-      <td class="team">${teamCell(g.opp_id, `${g.venue === "A" ? "@ " : g.venue === "N" ? "vs " : ""}${g.opp}`, opp ? `Resume #${opp.rrk} · Power #${opp.prk}` : "")}</td>
+      <td class="team">${teamCell(g.opp_id, `${g.venue === "A" ? "@ " : g.venue === "N" ? "vs " : ""}${g.opp}`, opp ? htl.html`<span class="hide-xs">Resume #${opp.rrk} · Power #${opp.prk}</span><span class="xs-only">Res. #${opp.rrk} · Pow. #${opp.prk}</span>` : "")}</td>
       <td>${isFuture ? htl.html`<span class="muted">${new Date(g.date + "T12:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>` :
         htl.html`<span class=${g.result === "W" ? "result-w" : "result-l"}>${g.result}</span> <span class="num">${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</span>`}</td>
       <td class="num" title=${isFuture ? "Expected result and win probability now" : "Expected result and pre-game win probability (model as of the previous week)"}>${wp == null ? "–" : htl.html`<span class="muted" style="font-weight:600">${wp >= 0.5 ? "W" : "L"}</span> ${fmtPct(wp)}`}</td>
@@ -465,7 +570,7 @@ viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam)
     </tr>`
   }
   return htl.html`<div class="table-wrap"><table class="cfb-table">
-    <thead><tr><th>Wk</th><th>Opponent</th><th>Result</th><th class="num" title="Model's expected result and win probability">Expected</th><th class="num" title="Model spread for this team (negative = favoured)">Model</th><th class="num hide-sm" title="Projected score: this team first">Proj.</th><th class="num hide-sm" title="Closing-line spread for this team (negative = favoured)">Vegas</th><th class="num" title="Resume contribution (wins above benchmark)">WAB</th></tr></thead>
+    <thead><tr><th>Wk</th><th class="team">Opponent</th><th>Result</th><th class="num" title="Model's expected result and win probability">Expected</th><th class="num" title="Model spread for this team (negative = favoured)">Model</th><th class="num hide-sm" title="Projected score: this team first">Proj.</th><th class="num hide-sm" title="Closing-line spread for this team (negative = favoured)">Vegas</th><th class="num" title="Resume contribution (wins above benchmark)">WAB</th></tr></thead>
     <tbody>${rows.map(tr)}</tbody>
     <tfoot><tr><td colspan=8 style="padding-top:10px; white-space:normal">
       <span class="small-caps">Expected record</span> <strong class="num">${xw.toFixed(1)}–${(n - xw).toFixed(1)}</strong>
@@ -534,7 +639,7 @@ viewof venue = Inputs.radio(["Neutral", "A at home", "B at home"], { value: "Neu
   const row = (label, fa, fb, title) => htl.html`<tr title=${title ?? ""}><td>${label}</td><td class="num">${fa}</td><td class="num">${fb}</td></tr>`
   return htl.html`<div class="tiles">
     <div class="tile power"><div class="label">Predicted spread</div>
-      <div class="value">${logoOf(fav.id) ? htl.html`<img src=${logoOf(fav.id)} width=26 height=26 alt="">` : ""}${fav.team} by ${Math.abs(mean).toFixed(1)}</div>
+      <div class="value">${logoImg(fav.id, 26)}${fav.team} by ${Math.abs(mean).toFixed(1)}</div>
       <div class="sub">${venue === "Neutral" ? "Neutral site" : `Incl. home field ${snap.hfa.toFixed(1)}`}</div></div>
     <div class="tile"><div class="label">${a.team} win probability</div><div class="value">${fmtPct(pA)}</div>
       <div class="sub">${b.team}: ${fmtPct(1 - pA)}</div></div>
@@ -562,7 +667,7 @@ viewof venue = Inputs.radio(["Neutral", "A at home", "B at home"], { value: "Neu
   const { a, mean, sd } = matchup
   const xs = d3.range(mean - 3.5 * sd, mean + 3.5 * sd, sd / 40).map(x => ({ x, y: Math.exp(-0.5 * ((x - mean) / sd) ** 2) / (sd * Math.sqrt(2 * Math.PI)) }))
   return Plot.plot({
-    height: 300, x: { label: `${a.team} margin (points)` }, y: { axis: null },
+    height: 470, x: { label: `${a.team} margin (points)` }, y: { axis: null, domain: [0, d3.max(xs, d => d.y) * 1.12] },
     marks: [
       Plot.areaY(xs.filter(d => d.x >= 0), { x: "x", y: "y", fill: hue.power, fillOpacity: 0.35 }),
       Plot.line(xs, { x: "x", y: "y", stroke: hue.power, strokeWidth: 2 }),
@@ -609,8 +714,10 @@ viewof gamesConf = Inputs.select(confKeys(fbs), { label: "Conference", format: c
     const a = info(g.id), b = info(g.opp_id)
     return (a && inConf(a, gamesConf)) || (b && inConf(b, gamesConf))
   }).sort((a, b) => (a.date).localeCompare(b.date) || Math.abs(m(a) ?? 99) - Math.abs(m(b) ?? 99))
+  // Short names (CFBD abbreviations) where a team is named inside a number column
+  const short = (id, name) => TEAMS.get(id)?.abbr ?? name
   const fav = (g, x) => x == null ? htl.html`<span class="muted">–</span>`
-    : htl.html`<span>${x >= 0 ? g.team : g.opp}</span> <strong class="num">−${Math.abs(x).toFixed(1)}</strong>`
+    : htl.html`<span title=${x >= 0 ? g.team : g.opp}>${x >= 0 ? short(g.id, g.team) : short(g.opp_id, g.opp)}</span> <strong class="num">−${Math.abs(x).toFixed(1)}</strong>`
   // Model vs. Vegas on games with a pre-game prediction, a closing line and its win probability:
   // MAE of the margin and Brier score of the win probability (lower is better for both)
   const vsVegas = gs => {
@@ -630,15 +737,15 @@ viewof gamesConf = Inputs.select(confKeys(fbs), { label: "Conference", format: c
       : Math.abs(mm - actual) < Math.abs(g.line - actual) ? "Model" : Math.abs(mm - actual) > Math.abs(g.line - actual) ? "Vegas" : "Tie"
     const p = wp(g)
     return htl.html`<tr>
-      <td class="team">${teamCell(g.id, g.team, info(g.id) ? `${info(g.id).conf} · Power #${info(g.id).prk}` : "")}</td>
+      <td class="team">${teamCell(g.id, g.team, info(g.id) ? htl.html`<span title=${info(g.id).conf}><span class="conf-wide">${info(g.id).conf} · </span><span class="hide-xs">Power</span><span class="xs-only">Pow.</span> #${info(g.id).prk}</span>` : "")}</td>
       <td class="muted" title=${g.venue === "N" ? "Neutral site" : `Home: ${g.team}`}>${g.venue === "N" ? "vs" : "hosts"}</td>
-      <td class="team">${teamCell(g.opp_id, g.opp, info(g.opp_id) ? `${info(g.opp_id).conf} · Power #${info(g.opp_id).prk}` : "")}</td>
+      <td class="team">${teamCell(g.opp_id, g.opp, info(g.opp_id) ? htl.html`<span title=${info(g.opp_id).conf}><span class="conf-wide">${info(g.opp_id).conf} · </span><span class="hide-xs">Power</span><span class="xs-only">Pow.</span> #${info(g.opp_id).prk}</span>` : "")}</td>
       <td>${fav(g, mm)}</td>
       <td>${p == null ? "–" : pbar(Math.max(p, 1 - p), hue.power)}</td>
       <td class="num hide-sm" title="Projected score (team first) and total">${(() => { const [p, o] = proj(g); return p == null ? "–" : htl.html`${Math.round(p)}–${Math.round(o)}<div class="muted" style="font-size:0.75rem">total ${(p + o).toFixed(0)}</div>` })()}</td>
       <td class="hide-sm">${fav(g, g.line)}${g.ou == null ? "" : htl.html`<div class="muted" style="font-size:0.75rem">O/U ${g.ou}</div>`}</td>
-      <td class="num hide-sm" title="Model margin minus Vegas margin, for ${g.team}">${edge == null ? "–" : htl.html`<span title=${`Model likes ${edge >= 0 ? g.team : g.opp} by ${Math.abs(edge).toFixed(1)} more than Vegas`}>${Math.abs(edge) < 0.05 ? "0.0" : `${edge >= 0 ? g.team : g.opp} +${Math.abs(edge).toFixed(1)}`}</span>`}</td>
-      <td>${g.result == null ? htl.html`<span class="muted">${g.date}</span>` : htl.html`<span class="num">${g.team} ${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</span>`}</td>
+      <td class="num hide-sm" title="Model margin minus Vegas margin, for ${g.team}">${edge == null ? "–" : htl.html`<span title=${`Model likes ${edge >= 0 ? g.team : g.opp} by ${Math.abs(edge).toFixed(1)} more than Vegas`}>${Math.abs(edge) < 0.05 ? "0.0" : `${edge >= 0 ? short(g.id, g.team) : short(g.opp_id, g.opp)} +${Math.abs(edge).toFixed(1)}`}</span>`}</td>
+      <td>${g.result == null ? htl.html`<span class="muted">${g.date}</span>` : htl.html`<span class="num" title=${g.team}>${short(g.id, g.team)} ${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</span>`}</td>
       <td>${closer == null ? "" : htl.html`<span class=${closer === "Model" ? "result-w" : closer === "Vegas" ? "result-l" : "muted"}>${closer}</span>`}</td>
     </tr>`
   }
@@ -648,7 +755,7 @@ viewof gamesConf = Inputs.select(confKeys(fbs), { label: "Conference", format: c
   ${seasonStats.n ? statLine(`Season through this week`, seasonStats) : ""}
   ${wkStats.n || seasonStats.n ? "Lower is better for both." : ""}</p>
   <div class="table-wrap"><table class="cfb-table">
-    <thead><tr><th>Team</th><th></th><th>Opponent</th><th>Model spread</th><th>Fav. win prob.</th><th class="num hide-sm" title="Projected score (team first) and total">Proj.</th><th class="hide-sm" title="Closing line and over/under">Vegas</th><th class="hide-sm" title="Where the model differs from the closing line">Edge</th><th>Result</th><th title="Which prediction was closer to the final margin">Closer</th></tr></thead>
+    <thead><tr><th class="team">Team</th><th></th><th class="team">Opponent</th><th>Model spread</th><th>Fav. win prob.</th><th class="num hide-sm" title="Projected score (team first) and total">Proj.</th><th class="hide-sm" title="Closing line and over/under">Vegas</th><th class="hide-sm" title="Where the model differs from the closing line">Edge</th><th>Result</th><th title="Which prediction was closer to the final margin">Closer</th></tr></thead>
     <tbody>${shown.map(tr)}</tbody></table></div>`
 }
 ```
@@ -686,7 +793,7 @@ viewof trendTeam = teamPicker(fbs, trendConf, "Highlight", null)
   const labels = new Map(seasonSnaps.map(d => [d.w, d.label.replace("Week ", "")]))
   const lastW = d3.max(hist, d => d.w)
   return Plot.plot({
-    height: 620, marginRight: 130, marginLeft: 40,
+    height: 620, marginRight: width < 600 ? 62 : 130, marginLeft: 40,
     x: { label: null, ticks: [...new Set(hist.map(d => d.w))], tickFormat: w => labels.get(w) === "Postseason" ? "Post" : labels.get(w) },
     y: { reverse: true, domain: [1, yMax], label: "Rank", grid: true },
     marks: [
@@ -694,7 +801,7 @@ viewof trendTeam = teamPicker(fbs, trendConf, "Highlight", null)
       Plot.line(R.filter(d => d.s === season && d.id === trendTeam && d.w >= 1 && d.w <= snap.w), { x: "w", y: key, stroke: color, strokeWidth: 3.5, curve: "monotone-x" }),
       Plot.dot(R.filter(d => d.s === season && d.id === trendTeam && d.w >= 1 && d.w <= snap.w), { x: "w", y: key, fill: color, r: 4.5, stroke: "var(--card)", strokeWidth: 1.5 }),
       Plot.dot(hist.filter(d => d.w === lastW), { x: "w", y: key, fill: color, r: 3.5 }),
-      Plot.text(hist.filter(d => d.w === lastW), { x: "w", y: key, text: d => `${d[key]}. ${d.team}`, dx: 8, textAnchor: "start", fill: "currentColor", fontSize: 11 }),
+      Plot.text(hist.filter(d => d.w === lastW), { x: "w", y: key, text: d => width < 600 ? `${d[key]} ${TEAMS.get(d.id)?.abbr ?? d.team}` : `${d[key]}. ${d.team}`, dx: 8, textAnchor: "start", fill: "currentColor", fontSize: width < 600 ? 10 : 11 }),
       Plot.tip(hist, Plot.pointer({ x: "w", y: key, title: d => `${d.team}\n${trendBy} #${d[key]} after ${labels.get(d.w)}\n${d.wins}–${d.losses}` }))
     ]
   })
@@ -740,7 +847,8 @@ viewof rvpConf = Inputs.select(confKeys(fbs), { label: "Highlight", format: conf
       Plot.text([{ x: d3.min(fbs, d => d.pw), y: 0 }], { x: "x", y: "y", text: () => `#${cfg.benchmark_rank}-team benchmark`, dy: -8, fill: "currentColor", fillOpacity: 0.7, fontSize: 11, textAnchor: "start" }),
       Plot.dot(fbs.filter(d => !on(d)), { x: "pw", y: "wab", r: 4.5, fill: fill, fillOpacity: 0.15 }),
       Plot.dot(hi, { x: "pw", y: "wab", r: 5.5, fill: fill, fillOpacity: 0.9, stroke: "var(--card)", strokeWidth: 1.5 }),
-      Plot.text(lab, { x: "pw", y: "wab", text: "team", dy: -10, fontSize: 11, fill: "currentColor" }),
+      ...placeLabels(lab, "pw", "wab", fbs, width < 600 ? width - 60 : width * 0.55, 500)
+        .map(([rows, o]) => Plot.text(rows, { x: "pw", y: "wab", text: "team", fontSize: 11, fill: "currentColor", ...o })),
       Plot.tip(fbs, Plot.pointer({ x: "pw", y: "wab", title: d => `${d.team} (${d.wins}–${d.losses})\n${d.conf} · ${grpName(d.grp)}\nResume #${d.rrk} · WAB ${fmtSigned(d.wab, 2)}\nPower #${d.prk} · ${fmtSigned(d.pw)} pts` }))
     ]
   })
@@ -760,9 +868,9 @@ viewof rvpConf = Inputs.select(confKeys(fbs), { label: "Highlight", format: conf
   const sw = g => htl.html`<span style=${{ display: "inline-block", width: "9px", height: "9px", borderRadius: "50%", background: `var(--g${g === "Power" ? 1 : 2})`, marginRight: "6px" }}></span>`
   return htl.html`<p class="explain">Averages over each conference's FBS teams. Click a row to highlight it.</p>
   <div class="table-wrap"><table class="cfb-table">
-  <thead><tr><th>Conference</th><th class="num">Avg Power</th><th class="num">Avg WAB</th><th class="num" title="Teams in the resume top ${cfg.benchmark_rank}">Top ${cfg.benchmark_rank}</th></tr></thead>
-  <tbody>${rows.map(d => htl.html`<tr class="clickable" onclick=${() => pick("conf:" + d.conf)} style=${rvpConf === "conf:" + d.conf ? { background: "var(--tint)" } : {}}>
-    <td>${sw(d.grp)}<strong>${d.conf}</strong> <span class="muted">(${d.n})</span>
+  <thead><tr><th class="team">Conference</th><th class="num">Avg Power</th><th class="num">Avg WAB</th><th class="num" title="Teams in the resume top ${cfg.benchmark_rank}">Top ${cfg.benchmark_rank}</th></tr></thead>
+  <tbody>${rows.map(d => htl.html`<tr onclick=${() => pick("conf:" + d.conf)} class=${rvpConf === "conf:" + d.conf ? "clickable selected" : "clickable"}>
+    <td class="team">${sw(d.grp)}<strong>${d.conf}</strong> <span class="muted">(${d.n})</span>
       <div class="conf" style="font-size:0.75rem;color:var(--ink-3);margin-left:15px">Best resume: ${d.best.team} #${d.best.rrk}</div></td>
     <td class="num">${fmtSigned(d.pw)}</td><td class="num">${fmtSigned(d.wab, 2)}</td><td class="num">${d.top12 || "–"}</td></tr>`)}</tbody></table></div>`
 }
@@ -776,7 +884,7 @@ viewof rvpConf = Inputs.select(confKeys(fbs), { label: "Highlight", format: conf
   return htl.html`<p class="explain">Wins minus expected wins, where expected wins add up each game's win probability
   using the team's current rating. Positive = won more than its play suggests (close games, turnovers).</p>
   <div class="table-wrap"><table class="cfb-table">
-  <thead><tr><th>Team</th><th class="num">Record</th><th class="num">xW</th><th class="num">Luck</th><th class="num">Close</th></tr></thead>
+  <thead><tr><th class="team">Team</th><th class="num">Record</th><th class="num">xW</th><th class="num">Luck</th><th class="num">Close</th></tr></thead>
   <tbody>${show.map(d => htl.html`<tr class="clickable" onclick=${() => goToTeam(d.id)}>
     <td class="team">${teamCell(d.id, d.team, d.conf)}</td><td class="num">${d.wins}–${d.losses}</td><td class="num">${d.xw.toFixed(1)}</td>
     <td class="num"><strong style=${{ color: d.luck >= 0 ? "var(--up)" : "var(--down)" }}>${fmtSigned(d.luck)}</strong></td>
@@ -800,7 +908,7 @@ viewof pollConf = Inputs.select(confKeys(fbs), { label: "Conference", format: co
 viewof pollShow = Inputs.radio(["Top 25", "All"], { value: "Top 25", label: "Show" })
 ```
 
-## Row {height="18%"}
+## Row {.flow}
 
 ```{ojs}
 //| output: false
@@ -828,7 +936,7 @@ htl.html`<div class="tiles">
     <div class="sub">Spearman, all FBS</div></div></div>`
 ```
 
-## Row {height="82%"}
+## Row
 
 ```{ojs}
 //| title: "Rankings compared"
@@ -856,20 +964,234 @@ htl.html`<div class="tiles">
   return htl.html`<p class="explain">Sorted by <strong>${sys.title}</strong>${poll ? "; unranked teams follow in Resume order" : ""}.
   Every column uses the same games: polls are those released after the selected week.</p>
   <div class="table-wrap"><table class="cfb-table">
-  <thead><tr><th class="num">#</th><th>Team</th><th class="num">Record</th>${systems.map(s => htl.html`<th class="num" title=${s.title} style=${s.key === sys.key ? { color: "var(--ink)" } : {}}>${s.label}</th>`)}</tr></thead>
+  <thead><tr><th class="num rank">#</th><th class="team">Team</th><th class="num hide-xs">Record</th>${systems.map(s => htl.html`<th class="num" title=${s.title} style=${s.key === sys.key ? { color: "var(--ink)" } : {}}>${s.label}</th>`)}</tr></thead>
   <tbody>${rows.map((d, i) => htl.html`<tr class="clickable" onclick=${() => goToTeam(d.id)}>
-    <td class="rank num">${i + 1}</td><td class="team">${teamCell(d.id, d.team, d.conf)}</td><td class="num">${d.wins}–${d.losses}</td>
+    <td class="rank num">${i + 1}</td><td class="team">${teamCell(d.id, d.team, d.conf, `${d.wins}–${d.losses}`)}</td><td class="num hide-xs">${d.wins}–${d.losses}</td>
     ${systems.map(s => cell(d, s))}</tr>`)}</tbody></table></div>`
+}
+```
+
+# Conference
+
+## {.toolbar}
+
+```{ojs}
+viewof raceConf = {
+  const pref = simRows.find(d => d.id === (racePick ?? pickedTeam))?.conf
+  return Inputs.select(simConfs, { label: "Conference", value: simConfs.includes(pref) ? pref : simConfs.includes("SEC") ? "SEC" : simConfs[0] })
+}
+```
+
+```{ojs}
+viewof raceTeam = {
+  const opts = simRows.filter(d => d.conf === raceConf).sort((a, b) => b.p_title - a.p_title || b.p_ccg - a.p_ccg)
+  const pref = [racePick, pickedTeam].find(id => opts.some(d => d.id === id))
+  return Inputs.select(opts.map(d => d.id), { label: "Team", format: id => opts.find(d => d.id === id).team, value: pref ?? opts[0]?.id })
+}
+```
+
+## Row {height="55%"}
+
+### Column {width="58%"}
+
+```{ojs}
+//| title: "Title race"
+{
+  const rows = simRows.filter(d => d.conf === raceConf).sort((a, b) => b.p_title - a.p_title || b.p_ccg - a.p_ccg || b.xcw - a.xcw)
+  const divs = rows.some(d => d.div)
+  const tr = (d, i) => htl.html`<tr onclick=${() => { mutable racePick = d.id }} class=${d.id === raceTeam ? "clickable selected" : "clickable"}>
+    <td class="rank num">${i + 1}</td>
+    <td class="team">${teamCell(d.id, d.team, divs ? d.div : `${d.w}–${d.l} overall`)}</td>
+    <td class="num"><strong>${d.cw}–${d.cl}</strong></td>
+    <td class="num hide-sm">${d.cg - d.cw - d.cl}</td>
+    <td class="num" title="Expected final conference record">${d.xcw.toFixed(1)}–${(d.cg - d.xcw).toFixed(1)}</td>
+    <td>${pbar(d.p_ccg, "var(--power)")}</td>
+    <td>${pbar(d.p_title, "var(--resume)")}</td>
+    <td class="num hide-sm" title="Chance of winning every remaining regular-season game">${fmtPct(d.p_winout)}</td>
+    <td class="num hide-sm">${fmtPct(d.p_cfp)}</td>
+  </tr>`
+  return htl.html`${simBanner}<div class="table-wrap"><table class="cfb-table">
+    <thead><tr><th class="num rank">#</th><th class="team">Team</th><th class="num">Conf.</th><th class="num hide-sm" title="Conference games left">Left</th>
+      <th class="num" title="Expected final conference record">Proj.</th><th title="Plays in the conference title game">Title game</th><th title="Wins the conference">Champion</th>
+      <th class="num hide-sm">Win out</th><th class="num hide-sm">CFP</th></tr></thead>
+    <tbody>${rows.map(tr)}</tbody></table></div>
+    <p class="explain" style="margin-top:8px">${divs ? "The two division winners" : "The top two by conference win %"} meet for the title.
+    Ties: head-to-head, then record against common conference opponents, then the model's rating (a stand-in for each
+    conference's computer-ranking step), so close races are approximate. Click a team for its paths.</p>`
+}
+```
+
+### Column {width="42%"}
+
+```{ojs}
+//| title: "Odds by final conference record"
+{
+  const d = simRows.find(x => x.id === raceTeam)
+  if (!d) return htl.html`<p class="muted">No team selected.</p>`
+  const recs = SIMREC.filter(x => x.id === d.id).sort((a, b) => b.cw - a.cw)
+  const fact = (label, v) => htl.html`<div class="fact"><div class="small-caps">${label}</div><div class="v">${v}</div></div>`
+  return htl.html`<div class="team-header" style="margin-bottom:10px">
+      ${logoImg(d.id)}
+      <div><h2>${d.team}</h2><div class="muted">${d.cw}–${d.cl} in the ${d.conf}${d.div ? ` (${d.div})` : ""} · ${d.w}–${d.l} overall</div></div>
+      <div class="facts">${fact("Title game", fmtPct(d.p_ccg))}${fact("Champion", fmtPct(d.p_title))}${fact("CFP", fmtPct(d.p_cfp))}</div></div>
+    ${d.left > 0 ? htl.html`<p class="explain">If ${d.team} win out (${fmtPct(d.p_winout)} chance): title game <strong>${fmtPct(d.ccg_winout)}</strong>,
+      champion <strong>${fmtPct(d.title_winout)}</strong>, CFP <strong>${fmtPct(d.cfp_winout)}</strong>.</p>` : ""}
+    <div class="table-wrap"><table class="cfb-table">
+    <thead><tr><th>Final conf. record</th><th>Chance</th><th class="num">Title game</th><th class="num">Champion</th><th class="num">CFP</th></tr></thead>
+    <tbody>${recs.filter(x => x.p >= 0.001).map(x => htl.html`<tr><td class="num"><strong>${x.cw}–${x.cl}</strong></td><td>${pbar(x.p, "var(--ink-3)")}</td>
+      <td class="num">${fmtPct(x.ccg)}</td><td class="num">${fmtPct(x.title)}</td><td class="num">${fmtPct(x.cfp)}</td></tr>`)}</tbody></table></div>`
+}
+```
+
+## Row {height="45%"}
+
+### Column {width="62%"}
+
+```{ojs}
+//| title: "Path: what each remaining game is worth"
+{
+  const d = simRows.find(x => x.id === raceTeam)
+  const rows = SIMPATH.filter(x => x.id === d?.id).sort((a, b) => a.wk - b.wk)
+  if (!rows.length) return htl.html`<p class="muted">No regular-season games left.</p>`
+  return htl.html`<p class="explain">Odds after a <span style="color:var(--up)">win</span> / after a <span style="color:var(--down)">loss</span>, with every other game still simulated.</p>
+  <div class="table-wrap"><table class="cfb-table">
+    <thead><tr><th>Wk</th><th class="team">Opponent</th><th class="num">Win</th><th class="num">Title game</th><th class="num">Champion</th><th class="num">CFP</th>
+      <th class="num hide-sm" title="Title-game odds after a win minus after a loss, in percentage points">Stakes</th></tr></thead>
+    <tbody>${rows.map(g => htl.html`<tr>
+      <td class="muted">${g.label.replace("Week ", "")}</td>
+      <td class="team">${teamCell(g.opp_id, `${g.venue === "A" ? "@ " : g.venue === "N" ? "vs " : ""}${g.opp}`, g.conf_game ? "Conference" : "Non-conference")}</td>
+      <td class="num">${fmtPct(g.p_win)}</td>
+      <td>${wl(g.ccg_w, g.ccg_l)}</td><td>${wl(g.title_w, g.title_l)}</td><td>${wl(g.cfp_w, g.cfp_l)}</td>
+      <td class="num hide-sm">${g.ccg_w == null || g.ccg_l == null ? "–" : `${Math.round((g.ccg_w - g.ccg_l) * 100)} pp`}</td>
+    </tr>`)}</tbody></table></div>`
+}
+```
+
+### Column {width="38%"}
+
+```{ojs}
+//| title: "Rooting interests"
+{
+  const d = simRows.find(x => x.id === raceTeam)
+  if (!d) return htl.html``
+  const rows = SIMROOT.filter(x => x.id === d.id).sort((a, b) => (b.p_root - b.p_vs) - (a.p_root - a.p_vs))
+  const name = id => TEAMS.get(id)?.school ?? id
+  if (!rows.length) return htl.html`<p class="explain">${d.p_ccg >= 0.99 || d.p_ccg <= 0.01 ?
+    `${d.team}'s title-game fate is all but settled.` : `No other conference game moves ${d.team}'s title-game odds by a point or more.`}</p>`
+  return htl.html`<p class="explain">Other ${d.conf} games that move ${d.team}'s title-game odds most.</p>
+  <div class="table-wrap"><table class="cfb-table"><thead><tr><th>Wk</th><th class="team">Root for</th><th class="team">Over</th><th class="num">Title game</th></tr></thead>
+  <tbody>${rows.map(x => htl.html`<tr><td class="muted">${x.wk}</td>
+    <td class="team">${teamCell(x.root_id, name(x.root_id))}</td><td class="team">${teamCell(x.vs_id, name(x.vs_id))}</td>
+    <td>${wl(x.p_root, x.p_vs)}</td></tr>`)}</tbody></table></div>`
+}
+```
+
+# Postseason
+
+## {.toolbar}
+
+```{ojs}
+viewof postConf = Inputs.select(confKeys(simRows), { label: "Conference", format: confFmt })
+```
+
+```{ojs}
+viewof postShow = Inputs.radio(["Contenders", "All"], { value: "Contenders", label: "Show" })
+```
+
+## Row {.flow}
+
+```{ojs}
+{
+  const byCfp = [...simRows].sort((a, b) => b.p_cfp - a.p_cfp)
+  const top1 = [...simRows].sort((a, b) => (b.seeds.get(1) ?? 0) - (a.seeds.get(1) ?? 0))[0]
+  const last = byCfp[11], out = byCfp[12]
+  const g6 = d3.sum(simRows.filter(d => d.grp === "Group"), d => d.p_cfp)
+  const tile = (cls, label, d, sub) => htl.html`<div class=${"tile " + cls}><div class="label">${label}</div>
+    <div class="value">${logoImg(d.id, 26)}${d.team}</div><div class="sub">${sub}</div></div>`
+  return htl.html`<div class="tiles">
+    ${tile("resume", "Likeliest #1 seed", top1, `${fmtPct(top1.seeds.get(1) ?? 0)} to be the top seed`)}
+    ${tile("power", "Last in (12th-best odds)", last, `${fmtPct(last.p_cfp)} to make the field`)}
+    ${tile("", "First out (13th)", out, `${fmtPct(out.p_cfp)} to make the field`)}
+    <div class="tile"><div class="label">Group of 6 in the field</div><div class="value">${g6.toFixed(2)} teams</div>
+      <div class="sub">Expected · ${d3.sum(simRows, d => d.p_bowl).toFixed(0)} of ${simRows.length} FBS teams expected bowl-eligible</div></div>
+  </div>`
+}
+```
+
+## Row
+
+### Column {width="60%"}
+
+```{ojs}
+//| title: "Playoff odds"
+{
+  const rows = simRows.filter(d => inConf(d, postConf))
+    .filter(d => postShow === "All" || d.p_cfp >= 0.005 || d.p_title >= 0.05)
+    .sort((a, b) => b.p_cfp - a.p_cfp || b.p_title - a.p_title || a.rrk - b.rrk)
+  const strip = d => htl.html`<span class="seedstrip">${d3.range(1, 13).map(k => {
+    const p = d.seeds.get(k) ?? 0
+    return htl.html`<span title=${`Seed ${k}: ${fmtPct(p)}`} style=${{ opacity: p > 0 ? 0.15 + 0.85 * Math.min(1, p / 0.4) : 0.06 }}>${k}</span>`
+  })}</span>`
+  return htl.html`${simBanner}<div class="table-wrap"><table class="cfb-table">
+    <thead><tr><th class="team">Team</th><th class="num hide-xs">Record</th>
+      <th>CFP</th><th class="num" title="Top-four seed: first-round bye">Bye</th><th title="Wins the conference">Conf. title</th>
+      <th class="num" title="Expected regular-season wins">Proj. W</th><th class="num" title="Resume rank now → median final resume rank">Resume</th>
+      <th class="num hide-sm" title="Seeds 5–8 host a first-round game">Host</th>
+      <th class="num hide-sm" title="Share of simulations in the field as one of the five highest-ranked conference champions">Auto bid</th>
+      <th class="hide-sm" title="Chance of each seed (darker = likelier)">Seed</th></tr></thead>
+    <tbody>${rows.map(d => htl.html`<tr class="clickable" onclick=${() => goToTeam(d.id)}>
+      <td class="team">${teamCell(d.id, d.team, d.conf, `${d.w}–${d.l}`)}</td><td class="num hide-xs">${d.w}–${d.l}</td>
+      <td>${pbar(d.p_cfp, "var(--power)")}</td><td class="num">${fmtPct(d.p_bye)}</td><td>${pbar(d.p_title, "var(--resume)")}</td>
+      <td class="num">${d.xw.toFixed(1)}</td><td class="num">${d.rrk_now ?? "–"} → ${d.rrk}</td>
+      <td class="num hide-sm">${fmtPct(d.p_host)}</td><td class="num hide-sm">${fmtPct(d.p_auto)}</td>
+      <td class="hide-sm">${strip(d)}</td></tr>`)}</tbody></table></div>
+  <p class="explain" style="margin-top:8px">The field: the five highest-ranked conference champions plus the seven highest-ranked others,
+  seeded straight by rank. The final resume ranking (wins above the #${cfg.benchmark_rank} team) stands in for the committee's,
+  so treat these as resume-based odds, not a forecast of the committee.</p>`
+}
+```
+
+### Column {width="40%"}
+
+```{ojs}
+//| title: "Projected bracket"
+{
+  // The twelve likeliest teams, seeded by their expected seed when in the field
+  const field = [...simRows].sort((a, b) => b.p_cfp - a.p_cfp).slice(0, 12).sort((a, b) => a.xseed - b.xseed)
+  const team = (d, k) => htl.html`<div class="bracket-team"><span class="pill">${k}</span>${teamCell(d.id, d.team, `${fmtPct(d.p_cfp)} in`)}</div>`
+  const pairs = [[5, 12], [6, 11], [7, 10], [8, 9]]
+  return htl.html`<div class="bracket">
+    <div><div class="small-caps">First-round byes</div>${field.slice(0, 4).map((d, i) => team(d, i + 1))}</div>
+    <div><div class="small-caps">First round (higher seed hosts)</div>${pairs.map(([a, b]) => htl.html`<div class="bracket-game">${team(field[a - 1], a)}${team(field[b - 1], b)}</div>`)}</div>
+  </div>`
+}
+```
+
+```{ojs}
+//| title: "Bowl outlook"
+{
+  const conf = postConf.startsWith("conf:")
+  const rows = simRows.filter(d => inConf(d, postConf))
+    .filter(d => postShow === "All" || (d.p_bowl >= 0.02 && d.p_cfp < 0.995))
+    .sort((a, b) => conf ? (a.pick ?? 99) - (b.pick ?? 99) || b.p_pick - a.p_pick : b.p_bowl - a.p_bowl || b.xw - a.xw)
+  return htl.html`<p class="explain">Bowl eligibility: six wins (one over an FCS team counts) and a .500 record.
+  <strong>Order</strong> is a team's typical place among its conference's bowl teams outside the CFP, by final resume:
+  roughly the order in which the conference's bowl tie-ins pick.</p>
+  <div class="table-wrap"><table class="cfb-table"><thead><tr><th class="team">Team</th><th class="num">Proj. W</th><th>Bowl-eligible</th>
+    <th class="num" title="Median place among the conference's bowl teams outside the CFP">Order</th><th class="num" title="Bowl-eligible and outside the CFP">Non-CFP bowl</th></tr></thead>
+  <tbody>${rows.map(d => htl.html`<tr class="clickable" onclick=${() => goToTeam(d.id)}>
+    <td class="team">${teamCell(d.id, d.team, d.conf)}</td><td class="num">${d.xw.toFixed(1)}</td><td>${pbar(d.p_bowl, "var(--power)")}</td>
+    <td class="num">${d.pick == null || d.conf === "FBS Independents" ? "–" : `#${d.pick}`}</td><td class="num">${fmtPct(d.p_pick)}</td></tr>`)}</tbody></table></div>`
 }
 ```
 
 # Method
 
-## Row {height="45%"}
+## Row {height="55%"}
 
 ### Column {width="50%"}
 
-::: {.card title="How it works"}
+::: {.card .method-card title="How it works"}
 **Power** is a Bayesian model fit to every game since the start of the season (FBS, FCS and
 lower-division opponents). Each team has a strength, in points, that can drift from week to
 week; how fast is estimated from the data. Each game informs it twice: the regulation scoreboard
@@ -890,6 +1212,10 @@ come with 80% intervals over the model's uncertainty.
 
 **Colley** is shown as a record-only reference; **AP/CFP** ranks are the polls released
 after the same games.
+
+**Conference** and **Postseason** play out the rest of the live season thousands of times from
+the latest ratings: conference standings and title games, bowl eligibility, and a CFP field picked
+by final resume.
 :::
 
 ### Column {width="50%"}
@@ -899,15 +1225,15 @@ after the same games.
 {
   const rows = transpose(bt_overall)
   return htl.html`<p class="explain">Every game is predicted by the model fitted through the <em>previous</em> week, then compared with the result and the closing line.</p>
-  <div class="table-wrap"><table class="cfb-table"><thead><tr><th>Games</th><th class="num">n</th><th class="num">MAE</th><th class="num">Vegas MAE</th><th class="num">Accuracy</th><th class="num">Brier</th><th class="num">ATS</th><th class="num" title="Mean absolute error of the projected total (model vs. closing over/under)">Total MAE</th></tr></thead>
+  <div class="table-wrap"><table class="cfb-table compact"><thead><tr><th>Games</th><th class="num">n</th><th class="num">MAE</th><th class="num">Vegas MAE</th><th class="num">Accuracy</th><th class="num">Brier</th><th class="num">ATS</th><th class="num" title="Mean absolute error of the projected total (model vs. closing over/under)">Total MAE</th></tr></thead>
   <tbody>${rows.map(d => htl.html`<tr><td>${d.scope}</td><td class="num">${d.games.toLocaleString()}</td><td class="num">${d.mae.toFixed(1)}</td>
-    <td class="num">${d.mae_vegas == null ? "–" : d.mae_vegas.toFixed(1)} <span class="muted">(model ${d.mae_model_lined?.toFixed(1) ?? "–"})</span></td>
+    <td class="num">${d.mae_vegas == null ? "–" : d.mae_vegas.toFixed(1)}<div class="muted" style="font-size:0.75rem">model ${d.mae_model_lined?.toFixed(1) ?? "–"}</div></td>
     <td class="num">${fmtPct(d.accuracy)}</td><td class="num">${d.brier.toFixed(3)}</td><td class="num">${d.ats_win_rate == null ? "–" : (d.ats_win_rate * 100).toFixed(1) + "%"}</td>
-    <td class="num">${d.mae_total_model_ou == null ? "–" : htl.html`${d.mae_total_model_ou.toFixed(1)} <span class="muted">(O/U ${d.mae_total_vegas?.toFixed(1) ?? "–"})</span>`}</td></tr>`)}</tbody></table></div>`
+    <td class="num">${d.mae_total_model_ou == null ? "–" : htl.html`${d.mae_total_model_ou.toFixed(1)}<div class="muted" style="font-size:0.75rem">O/U ${d.mae_total_vegas?.toFixed(1) ?? "–"}</div>`}</td></tr>`)}</tbody></table></div>`
 }
 ```
 
-## Row {height="55%"}
+## Row {height="45%"}
 
 ```{ojs}
 //| title: "Calibration: predicted vs. actual home win rate"
