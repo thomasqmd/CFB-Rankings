@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scoring Rules Reference</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  main > section, main > header, main > nav { width: 100%; max-width: 900px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 1rem; margin: 1.5rem 0; }
+  .card { border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.2rem 0.6rem; background: var(--bg); }
+  .card h2 { margin: 0 0 0.6rem; font-size: 1.25rem; }
+  .card .eq { font-size: 1.02rem; margin: 0.6rem 0 0.9rem; }
+  .card ul { padding-left: 1.1rem; margin: 0 0 0.8rem; font-size: 0.9rem; }
+  .card li { margin-bottom: 0.3rem; }
+  .card p { font-size: 0.9rem; }
+  .learned { font-family: var(--sans); font-size: 0.72rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<nav class="crumbs">Scoring distributional forecasts · Reference sheet</nav>
+<header>
+  <h1>Scoring rules: quick reference</h1>
+  <p class="subtitle">Compressed from <a href="../lessons/scoring-forecasts-course.html">the course</a>. Each card names the lesson it came from.</p>
+</header>
+
+<section>
+<div class="cards">
+
+  <div class="card">
+    <h2>Brier score</h2>
+    <p class="eq">BS = (<var>p</var> − <var>o</var>)²</p>
+    <ul>
+      <li><var>p</var> = forecast probability of a yes/no event, <var>o</var> = 1 if it happened, 0 if not. Average over games.</li>
+      <li>Anchors: <strong>0</strong> perfect · <strong>0.25</strong> always 50% · <strong>1</strong> certain and wrong.</li>
+      <li>Unitless (probability scale). Proper: honest probabilities score best on average.</li>
+      <li>Your backtest: <strong>0.166</strong> (19,177 games).</li>
+    </ul>
+    <p class="learned">Lesson 2</p>
+  </div>
+
+  <div class="card">
+    <h2>CRPS: three equivalent forms</h2>
+    <p class="eq">∫ ( <var>F</var>(<var>t</var>) − 1{<var>y</var> ≤ <var>t</var>} )² d<var>t</var></p>
+    <ul>
+      <li><strong>By threshold:</strong> the Brier score of "margin ≤ <var>t</var>?", integrated over every <var>t</var>.</li>
+      <li><strong>By quantile:</strong> twice the average pinball loss over probability levels. This is <code>crps_quantiles()</code>, <code>R/03_rankings.R:288</code>.</li>
+      <li><strong>By draws:</strong> E|<var>X</var> − <var>y</var>| − ½ E|<var>X</var> − <var>X′</var>|.<br><code>mean(abs(x - y)) - 0.5 * mean(abs(x - sample(x)))</code></li>
+      <li>Units: <strong>points</strong>. Lower is better. Never negative.</li>
+    </ul>
+    <p class="learned">Lesson 2</p>
+  </div>
+
+  <div class="card">
+    <h2>How they connect</h2>
+    <ul>
+      <li><strong>Brier = the CRPS slice at <var>t</var> = 0.</strong> <var>F</var>(0) = 1 − <var>p</var>, so (<var>F</var>(0) − 1{<var>y</var> ≤ 0})² = (<var>p</var> − <var>o</var>)².</li>
+      <li><strong>MAE = CRPS with no spread.</strong> A point forecast <var>m</var> has CRPS |<var>m</var> − <var>y</var>|.</li>
+      <li>So MAE and CRPS share a ruler. Your backtest: MAE <strong>12.9</strong> → CRPS <strong>9.2</strong>.</li>
+      <li>Spread costs when the centre is right (≈ 0.23σ for a Normal; 3.5 pts at σ = 15) and pays when it's wrong.</li>
+    </ul>
+    <p class="learned">Lesson 2</p>
+  </div>
+
+  <div class="card">
+    <h2>Which score answers which question</h2>
+    <ul>
+      <li><strong>Who wins?</strong> (win probability, playoff odds) → Brier score.</li>
+      <li><strong>By how much?</strong> (the margin distribution) → CRPS.</li>
+      <li>Disagreement is informative. High Brier with ordinary CRPS: the forecast was on the wrong side of zero but not far off (The Game 2024, 0.675 / 10.4). Low Brier with huge CRPS: right winner, wrong margin (Orange Bowl 2023, 0.095 / 44.3).</li>
+    </ul>
+    <p class="learned">Lesson 2</p>
+  </div>
+
+  <div class="card">
+    <h2>Closed form, Normal forecast</h2>
+    <p class="eq">σ [ <var>z</var>(2Φ(<var>z</var>) − 1) + 2φ(<var>z</var>) − 1/√π ],&nbsp; <var>z</var> = (<var>y</var> − μ)/σ</p>
+    <ul>
+      <li>Centred (<var>z</var> = 0): σ(2φ(0) − 1/√π) ≈ 0.234σ.</li>
+      <li>Student-t version in your code: <code>crps_t()</code>, <code>R/04_validation.R:120</code>.</li>
+    </ul>
+    <p class="learned">Lesson 2</p>
+  </div>
+
+  <div class="card">
+    <h2>Proper scoring rule</h2>
+    <p>A score is <strong>proper</strong> if your best expected score comes from forecasting what you actually believe, and <strong>strictly proper</strong> if that is the only way to get it. Brier and CRPS are both proper. Absolute error on a probability, |<var>p</var> − <var>o</var>|, is not: it rewards rounding 70% up to 100%.</p>
+    <p class="learned">Lesson 2 · Gneiting &amp; Raftery (2007)</p>
+  </div>
+
+  <div class="card">
+    <h2>Credible sets (Lesson 1)</h2>
+    <ul>
+      <li><strong>Equal-tailed (ETI):</strong> quantiles (1 − <var>L</var>)/2, (1 + <var>L</var>)/2. Pipeline default (<code>R/03_rankings.R:126</code>). Invariant to monotone transforms.</li>
+      <li><strong>HDI:</strong> shortest window of sorted draws holding <var>L</var>. Best for skewed. <em>Not</em> transform-invariant.</li>
+      <li><strong>Highest-density set:</strong> most probable values until <var>L</var>. Ranks, multimodal. Can split.</li>
+      <li><strong>Normal approx.:</strong> mean ± <var>z</var>·sd. Symmetric, unbounded only.</li>
+      <li>Bounded quantities (ranks near 1, probabilities near 1): ETI over-covers. ND 2025: ETI 1–9 holds 92%; HDI set 1–6 holds 81%.</li>
+      <li>Tail endpoints carry the most Monte Carlo error: <code>posterior::mcse_quantile()</code>.</li>
+      <li>R: <code>ggdist::qi()</code>, <code>hdci()</code>, <code>hdi()</code>.</li>
+    </ul>
+    <p class="learned">Lesson 1 · bayestestR, ggdist docs</p>
+  </div>
+
+  <div class="card">
+    <h2>Log score (Lesson 3)</h2>
+    <p class="eq">LogS = −log <var>f</var>(<var>y</var>)</p>
+    <ul>
+      <li>Nats, lower better, strictly proper, <strong>local</strong> (only the density at <var>y</var>).</li>
+      <li>Δ of 1 nat = e ≈ 2.7× density ratio.</li>
+      <li>elpd = Σ log <var>f</var>(<var>y</var>): same thing, sign flipped (higher better). Log loss = binary version on win prob.</li>
+      <li>Tail-sensitive: Normal grows like <var>z</var>²/2; CRPS grows linearly. Family choice → log score has the stronger opinion.</li>
+      <li>From draws: <code>scoringRules::logs_sample(y, dat)</code> (kernel density; fragile in far tails).</li>
+      <li>Your backtest: mean ≈ 4.22 nats; Orange Bowl ≈ 11.</li>
+    </ul>
+    <p class="learned">Lesson 3 · Jordan, Krüger &amp; Lerch (2019)</p>
+  </div>
+
+  <div class="card">
+    <h2>Interval score (Lesson 4)</h2>
+    <p class="eq">(<var>u</var> − <var>l</var>) + (2/α)(<var>l</var> − <var>y</var>)₊ + (2/α)(<var>y</var> − <var>u</var>)₊</p>
+    <ul>
+      <li>α = 1 − level. 80% → each point of miss costs 10.</li>
+      <li>Proper. = (pinball<sub>lo</sub> + pinball<sub>hi</sub>)/α. Average pinball over all levels → CRPS.</li>
+      <li>Coverage alone is not a score (ignores width).</li>
+      <li>Your model: best width multiplier 1.00× (50%), 1.05× (80%, 95%). Coverage 49.8 / 79.2 / 94.5%.</li>
+    </ul>
+    <p class="learned">Lesson 4 · FPP3 §5.9</p>
+  </div>
+
+  <div class="card">
+    <h2>PIT &amp; calibration (Lesson 5)</h2>
+    <ul>
+      <li>PIT <var>u</var> = <var>F</var>(<var>y</var>). Ideal forecasts → uniform.</li>
+      <li><strong>U</strong> = too narrow · <strong>hump</strong> = too wide · <strong>slope</strong> = biased (many high <var>u</var> → centre too low).</li>
+      <li>Integer outcomes with a step forecast: randomised PIT between <var>F</var>(<var>y</var> − 1) and <var>F</var>(<var>y</var>).</li>
+      <li><strong>Maximise sharpness subject to calibration.</strong> Climatology is calibrated and useless (CRPS 11.75 vs 9.14).</li>
+    </ul>
+    <p class="learned">Lesson 5 · Gneiting, Balabdaoui &amp; Raftery (2007)</p>
+  </div>
+
+  <div class="card">
+    <h2>Comparing models (Lesson 6)</h2>
+    <ul>
+      <li>Same games, per-game differences <var>d</var><sub><var>i</var></sub> = <var>S</var><sub>B</sub> − <var>S</var><sub>A</sub>.</li>
+      <li>SE clustered by season-week (<code>dm()</code>, <code>R/04_validation.R:247</code>); naive SEs up to 2.6× too small.</li>
+      <li>Real (z) ≠ matters (size). Set a practical threshold first.</li>
+      <li>Skill = 1 − <var>S</var><sub>model</sub>/<var>S</var><sub>ref</sub>: +22% vs climatology, −3.7% vs the line.</li>
+    </ul>
+    <p class="learned">Lesson 6 · Diebold &amp; Mariano (1995), FPP3</p>
+  </div>
+
+</div>
+<p class="meta">Sources: Brier (1950); Matheson &amp; Winkler (1976); Gneiting &amp; Raftery (2007); Arnold, Walz, Ziegel &amp; Gneiting (2023); <a href="https://otexts.com/fpp3/distaccuracy.html">FPP3 §5.9</a>. Gneiting, Balabdaoui &amp; Raftery (2007); Jordan, Krüger &amp; Lerch (2019); bayestestR; ggdist; Diebold &amp; Mariano (1995). Full citations in <a href="../lessons/scoring-forecasts-course.html#l7">the course</a>.</p>
+</section>
+</main>
+</body>
+</html>

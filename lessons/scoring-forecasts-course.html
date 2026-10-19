@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scoring the Forecasts</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<nav class="toc-bar" aria-label="Lessons">
+  <ol>
+    <li><a href="#top"><span class="n">◆</span>Map</a></li>
+    <li><a href="#l1"><span class="n">1</span>Credible sets</a></li>
+    <li><a href="#l2"><span class="n">2</span>Brier → CRPS</a></li>
+    <li><a href="#l3"><span class="n">3</span>Log score</a></li>
+    <li><a href="#l4"><span class="n">4</span>Scoring intervals</a></li>
+    <li><a href="#l5"><span class="n">5</span>Calibration &amp; PIT</a></li>
+    <li><a href="#l6"><span class="n">6</span>Comparing models</a></li>
+    <li><a href="#l7"><span class="n">7</span>Which number, when</a></li>
+    <li><a href="../reference/scoring-rules.html">Reference sheet ↗</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header id="top">
+  <h1>Scoring the power model's forecasts</h1>
+  <p class="subtitle">Seven short lessons, from the posterior draws your model produces to the one number you put on the dashboard. Every example uses your own posteriors and backtest.</p>
+  <p class="meta">About 15–20 minutes per lesson. Data: 19,177 out-of-sample games, 2014–2026; the 2025 postseason posterior (4,000 draws); ablation refits, 2022–2025. Rebuild the data with <code>Rscript assets/prep-course-data.R</code>.</p>
+</header>
+
+<div class="wide"><div id="course-map"></div></div>
+
+<section>
+  <p><strong>How to use this.</strong> Each lesson opens with a <em>Predict first</em> prompt. Commit to an answer before reading on, because a guess you've made, even a wrong one, makes the explanation stick. Then read, play with the widget, and take the short quiz from memory. Lesson 7 ends with a mixed review quiz. Take it a few days later, not straight away: recall after a gap is what builds long-term memory.</p>
+</section>
+
+<!-- ================================================================== LESSON 1 -->
+<header class="lesson-head" id="l1">
+  <div class="kicker">Lesson 1 · Summarise</div>
+  <h2>Credible sets: four honest ways to draw an interval</h2>
+  <p class="why">Every rating, rank and probability on your dashboard carries an 80% interval. There are several valid ways to draw one, and they disagree exactly where it matters: for ranks and probabilities.</p>
+</header>
+
+<section>
+  <div class="prompt"><span class="tag">Predict first</span>Notre Dame finished 2025 most likely ranked 2nd, but with a long tail toward 20th. Will the <em>shortest</em> set of ranks holding 80% of the posterior be shorter or longer than the dashboard's interval (10th to 90th percentile), and which end will move?</div>
+
+  <h3 class="sub"><span class="num">1.1</span>What a credible interval is</h3>
+  <p>Stan gives you 4,000 draws of every unknown. A <strong>credible interval</strong> at level <var>L</var> is any interval holding probability <var>L</var> under the posterior.<sup class="cite"><a href="#r10">10</a></sup> The statement is direct: given the data and the model, Indiana's rating is between <var>a</var> and <var>b</var> with 80% probability.<sup class="cite"><a href="#r9">9</a></sup> "Any interval" is the catch, because many intervals hold 80%. The methods below differ only in <em>which</em> 80% they pick.</p>
+  <aside class="sidenote"><strong>Credible vs. confidence.</strong> A 95% confidence interval is a statement about the procedure: across repeated datasets, 95% of intervals built this way would cover the true value. A credible interval is a probability statement about the parameter itself, given this data and this prior.<sup class="cite"><a href="#r9">9</a>,<a href="#r10">10</a></sup></aside>
+  <p>Your pipeline puts intervals on two different kinds of thing, and it helps to keep them apart:</p>
+  <ul>
+    <li><strong>A parameter</strong>, such as Indiana's rating. This is a <em>posterior credible interval</em>: uncertainty about the team. Indiana's 2025 final rating has a posterior sd of 4.2 points.</li>
+    <li><strong>An outcome</strong>, such as next week's margin. This is a <em>posterior predictive interval</em>: uncertainty about the teams <em>plus</em> game-to-game noise. Your margin forecasts have an sd of about 16 points.</li>
+  </ul>
+  <p>Only the second kind can be checked against results, which is what Lessons 4 and 5 do. Everything in this lesson applies to both.</p>
+
+  <h3 class="sub"><span class="num">1.2</span>The ways to get one</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Method</th><th>From draws</th><th>Use it when</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Equal-tailed (ETI)</strong>, also called quantile or percentile interval</td><td>quantiles at (1 − <var>L</var>)/2 and (1 + <var>L</var>)/2</td><td>The default. Your pipeline uses it everywhere: <code>quantile(…, 0.1)</code> and <code>0.9</code> at <code>R/03_rankings.R:126</code>. It doesn't change under monotone transformations.<sup class="cite"><a href="#r9">9</a></sup></td></tr>
+        <tr><td><strong>Shortest interval (HDI)</strong>, also called highest posterior density interval</td><td>the narrowest window of sorted draws that holds <var>L</var></td><td>The distribution is skewed and you want the most plausible values: every point inside is more probable than any point outside.<sup class="cite"><a href="#r9">9</a></sup></td></tr>
+        <tr><td><strong>Highest-density set (HDR)</strong></td><td>take the most probable values (or histogram bins) until they hold <var>L</var></td><td>Discrete quantities like ranks, or multimodal posteriors. It may split into pieces.<sup class="cite"><a href="#r10">10</a>,<a href="#r11">11</a></sup></td></tr>
+        <tr><td><strong>Normal approximation</strong></td><td>mean ± <var>z</var>·sd</td><td>Only for roughly symmetric, unbounded posteriors. It happily produces rank 0 or probabilities above 1.</td></tr>
+        <tr><td>From stored quantiles</td><td>interpolate between saved quantiles (your <code>pred_q</code>)</td><td>You kept quantiles rather than draws. This is the ETI plus a little interpolation error.</td></tr>
+        <tr><td>Closed form</td><td>for example loc ± <var>t</var><sub>ν</sub> quantile × scale</td><td>The posterior has a known family. Your hierarchical model's doesn't.</td></tr>
+        <tr><td>One-sided</td><td>P(θ &gt; <var>c</var>), or a lower bound</td><td>The question is a threshold. Your <code>power_p12</code>, P(top 12), is one.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>In R, <code>ggdist</code> names them <code>qi()</code> (equal-tailed), <code>hdci()</code> (shortest single interval) and <code>hdi()</code> (highest density, which may return several intervals).<sup class="cite"><a href="#r11">11</a></sup></p>
+
+  <h3 class="sub"><span class="num">1.3</span>See them disagree</h3>
+  <p>Below are three real 2025 postseason posteriors and one made-up bimodal case. Shaded histogram bars mark the highest-density set. The four rows underneath draw each method's interval on the same axis.</p>
+</section>
+
+<div class="wide"><div id="cred-explorer"></div></div>
+
+<section>
+  <p>What to notice:</p>
+  <ul>
+    <li><strong>Indiana's rating</strong> is symmetric, so all four methods agree (about 30 to 41 points). With symmetric posteriors the choice doesn't matter.</li>
+    <li><strong>Notre Dame's rank</strong>: the equal-tailed interval is <strong>1 to 9</strong>, but it actually holds <strong>92%</strong> of draws. Rank 1 alone has 13%, so there's no bottom 10% to trim off. The highest-density set, <strong>1 to 6</strong>, holds 81%. The normal approximation starts at rank −0.2.</li>
+    <li><strong>Indiana's win probability against Notre Dame</strong> is bounded at 1 and skewed left. The HDI (0.51 to 0.91) slides toward the top compared with the equal-tailed interval (0.44 to 0.87). Raise the level to 95% and the normal approximation runs past 1.</li>
+    <li><strong>The bimodal case</strong>: the equal-tailed interval and the HDI both cover the valley between the two modes, even though values there are unlikely. Only the highest-density set splits in two.</li>
+    <li><strong>Drop to 200 draws.</strong> The faint ticks show how much the endpoints wander between random sets of 200, and the wandering is wider for 95% than for 50%. The tails have the fewest draws, so their quantiles carry the most Monte Carlo error. Check it with <code>posterior::mcse_quantile()</code> before reading the edges of a 95% interval too literally.<sup class="cite"><a href="#r12">12</a></sup></li>
+  </ul>
+
+  <h3 class="sub"><span class="num">1.4</span>Your top 12, both ways</h3>
+</section>
+
+<div class="wide"><div id="rank-strip"></div></div>
+<p class="fig-caption" style="margin-left:auto;margin-right:auto;max-width:1080px">2025 postseason posterior, FBS ranks per draw. Each blue bar is the 10th–90th percentile range that the dashboard reports. Each set of orange blocks is the smallest set of ranks holding 80%. For teams near the top, the blue bar runs further down the rankings than the most plausible ranks justify.</p>
+
+<section>
+  <h3 class="sub"><span class="num">1.5</span>Change of scale: the equal-tailed interval survives, the HDI doesn't</h3>
+  <p>Ratings turn into win probabilities through a monotone function: a bigger rating gap always means a higher win probability. Quantiles go along for the ride, so the 10th percentile of the rating gap maps to the 10th percentile of the win probability. HDIs don't, because squeezing or stretching the axis changes which window is shortest.<sup class="cite"><a href="#r9">9</a></sup></p>
+</section>
+
+<div class="wide"><div id="transform-fig"></div></div>
+<p class="fig-caption" style="margin-left:auto;margin-right:auto;max-width:1080px">Indiana minus Notre Dame, 2025 postseason posterior. Top: the rating difference per draw. Bottom: the implied neutral-field win probability per draw, using the model's scale-t margin law with its game-noise parameters fixed at their posterior means, which keeps the map monotone.</p>
+
+<section>
+  <div class="takeaway"><span class="tag">Takeaways</span>
+    <ul>
+      <li>A credible interval is any interval with posterior probability <var>L</var>. The methods differ in which one they choose.</li>
+      <li>Equal-tailed intervals survive changes of scale and are what your pipeline reports. Keep them, and say so.</li>
+      <li>For ranks and probabilities near a boundary, the equal-tailed interval overcovers and points away from the most plausible values. Show the highest-density set when "most plausible ranks" is the real question.</li>
+      <li>Tail endpoints need many draws. Check their Monte Carlo error.</li>
+    </ul>
+  </div>
+  <h3 class="sub">Check yourself</h3>
+  <div id="quiz-l1"></div>
+  <div class="source"><span class="tag">Read this next</span><strong>Makowski, Ben-Shachar &amp; Lüdecke, <a href="https://easystats.github.io/bayestestR/articles/credible_interval.html">"Credible Intervals (CI)"</a></strong> (bayestestR documentation). It takes about 10 minutes and compares HDI and ETI, including the transformation argument, with pictures.</div>
+</section>
+
+<!-- ================================================================== LESSON 2 -->
+<header class="lesson-head" id="l2">
+  <div class="kicker">Lesson 2 · Score</div>
+  <h2>The Brier score is one slice of the CRPS</h2>
+  <p class="why">Your model predicts a whole distribution for every margin. The score that grades all of it is built from Brier scores, and it turns into plain absolute error when the spread is thrown away.</p>
+</header>
+
+<section>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Game</th><th>Model said</th><th>Result</th><th class="num">Brier</th><th class="num">CRPS</th></tr></thead>
+      <tbody>
+        <tr><td>Michigan at Ohio State, 2024</td><td>OSU by 14.0, 82% to win</td><td>Michigan 13–10</td><td class="num">0.675</td><td class="num">10.4</td></tr>
+        <tr><td>Georgia vs. Florida State, 2023 Orange Bowl</td><td>UGA by 7.6, 69% to win</td><td>Georgia 63–3</td><td class="num">0.095</td><td class="num">44.3</td></tr>
+      </tbody>
+      <caption>Lower is better. Backtest means over 19,177 games: Brier 0.166, CRPS 9.20.</caption>
+    </table>
+  </div>
+  <div class="prompt"><span class="tag">Predict first</span>The two scores disagree completely. Which was the model's <em>worse</em> forecast? Commit to an answer, and we'll come back to it.</div>
+
+  <h3 class="sub"><span class="num">2.1</span>The Brier score: squared error on a yes/no question</h3>
+  <p>For an event with forecast probability <var>p</var> and outcome <var>o</var> (1 if it happened, 0 if not):<sup class="cite"><a href="#r1">1</a></sup></p>
+  <p class="eq">BS = (<var>p</var> − <var>o</var>)²</p>
+  <p>Three anchors: <strong>0</strong> means you said 100% and it happened; <strong>0.25</strong> is saying 50% every time; <strong>1</strong> means you said 100% and it didn't happen. For The Game, (0.82 − 0)² = 0.675, worse than 97% of backtest games.</p>
+  <aside class="sidenote"><strong>Why squared?</strong> Squared error is <em>proper</em>: your best expected score comes from reporting your true belief.<sup class="cite"><a href="#r2">2</a></sup> Absolute error |<var>p</var> − <var>o</var>| is not. If you believe 70%, your expected absolute error is 0.7 + <var>p</var>(1 − 1.4), which keeps falling as <var>p</var> rises to 1, so it pays to exaggerate.</aside>
+
+  <h3 class="sub"><span class="num">2.2</span>Your model answers a yes/no question at every threshold</h3>
+  <p>The predictive CDF <var>F</var>(<var>t</var>) = P(margin ≤ <var>t</var>) gives one probability per threshold. The win probability is just <var>p</var> = 1 − <var>F</var>(0). Every threshold also has an outcome, 1{<var>y</var> ≤ <var>t</var>}, which is a step at the final margin <var>y</var>. So every threshold has a Brier score, and the <strong>continuous ranked probability score</strong> adds them up along the margin axis:<sup class="cite"><a href="#r3">3</a>,<a href="#r6">6</a></sup></p>
+  <p class="eq">CRPS(<var>F</var>, <var>y</var>) = ∫ ( <var>F</var>(<var>t</var>) − 1{<var>y</var> ≤ <var>t</var>} )² d<var>t</var><span class="lbl">a Brier score per threshold, times a width in points, so the total is in points</span></p>
+  <p>At <var>t</var> = 0 the squared gap is exactly (<var>p</var> − <var>o</var>)². <strong>Your Brier score is the CRPS's slice at zero.</strong> The same holds after averaging: the mean CRPS is the area under the mean Brier score plotted against the threshold.<sup class="cite"><a href="#r4">4</a>,<a href="#r7">7</a></sup> Here is that plot for your whole backtest:</p>
+</section>
+
+<div class="wide"><div id="brier-curve"></div></div>
+<p class="fig-caption" style="margin-left:auto;margin-right:auto;max-width:1080px">All 19,177 games. The area of 9.14 falls a little short of the mean CRPS of 9.20 only because the plot stops at ±80 points and uses 1-point steps. Gneiting, Balabdaoui &amp; Raftery call this a Brier score plot.<sup class="cite"><a href="#r7">7</a></sup></p>
+
+<section>
+  <p>Now for single games. Hover over the lower panel: every vertical slice is one yes/no question with its own Brier score, and the purple slice is the only one the Brier score looks at.</p>
+</section>
+
+<div class="wide"><div id="explorer-games"></div></div>
+
+<section>
+  <h3 class="sub"><span class="num">2.3</span>Throw the spread away and CRPS becomes absolute error</h3>
+  <p>A point forecast <var>m</var> is a step at <var>m</var>, and the result is a step at <var>y</var>. The two steps differ by exactly 1 between <var>m</var> and <var>y</var>, so CRPS = |<var>m</var> − <var>y</var>|.<sup class="cite"><a href="#r6">6</a></sup> <strong>MAE is the CRPS of a forecast with no spread.</strong> That puts your two numbers on the same scale: an MAE of <strong>12.9</strong> for the centre alone, and a CRPS of <strong>9.2</strong> for the full distribution.</p>
+  <p>Spread isn't free. When the centre is dead on, a Normal forecast with sd σ still scores about 0.23σ, or 3.5 points at σ = 15. The CRPS charges for width when you're right and refunds it when you're wrong.</p>
+  <aside class="sidenote"><strong>From draws:</strong> CRPS = E|<var>X</var> − <var>y</var>| − ½E|<var>X</var> − <var>X′</var>|.<sup class="cite"><a href="#r2">2</a>,<a href="#r8">8</a></sup> In R that's <code>scoringRules::crps_sample(y, dat = draws)</code>, or <code>mean(abs(x - y)) - 0.5 * mean(abs(x - sample(x)))</code>.</aside>
+</section>
+
+<div class="wide"><div id="explorer-build"></div></div>
+
+<section>
+  <p><strong>Back to the two games.</strong> The Game was badly wrong on the one question the Brier score asks, but Michigan by 3 landed inside the model's own 80% interval, so its CRPS of 10.4 is close to average. The Orange Bowl picked the right winner, but every threshold from +8 to +60 was wrong: its CRPS ranks 33rd-worst of 19,177. If the question is <em>who wins</em>, use the Brier score. If it's <em>by how much</em>, use the CRPS, which already contains the Brier score as one of its slices.</p>
+  <div class="takeaway"><span class="tag">Takeaways</span>
+    <ul>
+      <li>Brier = (<var>p</var> − <var>o</var>)², a squared error on one yes/no question.</li>
+      <li>CRPS = the Brier score integrated over every threshold, in points. The Brier score is its slice at <var>t</var> = 0.</li>
+      <li>MAE = the CRPS with no spread. Your 12.9 → 9.2 is what the distribution earns.</li>
+    </ul>
+  </div>
+  <h3 class="sub">Check yourself</h3>
+  <div id="quiz-l2"></div>
+  <div class="source"><span class="tag">Read this next</span><strong>Hyndman &amp; Athanasopoulos, <a href="https://otexts.com/fpp3/distaccuracy.html"><em>FPP3</em> §5.9, "Evaluating distributional forecast accuracy"</a></strong>. Free, about 15 minutes. It builds the CRPS from quantile scores, slicing the other way, which is how <code>crps_quantiles()</code> computes it (<code>R/03_rankings.R:288</code>).</div>
+</section>
+
+<!-- ================================================================== LESSON 3 -->
+<header class="lesson-head" id="l3">
+  <div class="kicker">Lesson 3 · Score</div>
+  <h2>The log score: how much probability did you put on what happened?</h2>
+  <p class="why">Your paper chose the margin family with elpd, which is a log score, and backtests with CRPS. The two can rank models differently, and you need to know why.</p>
+</header>
+
+<section>
+  <div class="prompt"><span class="tag">Predict first</span>Two forecasts have the same centre and the same standard deviation. One is Normal; the other is a Student-t with heavy tails. A result lands four standard deviations out. Which score will tell them apart: the CRPS, the log score, or both?</div>
+
+  <h3 class="sub"><span class="num">3.1</span>Definition and units</h3>
+  <p class="eq">LogS(<var>F</var>, <var>y</var>) = −log <var>f</var>(<var>y</var>)<span class="lbl">minus the log of the forecast density at the result · lower is better · units: nats</span></p>
+  <p>The log score goes back to Good (1952) and is strictly proper.<sup class="cite"><a href="#r8">8</a></sup> It is also <strong>local</strong>: it looks only at the density at the result, and ignores how close the rest of the distribution came.<sup class="cite"><a href="#r6">6</a></sup> The CRPS is the opposite. It looks at the whole CDF and measures distance.</p>
+  <p>Differences read as ratios. A log score 1 nat lower means the forecast put e ≈ 2.7 times more density on what happened. A mean difference of Δ across games is a geometric-mean density ratio of e<sup>Δ</sup>.</p>
+  <aside class="sidenote"><strong>Three names, two directions.</strong> The log score −log <var>f</var>(<var>y</var>) is lower-is-better. elpd = Σ log <var>f</var>(<var>y</var>) is <em>higher</em>-is-better: it's the same quantity summed over games with the sign flipped, and <code>loo</code> estimates it out of sample.<sup class="cite"><a href="#r13">13</a></sup> Your <strong>log loss</strong> of 0.498 is the log score of the binary win/loss outcome, not of the margin.</aside>
+
+  <h3 class="sub"><span class="num">3.2</span>Your two games</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Game</th><th class="num">CRPS</th><th class="num">× backtest mean</th><th class="num">Log score</th><th class="num">Density vs. a typical game</th></tr></thead>
+      <tbody>
+        <tr><td>The Game, 2024</td><td class="num">10.4</td><td class="num">1.1×</td><td class="num">4.22</td><td class="num">same (mean 4.22)</td></tr>
+        <tr><td>Orange Bowl, 2023</td><td class="num">44.3</td><td class="num">4.8×</td><td class="num">11.0</td><td class="num">e<sup>6.8</sup> ≈ 880× smaller</td></tr>
+      </tbody>
+      <caption>Log scores come from a kernel density over the 199 stored quantiles, which is the method <code>scoringRules::logs_sample()</code> uses on draws. Kernel estimates are fragile far out in the tails,<sup class="cite"><a href="#r8">8</a></sup> so treat the Orange Bowl's 11.0 as rough.</caption>
+    </table>
+  </div>
+  <p>The CRPS rates the Orange Bowl about 5 times worse than average. The log score rates it about 880 times less likely than a typical result. <strong>The log score punishes surprises far harder.</strong></p>
+
+  <h3 class="sub"><span class="num">3.3</span>Tails: where the two scores part ways</h3>
+</section>
+
+<div class="wide"><div id="logscore-explorer"></div></div>
+
+<section>
+  <p>Drag the result out past ±50. The Normal's log score grows like <var>z</var>²/2, which is quadratic, while the <var>t</var>'s grows only logarithmically. Meanwhile both CRPS curves rise in near-parallel straight lines. The scoringRules authors make the same point with a gamma forecast: the log score climbs steeply away from the mode, while the CRPS rises more gently and more symmetrically around the median.<sup class="cite"><a href="#r8">8</a></sup> <strong>The log score judges the shape of the tails. The CRPS mostly judges centre and width.</strong></p>
+</section>
+
+<div class="wide"><div id="score-scatter"></div></div>
+<p class="fig-caption" style="margin-left:auto;margin-right:auto;max-width:1080px">Random sample of backtest games. Game by game, the two scores agree almost perfectly on ordering. They differ in how much more a surprise costs.</p>
+
+<section>
+  <h3 class="sub"><span class="num">3.4</span>Why this matters for your margin family</h3>
+  <p>Two pieces of your own evidence point different ways:</p>
+  <ul>
+    <li><code>margin_comparison</code> (in-sample LOO at each season's final posterior) prefers the <strong>scale-t</strong> by Δelpd ≈ 229 (se 30) (<code>plans/todo.md</code>).</li>
+    <li>The one-week-ahead ablation backtest for 2022–2025 has the plain <strong>Normal</strong> and <strong>Student-t</strong> margins slightly <em>ahead</em> of the published scale-t: ΔCRPS ≈ −0.05 points per game (Lesson 6).</li>
+  </ul>
+  <p>These measure different things, on different data, with different scores. The scale-t's scale grows with the expected margin, which changes how the tails of lopsided games are shaped. A tail-sensitive log score can reward that while the CRPS barely notices. Neither result is wrong. When you report a model choice, say which score made it.</p>
+  <div class="takeaway"><span class="tag">Takeaways</span>
+    <ul>
+      <li>LogS = −log <var>f</var>(<var>y</var>), in nats. It is local and tail-sensitive. elpd is the same quantity summed, with the sign flipped.</li>
+      <li>CRPS and log score usually rank games alike. They part ways over how much a big surprise costs.</li>
+      <li>Choosing a distribution family is a question about tails, so expect the log score to have the stronger opinion.</li>
+    </ul>
+  </div>
+  <h3 class="sub">Check yourself</h3>
+  <div id="quiz-l3"></div>
+  <div class="source"><span class="tag">Read this next</span><strong>Jordan, Krüger &amp; Lerch (2019), <a href="https://www.jstatsoft.org/article/view/v090i12">"Evaluating probabilistic forecasts with scoringRules"</a></strong>, §2–3. It covers the log score and CRPS side by side, plus how to compute both from MCMC draws in R.</div>
+</section>
+
+<!-- ================================================================== LESSON 4 -->
+<header class="lesson-head" id="l4">
+  <div class="kicker">Lesson 4 · Score</div>
+  <h2>Scoring the intervals themselves: coverage and the interval score</h2>
+  <p class="why">Your dashboard and paper report 80% intervals and their coverage. Coverage checks the intervals but can't rank them. The interval score can.</p>
+</header>
+
+<section>
+  <div class="prompt"><span class="tag">Predict first</span>Shrink every one of your 80% intervals by 30%. Coverage will drop. Will the average <em>interval score</em>, which rewards narrowness, go up or down?</div>
+
+  <h3 class="sub"><span class="num">4.1</span>Coverage is a check, not a score</h3>
+  <p>Coverage is the share of results inside the interval. Your margin intervals at 50%, 80% and 95% contain <strong>49.8%</strong>, <strong>79.2%</strong> and <strong>94.5%</strong> of results, close to nominal. But coverage alone can be gamed. Report (−∞, ∞) for 80% of games and a single point for the rest, and you get perfect 80% coverage from a useless forecast. Coverage ignores width.</p>
+
+  <h3 class="sub"><span class="num">4.2</span>The interval (Winkler) score</h3>
+  <p class="eq"><var>S</var> = (<var>u</var> − <var>l</var>) + (2/α)(<var>l</var> − <var>y</var>)·1{<var>y</var> &lt; <var>l</var>} + (2/α)(<var>y</var> − <var>u</var>)·1{<var>y</var> &gt; <var>u</var>}<span class="lbl">α = 1 − level · the width, plus a penalty for each point the result falls outside</span></p>
+  <p>For an 80% interval, α = 0.2, so every point of miss costs 10 points.<sup class="cite"><a href="#r5">5</a>,<a href="#r6">6</a></sup> The score is proper for the interval's two quantiles,<sup class="cite"><a href="#r2">2</a></sup> so on average the honest 10th and 90th percentiles win.</p>
+  <aside class="sidenote"><strong>One family.</strong> The interval score is the sum of the two endpoints' pinball (quantile) losses, divided by α.<sup class="cite"><a href="#r5">5</a></sup> Average the pinball loss over <em>every</em> quantile level and you get the CRPS (Lesson 2). Intervals, quantiles and the CRPS are the same idea at different resolutions.</aside>
+</section>
+
+<div class="wide"><div id="interval-explorer"></div></div>
+
+<section>
+  <p>On 2,500 FBS games, the multiplier that minimises the interval score is <strong>1.00×</strong> at 50% and <strong>1.05×</strong> at 80% and 95%. Your model's widths are about right, perhaps a hair narrow in the tails. Shrinking the 80% intervals to 0.7× raises the score from 57.2 to 63.0, and stretching them to 1.5× raises it to 64.3. Both directions cost.</p>
+  <p><strong>Sharpness</strong> is the average width: 21.3, 40.9 and 63.7 points at 50%, 80% and 95%. Narrower is better, but only once coverage is right, which is the subject of Lesson 5.</p>
+  <div class="takeaway"><span class="tag">Takeaways</span>
+    <ul>
+      <li>Coverage checks calibration but ignores width, so it can't rank forecasts.</li>
+      <li>Interval score = width + (2/α) × distance outside. It is proper, and lower is better.</li>
+      <li>Your intervals are close to the score-minimising width at every level.</li>
+    </ul>
+  </div>
+  <h3 class="sub">Check yourself</h3>
+  <div id="quiz-l4"></div>
+  <div class="source"><span class="tag">Read this next</span><strong><a href="https://otexts.com/fpp3/distaccuracy.html">FPP3 §5.9</a>, the "Winkler score" subsection</strong>, which builds it from quantile scores in a few lines.</div>
+</section>
+
+<!-- ================================================================== LESSON 5 -->
+<header class="lesson-head" id="l5">
+  <div class="kicker">Lesson 5 · Diagnose</div>
+  <h2>Calibration vs. sharpness: reading a PIT histogram</h2>
+  <p class="why">A score tells you <em>how good</em> a forecast is. A PIT histogram tells you <em>what's wrong</em> with it: too narrow, too wide, or shifted.</p>
+</header>
+
+<section>
+  <div class="prompt"><span class="tag">Predict first</span>A forecaster that ignores the teams and issues the same distribution, the spread of all historical margins, for every game: will its PIT histogram be flat?</div>
+
+  <h3 class="sub"><span class="num">5.1</span>The probability integral transform</h3>
+  <p>For each game, take <var>u</var> = <var>F</var>(<var>y</var>), the percentile at which the result fell within its own forecast. If the forecasts are ideal, the <var>u</var> values are uniform, so a histogram of them is flat.<sup class="cite"><a href="#r7">7</a></sup> The Game had <var>u</var> = 0.12. The Orange Bowl, from Georgia's side, had <var>u</var> = 0.9975.</p>
+  <p>The histogram's shape is the diagnosis:<sup class="cite"><a href="#r7">7</a></sup></p>
+  <ul>
+    <li><strong>U-shaped</strong>: too many results in the tails, so the forecasts are <em>too narrow</em>.</li>
+    <li><strong>Hump-shaped</strong>: too many results near the centre, so the forecasts are <em>too wide</em>.</li>
+    <li><strong>Sloped or triangular</strong>: the forecasts are <em>biased</em>. Too many high <var>u</var> values means the centre is set too low.</li>
+  </ul>
+</section>
+
+<div class="wide"><div id="pit-explorer"></div></div>
+
+<section>
+  <h3 class="sub"><span class="num">5.2</span>Flat isn't enough</h3>
+  <p>Look at <em>Climatological</em> and <em>Climatology (real)</em>. A forecast that ignores the matchup entirely is perfectly calibrated: its PIT is flat and its 80% intervals hold 79–80%. It is also useless, with intervals 54 points wide against your model's 40, and a CRPS of 11.75 against 9.14. Gneiting, Balabdaoui &amp; Raftery's rule is to <strong>maximise sharpness subject to calibration</strong>.<sup class="cite"><a href="#r7">7</a></sup> Calibration is necessary. Among calibrated forecasts, the sharpest one wins. Proper scores such as the CRPS reward both at once, which is why the climatological forecaster scores worst in the simulation despite its flat histogram.</p>
+  <aside class="sidenote"><strong>Integer margins.</strong> Real margins pile up on 3 and 7, so a step-function forecast like the real climatology needs a <em>randomised</em> PIT: draw <var>u</var> uniformly between <var>F</var>(<var>y</var> − 1) and <var>F</var>(<var>y</var>). Your model's forecast is continuous, so plain <var>F</var>(<var>y</var>) is fine. The paper's appendix makes the same point about the LOO-PIT.</aside>
+  <p><strong>Your model</strong> (all games): the histogram stays within a few percent of flat in every bin, and the coverage curve sits on the diagonal (70% intervals hold 69.3%, 90% hold 89.9%). There's a slight excess in the top two bins, meaning a few more home blowouts than forecast. That's worth watching, but it's small.</p>
+  <div class="takeaway"><span class="tag">Takeaways</span>
+    <ul>
+      <li>PIT = <var>F</var>(<var>y</var>). Uniform means calibrated. A U-shape means too narrow, a hump too wide, a slope biased.</li>
+      <li>Calibration is necessary but not sufficient. Climatology is calibrated and useless.</li>
+      <li>Maximise sharpness subject to calibration, and use a proper score to judge both together.</li>
+    </ul>
+  </div>
+  <h3 class="sub">Check yourself</h3>
+  <div id="quiz-l5"></div>
+  <div class="source"><span class="tag">Read this next</span><strong>Gneiting, Balabdaoui &amp; Raftery (2007), <a href="https://sites.stat.washington.edu/people/raftery/Research/PDF/Gneiting2007jrssb.pdf">"Probabilistic forecasts, calibration and sharpness"</a></strong>, §1–3. It sets up the ideal and climatological forecasters you just simulated, and the PIT diagnostics.</div>
+</section>
+
+<!-- ================================================================== LESSON 6 -->
+<header class="lesson-head" id="l6">
+  <div class="kicker">Lesson 6 · Compare</div>
+  <h2>Is variant B really better? Paired differences and honest standard errors</h2>
+  <p class="why">Picking between model variants is half your mission. A mean score difference without the right standard error is just a guess.</p>
+</header>
+
+<section>
+  <div class="prompt"><span class="tag">Predict first</span>Your ablation set has 6,557 games. If you treat them as independent, will your standard errors be too small, about right, or too large?</div>
+
+  <h3 class="sub"><span class="num">6.1</span>Compare on the same games, game by game</h3>
+  <p>Score both models on identical games and take <var>d</var><sub><var>i</var></sub> = <var>S</var><sub>B</sub>(<var>i</var>) − <var>S</var><sub>A</sub>(<var>i</var>). Hard games are hard for both models, so pairing cancels most of the game-to-game noise and leaves the difference between the models.</p>
+
+  <h3 class="sub"><span class="num">6.2</span>Your games aren't independent</h3>
+  <p>One snapshot predicts all of a week's games. If it's off, it's off for every game that week, so errors arrive in week-sized clumps. The naive SE, sd(<var>d</var>)/√<var>n</var>, pretends you have 6,557 independent pieces of evidence. The clustered SE (your <code>dm()</code> at <code>R/04_validation.R:247</code>, in the spirit of Diebold–Mariano<sup class="cite"><a href="#r14">14</a></sup>) first adds up each season-week's deviations, then squares. That leaves 66 clumps, not 6,557 games.</p>
+</section>
+
+<div class="wide"><div id="week-bars"></div></div>
+<p class="fig-caption" style="margin-left:auto;margin-right:auto;max-width:1080px">Why clustering matters. Removing the carry-over hurts almost entirely in the first four weeks, when ratings still rest on last season. The difference arrives week by week, not game by game.</p>
+
+<div class="wide"><div id="forest"></div></div>
+
+<section>
+  <p>What to notice:</p>
+  <ul>
+    <li><strong>No carry-over</strong> is clearly worse: +0.65 points of CRPS per game. Its naive SE of 0.043 is 2.6× too small next to the clustered 0.111. That one isn't close either way, but with smaller effects, naive SEs produce false wins.</li>
+    <li><strong>Normal</strong>, <strong>Student-t</strong> and <strong>margin-only</strong> variants beat the published model by about 0.045 points of CRPS per game (z between −4.4 and −5.1). The difference is real, and it is also 0.5% of a 9-point score. Decide in advance what size of difference would make you switch.</li>
+    <li>Toggle to <strong>log loss</strong>: it agrees in sign here. When CRPS and a log score disagree, Lesson 3 explains why.</li>
+  </ul>
+
+  <h3 class="sub"><span class="num">6.3</span>Skill scores: one number against a baseline</h3>
+  <p class="eq">skill = 1 − <var>S</var><sub>model</sub> / <var>S</var><sub>reference</sub></p>
+  <p>Skill is the share of the reference's score that your model removes.<sup class="cite"><a href="#r5">5</a></sup> On FBS–FBS games:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Reference</th><th class="num">Reference CRPS</th><th class="num">Model CRPS</th><th class="num">CRPS skill</th></tr></thead>
+      <tbody>
+        <tr><td>Climatology (margins of the other seasons)</td><td class="num">11.75</td><td class="num">9.14</td><td class="num">+22%</td></tr>
+        <tr><td>The closing line, with the model's distribution re-centred on it</td><td class="num">8.81</td><td class="num">9.14</td><td class="num">−3.7%</td></tr>
+      </tbody>
+      <caption>Line comparison on all 9,435 FBS–FBS games, every one of which has a closing line: the model's CRPS minus the line's is +0.33 points per game (clustered SE 0.032). The market is better, as the paper says.</caption>
+    </table>
+  </div>
+  <div class="takeaway"><span class="tag">Takeaways</span>
+    <ul>
+      <li>Compare paired, per-game score differences on the same games.</li>
+      <li>Cluster the SE by season-week. Naive SEs here are up to 2.6× too small.</li>
+      <li>Separate "real" (a large z) from "matters" (the size of the effect). Skill scores put the size in context.</li>
+    </ul>
+  </div>
+  <h3 class="sub">Check yourself</h3>
+  <div id="quiz-l6"></div>
+  <div class="source"><span class="tag">Read this next</span><strong>Diebold &amp; Mariano (1995), "Comparing predictive accuracy"</strong>, <em>JBES</em> 13(3), §1–2. This is the test your pipeline adapts. Cluster-robust standard errors are what make it work for weekly snapshots.</div>
+</section>
+
+<!-- ================================================================== LESSON 7 -->
+<header class="lesson-head" id="l7">
+  <div class="kicker">Lesson 7 · Report</div>
+  <h2>Which number for which job</h2>
+  <p class="why">You now have seven tools. This lesson matches each one to the reader and the decision it serves.</p>
+</header>
+
+<section>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Job</th><th>Report</th><th>Why</th><th>Your numbers</th></tr></thead>
+      <tbody>
+        <tr><td>Dashboard: how good are the spreads?</td><td>Mean CRPS in points, with MAE beside it for context</td><td>It's in points, it covers the whole forecast, and it's on the same ruler as "typical miss"</td><td>9.2 (MAE 12.9)</td></tr>
+        <tr><td>Dashboard: are the 80% bars honest?</td><td>Coverage at the level shown</td><td>Readers take "80%" literally</td><td>79.2%</td></tr>
+        <tr><td>Dashboard: win probabilities</td><td>Brier score, plus a reliability chart</td><td>It's a yes/no question</td><td>0.166</td></tr>
+        <tr><td>Rank intervals</td><td>Equal-tailed, with a note; add the highest-density set for top teams</td><td>Ranks are bounded and skewed (Lesson 1)</td><td>ND: 1–9 vs. 1–6</td></tr>
+        <tr><td>Choosing between variants</td><td>Paired ΔCRPS <em>and</em> Δlog score, clustered SE, with a practical threshold set in advance</td><td>The two scores weigh tails differently (Lessons 3 and 6)</td><td>forest plot</td></tr>
+        <tr><td>Choosing the margin family</td><td>elpd (log score), cross-checked against backtest CRPS</td><td>Families differ mostly in their tails</td><td>Δelpd 229 vs. ΔCRPS −0.05</td></tr>
+        <tr><td>Paper, backtest section</td><td>CRPS, log score, Brier, coverage and PIT, plus the line comparison with clustered SE</td><td>Score, calibration and sharpness each answer a different question</td><td>all of the above</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="sub"><span class="num">7.1</span>Two drafts you can adapt</h3>
+  <p><strong>Dashboard, one line:</strong> <em>"On average, the full forecast misses by 9.2 points (CRPS); the single-number spread misses by 12.9. Our 80% ranges have contained 79% of results since 2014."</em></p>
+  <p><strong>Paper, two sentences:</strong> <em>"Over 19,177 out-of-sample games, the predictive distribution of the margin has a mean CRPS of 9.20 points (MAE of the point forecast 12.9), and its central 50/80/95% intervals contain 49.8/79.2/94.5% of results; the PIT histogram is within a few percent of uniform in every bin. Against climatology the CRPS skill is 22%; against the closing line, with the model's distribution re-centred on the line, it is −3.7% (difference 0.33 points per game, season-week-clustered SE 0.03)."</em></p>
+  <p>Before you publish, confirm every number in these drafts against the current build. They are a snapshot of the 2026-10-19 data.</p>
+
+  <h3 class="sub">Mixed review: take it a few days from now</h3>
+  <p>The questions jump between lessons on purpose. Mixing topics makes you pick the right tool rather than repeat the last one.</p>
+  <div id="quiz-review"></div>
+
+  <div class="ask"><span class="tag">Ask your teacher</span>Stuck on anything? Ask in the terminal. For example: "show me the ND rank posterior with a 95% HDI", "add log score to the backtest", or "what threshold would justify switching margin family?". Nothing is too basic.</div>
+
+  <div class="source"><span class="tag">Where to test this for real</span>
+    <ul>
+      <li><a href="https://discourse.mc-stan.org">Stan Forums</a>: questions about elpd, LOO-PIT and comparing variants of the Stan model. The LOO authors answer there.</li>
+      <li><a href="https://www.reddit.com/r/CFBAnalysis/">r/CFBAnalysis</a>: share the backtest and ask other raters how they score their forecasts.</li>
+    </ul>
+  </div>
+
+  <h3 class="sub">References</h3>
+  <ol class="refs">
+    <li id="r1">Brier, G. W. (1950). Verification of forecasts expressed in terms of probability. <em>Monthly Weather Review</em> 78(1), 1–3. <a href="https://doi.org/10.1175/1520-0493(1950)078%3C0001:VOFEIT%3E2.0.CO;2">doi</a></li>
+    <li id="r2">Gneiting, T. &amp; Raftery, A. E. (2007). Strictly proper scoring rules, prediction, and estimation. <em>JASA</em> 102(477), 359–378. <a href="https://doi.org/10.1198/016214506000001437">doi</a></li>
+    <li id="r3">Matheson, J. E. &amp; Winkler, R. L. (1976). Scoring rules for continuous probability distributions. <em>Management Science</em> 22(10), 1087–1096. <a href="https://doi.org/10.1287/mnsc.22.10.1087">doi</a></li>
+    <li id="r4">Arnold, Walz, Ziegel &amp; Gneiting (2023). Decompositions of the mean continuous ranked probability score. <a href="https://arxiv.org/abs/2311.14122">arXiv:2311.14122</a></li>
+    <li id="r5">Hyndman, R. J. &amp; Athanasopoulos, G. <em>Forecasting: Principles and Practice</em>, 3rd ed., §5.9. <a href="https://otexts.com/fpp3/distaccuracy.html">otexts.com/fpp3</a></li>
+    <li id="r6">Wikipedia, "Scoring rule": CRPS definition, the log score's locality, the interval score. <a href="https://en.wikipedia.org/wiki/Scoring_rule">link</a></li>
+    <li id="r7">Gneiting, T., Balabdaoui, F. &amp; Raftery, A. E. (2007). Probabilistic forecasts, calibration and sharpness. <em>JRSS B</em> 69(2), 243–268. <a href="https://sites.stat.washington.edu/people/raftery/Research/PDF/Gneiting2007jrssb.pdf">pdf</a></li>
+    <li id="r8">Jordan, A., Krüger, F. &amp; Lerch, S. (2019). Evaluating probabilistic forecasts with scoringRules. <em>Journal of Statistical Software</em> 90(12). <a href="https://www.jstatsoft.org/article/view/v090i12">link</a></li>
+    <li id="r9">Makowski, D., Ben-Shachar, M. S. &amp; Lüdecke, D. bayestestR: "Credible Intervals (CI)". <a href="https://easystats.github.io/bayestestR/articles/credible_interval.html">link</a></li>
+    <li id="r10">Wikipedia, "Credible interval". <a href="https://en.wikipedia.org/wiki/Credible_interval">link</a></li>
+    <li id="r11">Kay, M. ggdist: <code>point_interval()</code> reference (qi, hdi, hdci). <a href="https://mjskay.github.io/ggdist/reference/point_interval.html">link</a></li>
+    <li id="r12">Stan Development Team. posterior: <code>mcse_quantile()</code> reference. <a href="https://mc-stan.org/posterior/reference/mcse_quantile.html">link</a></li>
+    <li id="r13">Vehtari, A., Gelman, A. &amp; Gabry, J. (2017). Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC. <em>Statistics and Computing</em>. <a href="https://doi.org/10.1007/s11222-016-9696-4">doi</a></li>
+    <li id="r14">Diebold, F. X. &amp; Mariano, R. S. (1995). Comparing predictive accuracy. <em>JBES</em> 13(3), 253–263. <a href="https://doi.org/10.1080/07350015.1995.10524599">doi</a></li>
+  </ol>
+</section>
+
+</main>
+
+<script src="../assets/course-data.js"></script>
+<script src="../assets/charts.js"></script>
+<script src="../assets/forecast-explorer.js"></script>
+<script src="../assets/scoring-widgets.js"></script>
+<script src="../assets/quiz.js"></script>
+<script>
+const D = window.COURSE_DATA, W = window.ScoringWidgets;
+const $ = id => document.getElementById(id);
+
+// Course map
+W.CourseMap($("course-map"), [
+  { k: "LESSON 1", lines: ["Summarise:", "credible sets"], href: "#l1" },
+  { k: "LESSONS 2–3", lines: ["Score: Brier,", "CRPS, log score"], href: "#l2" },
+  { k: "LESSON 4", lines: ["Score the", "intervals"], href: "#l4" },
+  { k: "LESSON 5", lines: ["Diagnose:", "PIT, sharpness"], href: "#l5" },
+  { k: "LESSONS 6–7", lines: ["Compare, then", "report"], href: "#l6" }
+]);
+
+// ---- Lesson 1
+const bim = (() => { const z = Charts.normals(4000, 3), u = Charts.rng(5); return Array.from(z, v => (u() < 0.6 ? 10 + 3.5 * v : -4 + 3.5 * v)); })();
+W.CredibleExplorer($("cred-explorer"), { datasets: [
+  { id: "ind", label: "Indiana's rating", sub: "2025 final · symmetric", draws: D.cred.indiana_rating, range: [20, 52], digits: 1,
+    title: "Posterior draws: Indiana's rating", axis: "points better than an average FBS team",
+    note: "Symmetric and unbounded: every method gives nearly the same interval." },
+  { id: "nd", label: "Notre Dame's rank", sub: "2025 final · discrete, skewed", draws: D.cred.nd_rank, discrete: true, range: [1, 32], digits: 0,
+    ticks: [1, 5, 10, 15, 20, 25, 30], title: "Posterior draws: Notre Dame's FBS rank", axis: "FBS rank (1 = best)",
+    note: "Bounded at 1 with a long tail. The equal-tailed interval can't trim a bottom tail that doesn't exist, so it holds far more than the stated level." },
+  { id: "wp", label: "Indiana beats Notre Dame", sub: "win probability · bounded", draws: D.cred.ind_nd_wp, range: [0.1, 1.0], digits: 2, tickDigits: 1,
+    title: "Posterior draws: P(Indiana beats Notre Dame, neutral field)", axis: "win probability",
+    note: "Bounded at 1 and skewed left. At 95%, the normal approximation runs past 1." },
+  { id: "bim", label: "Hypothetical: QB doubt", sub: "made-up · bimodal", draws: bim, range: [-16, 22], digits: 1,
+    title: "Hypothetical: expected edge if the starter plays (60%) or doesn't (40%)", axis: "expected margin, points",
+    note: "Made-up data. Only the highest-density set refuses to include the unlikely valley between the two modes." }
+] });
+W.RankStrip($("rank-strip"), D.cred.table, { maxRank: 25 });
+W.TransformFigure($("transform-fig"), { x: D.cred.ind_nd_diff, y: D.cred.ind_nd_wp, level: 0.8, xRange: [-20, 34], yRange: [0.1, 1],
+  xTitle: "Indiana minus Notre Dame, rating difference (points)", yTitle: "P(Indiana wins), same draws", label: "Equal-tailed vs. HDI under a change of scale" });
+
+// ---- Lesson 2
+W.BrierCurve($("brier-curve"), { t: D.bt.bs_curve.t, bs: D.bt.bs_curve.bs, crps: D.bt.crps_mean });
+const REFS = { brier: D.bt.brier_mean, crps: D.bt.crps_mean, mae: D.bt.mae };
+const CUSTOM = { label: "Build your own", sub: "Normal forecast", side: "home − away", centre: 7, sd: 15, y: 10 };
+ForecastExplorer.mount($("explorer-games"), {
+  presets: [
+    { id: "game", label: "Michigan 13, Ohio State 10", sub: "2024 · OSU by 14.0 → MICH by 3", side: "Ohio State − Michigan", q: THE_GAME_2024(), y: -3 },
+    { id: "orange", label: "Georgia 63, Florida State 3", sub: "2023 Orange Bowl · UGA by 7.6 → by 60", side: "Georgia − Florida State", q: ORANGE_BOWL_2023(), y: 60 }
+  ], custom: CUSTOM, refs: REFS });
+ForecastExplorer.mount($("explorer-build"), { presets: [], custom: CUSTOM, refs: REFS, challenges: [
+  { text: "<strong>The favourite loses a close one.</strong> Make the Brier score bigger than 0.5 while the CRPS stays under 8.",
+    test: s => s.brier > 0.5 && s.crps < 8, takeaway: "Wrong side of t = 0 with confidence, but the result is only a little way into the tail." },
+  { text: "<strong>The favourite wins by a mile.</strong> Make the Brier score smaller than 0.1 while the CRPS goes over 25.",
+    test: s => s.brier < 0.1 && s.crps > 25, takeaway: "The one slice the Brier score checks is fine, and every slice between the forecast and the result is wrong." },
+  { text: "<strong>Spread costs when you're right.</strong> Put the centre within half a point of the result, then push the CRPS above 5 without moving either.",
+    test: s => Math.abs(s.centre - s.y) <= 0.5 && s.crps > 5, takeaway: "Width is a hedge: you pay for it when you're right and are refunded when you're wrong." }
+] });
+
+// ---- Lesson 3
+W.LogScoreExplorer($("logscore-explorer"), {});
+W.ScoreScatter($("score-scatter"), { crps: D.bt.scatter.crps, logs: D.bt.scatter.logs, rho: D.bt.logs_cor, highlight: [
+  { crps: D.examples.the_game.crps, logs: D.examples.the_game.logs, label: "The Game" },
+  { crps: D.examples.orange_bowl.crps, logs: D.examples.orange_bowl.logs, label: "Orange Bowl" }] });
+
+// ---- Lesson 4
+W.IntervalExplorer($("interval-explorer"), { q: D.bt.interval_sample.q, y: D.bt.interval_sample.y });
+
+// ---- Lesson 5
+W.PITExplorer($("pit-explorer"), {
+  diagnosis: {
+    ideal: "<strong>Flat:</strong> right centre and right width. Its CRPS is the best achievable in this simulated world.",
+    narrow: "<strong>U-shaped:</strong> too many results land in the tails. 80% intervals hold only about 56%.",
+    wide: "<strong>Hump-shaped:</strong> results bunch in the middle. The intervals are safe but bloated.",
+    biased: "<strong>Sloped:</strong> the forecast centre sits 7 points too high for the home team, so results pile into low PIT values.",
+    clim: "<strong>Flat, but useless:</strong> perfectly calibrated, yet the widest intervals and the worst CRPS. Calibration is not enough."
+  },
+  real: [
+    { id: "model", label: "Your model (real)", sub: "all 19,177 games", pit: D.bt.pit, crps: D.bt.crps_mean, w80: D.bt.width.w80,
+      note: "<strong>Your model:</strong> within a few percent of flat in every bin, with a slight excess in the top two bins (more home blowouts than forecast). The coverage curve sits on the diagonal." },
+    { id: "climreal", label: "Climatology (real)", sub: "FBS–FBS, other seasons' margins", bins: D.bt.clim.pit_bins, crps: D.bt.clim.crps_mean, w80: D.bt.clim.width80,
+      note: "<strong>Real climatology:</strong> just as flat as your model, or flatter, but 54-point-wide 80% intervals and a CRPS of 11.75 against your model's 9.14 on the same games." }
+  ] });
+
+// ---- Lesson 6
+const nco = D.cmp.find(c => c.variant === "No carry-over");
+W.WeekBars($("week-bars"), { week: nco.by_week.week_seq, d: nco.by_week.d, n: nco.by_week.n, title: "No carry-over minus published: mean ΔCRPS per game, by week predicted (2022–2025)" });
+W.ForestPlot($("forest"), { cmp: D.cmp, seasons: D.ab_seasons });
+
+// ---- Quizzes
+Quiz.mount($("quiz-l1"), [
+  { q: "Notre Dame's rank draws pile up at 2 and trail out past 20. Which 80% set is shortest?",
+    options: ["The equal-tailed interval", "The highest-density set", "The normal approximation", "They're all identical"], answer: 1,
+    explain: "Highest-density set: ranks 1–6. The equal-tailed interval is 1–9 because it can't trim a bottom tail below rank 1, so it holds 92%. The normal approximation starts below rank 1." },
+  { q: "You convert both ends of Indiana's 80% rating-difference interval into win probabilities. Which interval type is still a valid 80% interval afterwards?",
+    options: ["Equal-tailed interval", "Highest-density interval", "Normal-approximation interval", "None qualifies"], answer: 0,
+    explain: "Quantiles carry across a monotone transformation, so the 10th percentile of the rating gap is the 10th percentile of the win probability. HDI endpoints don't carry across." },
+  { q: "With only 200 posterior draws, which number is least trustworthy?",
+    options: ["A 50% interval's endpoint", "A 95% interval's endpoint", "The posterior's median value", "The posterior's mean value"], answer: 1,
+    explain: "Tail quantiles rest on the fewest draws, so they carry the most Monte Carlo error. Check with <code>posterior::mcse_quantile()</code>." },
+  { q: "A posterior predictive interval for next week's margin is much wider than the credible interval for the rating difference, because it adds:",
+    options: ["Prior uncertainty", "Sampling error", "Game noise", "Home advantage"], answer: 2,
+    explain: "The predictive interval adds game-to-game noise (the margin forecasts have an sd of about 16 points) on top of rating uncertainty (about 4–7 points)." }
+]);
+Quiz.mount($("quiz-l2"), [
+  { q: "Your model gives the home team 0.70, and the home team loses. Brier score?", options: ["0.09", "0.30", "0.49", "0.70"], answer: 2,
+    explain: "(0.70 − 0)² = 0.49." },
+  { q: "The Brier score of your win probability is the CRPS's squared gap at which threshold?",
+    options: ["At the zero-point margin", "At the observed margin", "At the predicted margin", "At the closing spread"], answer: 0,
+    explain: "<var>F</var>(0) = 1 − <var>p</var> and 1{<var>y</var> ≤ 0} = 1 − <var>o</var>, so the squared gap at <var>t</var> = 0 is (<var>p</var> − <var>o</var>)²." },
+  { q: "A point forecast with no spread says home by 7. Home wins by 3. CRPS?", options: ["16 points", "2 points", "0 points", "4 points"], answer: 3,
+    explain: "With no spread, the CRPS is the absolute error: |7 − 3| = 4." },
+  { q: "The Orange Bowl scored Brier 0.095 and CRPS 44.3. Which reading is right?",
+    options: ["Wrong winner, but margin was close", "Right winner, badly wrong margin size", "Right winner and margin nearly exact", "Wrong winner and margin badly wrong"], answer: 1,
+    explain: "The <var>t</var> = 0 slice was fine, so the winner was right. Every threshold between +8 and +60 was wrong." }
+]);
+Quiz.mount($("quiz-l3"), [
+  { q: "Forecast A puts density 0.020 on the result; forecast B puts 0.005. How much lower is A's log score?",
+    options: ["about 0.015 nats", "about 1.39 nats", "about 4.00 nats", "about 0.69 nats"], answer: 1,
+    explain: "−log 0.005 − (−log 0.020) = log 4 ≈ 1.39 nats. The score compares ratios, not differences." },
+  { q: "Which score depends only on the forecast density at the observed result?",
+    options: ["Ranked-probability score", "Interval score", "Logarithmic score", "Absolute error"], answer: 2,
+    explain: "The log score is local: only <var>f</var>(<var>y</var>) matters. The CRPS looks at the whole CDF." },
+  { q: "A result lands four sds from the centre. Compared with a Normal forecast of the same sd, a heavy-tailed <var>t</var> forecast gets a:",
+    options: ["much lower log score", "much higher log score", "much lower CRPS value", "much higher CRPS value"], answer: 0,
+    explain: "The <var>t</var> keeps real density in the tails, so −log <var>f</var>(<var>y</var>) stays moderate while the Normal's grows like <var>z</var>²/2. The two CRPS values stay close." },
+  { q: "elpd and the mean log score measure the same thing with opposite signs. Which is true?",
+    options: ["Higher elpd is better", "Higher elpd is worse", "Both higher is better", "Neither has a direction"], answer: 0,
+    explain: "elpd = Σ log <var>f</var>(<var>y</var>), so higher is better. The log score is −log <var>f</var>(<var>y</var>), so lower is better." }
+]);
+Quiz.mount($("quiz-l4"), [
+  { q: "An 80% interval runs from 10 to 30, and the result is 40. Interval score?", options: ["30", "40", "120", "220"], answer: 2,
+    explain: "Width 20, plus (2/0.2) × (40 − 30) = 100, gives 120." },
+  { q: "Why can't coverage alone rank interval forecasts?",
+    options: ["It needs a continuous predictive density", "It only works for symmetric intervals", "It punishes misses far too harshly", "It ignores how wide intervals are"], answer: 3,
+    explain: "Infinitely wide intervals 80% of the time give perfect 80% coverage. Width has to be in the score." },
+  { q: "On your backtest, stretching every 80% interval by 1.5× makes the mean interval score:",
+    options: ["Go down sharply", "Stay about equal", "Go up noticeably", "Become undefined entirely"], answer: 2,
+    explain: "It rises from 57.2 to 64.3. The extra width costs more than the misses it prevents." },
+  { q: "Average the pinball loss over every quantile level and, up to a factor of 2, you get the:",
+    options: ["Winkler interval score", "Squared Brier score", "Continuous ranked score", "Logarithmic predictive score"], answer: 2,
+    explain: "The CRPS. That's how <code>crps_quantiles()</code> computes it from your 199 stored quantiles." }
+]);
+Quiz.mount($("quiz-l5"), [
+  { q: "A U-shaped PIT histogram means the forecasts are:", options: ["too wide", "too narrow", "biased high", "well calibrated"], answer: 1,
+    explain: "Too many results land in the tails, so the intervals are too narrow." },
+  { q: "The climatological forecaster has a flat PIT histogram. Why is it still poor?",
+    options: ["It is biased toward zero", "Its PIT test is invalid", "It is not sharp enough", "It is too often overconfident"], answer: 2,
+    explain: "It's calibrated but not sharp, with 54-point 80% intervals. Maximise sharpness subject to calibration." },
+  { q: "Your 80% intervals hold 79.2% of results. The PIT histogram should look:",
+    options: ["High at both ends", "High in the middle", "Flat across all bins", "Rising toward the right"], answer: 2,
+    explain: "Close to nominal coverage at every level goes with a near-flat PIT histogram." },
+  { q: "Gneiting, Balabdaoui &amp; Raftery's paradigm: maximise ___ subject to ___.",
+    options: ["calibration; sharpness", "coverage; width", "accuracy; coverage", "sharpness; calibration"], answer: 3,
+    explain: "Sharpness, subject to calibration." }
+]);
+Quiz.mount($("quiz-l6"), [
+  { q: "Why compare models on per-game differences rather than two separate averages?",
+    options: ["Shared difficulty cancels, shrinking noise", "Differences are always normally distributed", "Averages cannot be computed separately", "It doubles the sample size"], answer: 0,
+    explain: "A hard game is hard for both models. Pairing removes that shared noise and leaves the model difference." },
+  { q: "Why are naive standard errors too small in your backtest?",
+    options: ["There are too few games", "Same-week games share one snapshot", "CRPS values are not continuous", "Seasons have different game counts"], answer: 1,
+    explain: "One snapshot's errors hit a whole week's games together, which gives 66 clumps, not 6,557 independent games." },
+  { q: "The Normal margin beats the published model by 0.046 points of CRPS per game, z ≈ −4.4. The right reading:",
+    options: ["Large difference, so switch immediately", "Pure noise, so ignore it", "Proves the t family wrong", "Real difference, but practically tiny"], answer: 3,
+    explain: "A large z means it's real. At 0.5% of a 9-point score it barely matters, so set a practical threshold before deciding." },
+  { q: "CRPS skill against climatology is 1 − 9.14/11.75. About:", options: ["8%", "22%", "78%", "−22%"], answer: 1,
+    explain: "1 − 0.778 ≈ 22%: the model removes about a fifth of climatology's score." }
+]);
+Quiz.mount($("quiz-review"), [
+  { q: "(Lesson 1) Which interval does your dashboard show for each team's rank?",
+    options: ["Equal-tailed 80% interval", "Highest-density 80% set", "Normal 80% approximation", "Shortest 80% interval"], answer: 0,
+    explain: "The 10th to 90th percentile of rank draws, type-1 quantiles (<code>R/03_rankings.R:100</code>)." },
+  { q: "(Lesson 2) A forecast's CRPS is 6 points, but its point forecast misses by 9. The CRPS is lower because:",
+    options: ["the Brier score was low", "the log score was high", "the spread hedged the miss", "the interval was too narrow"], answer: 2,
+    explain: "With no spread, the CRPS would be the absolute error, 9. The spread put probability nearer the result." },
+  { q: "(Lesson 3) The tails get heavier but the centre and width don't change. Which score moves most?",
+    options: ["Absolute error", "Brier score", "Interval coverage", "Log score"], answer: 3,
+    explain: "The log score is local and tail-sensitive. The CRPS and the others barely notice." },
+  { q: "(Lesson 4) An 80% interval runs from 0 to 20, and the result is 25. Covered? Interval score?",
+    options: ["Miss; 70", "Hit; 20", "Miss; 45", "Miss; 25"], answer: 0,
+    explain: "It's a miss. The score is 20 + (2/0.2) × 5 = 70." },
+  { q: "(Lesson 5) A PIT histogram slopes upward to the right. The forecasts are:",
+    options: ["too wide", "too narrow", "biased low", "biased high"], answer: 2,
+    explain: "Results keep landing high in their forecast distributions, so the forecast centres are too low." },
+  { q: "(Lesson 6) To decide whether a variant beats the published model, you need:",
+    options: ["two separate averages and their overlap", "paired differences with clustered standard errors", "the variant's coverage at every level", "the variant's best single-game CRPS value"], answer: 1,
+    explain: "Pair the games, then cluster by season-week." },
+  { q: "(Lesson 1) Ranks are bounded at 1. For a top team, the equal-tailed 80% rank interval tends to:",
+    options: ["hold more than 80%", "hold less than 80%", "hold exactly 80% always", "exclude the median rank"], answer: 0,
+    explain: "It can't trim a bottom tail that doesn't exist. Notre Dame's 1–9 holds 92%." },
+  { q: "(Lesson 7) One headline accuracy number for dashboard readers about the margin forecasts:",
+    options: ["Mean log score", "Mean Brier score", "Spiegelhalter z statistic", "Mean CRPS, points"], answer: 3,
+    explain: "It's in points, it covers the whole forecast, and it sits on the same ruler as the absolute error readers already understand." }
+]);
+
+// Highlight the current lesson in the top bar
+const links = [...document.querySelectorAll(".toc-bar a[href^='#']")];
+const heads = links.map(a => document.querySelector(a.getAttribute("href")));
+const onScroll = () => {
+  let cur = 0; heads.forEach((h, i) => { if (h && h.getBoundingClientRect().top < 120) cur = i; });
+  links.forEach((a, i) => a.classList.toggle("active", i === cur));
+};
+document.addEventListener("scroll", onScroll, { passive: true }); onScroll();
+
+function THE_GAME_2024() { return [-25.36,-21.23,-18.67,-16.50,-14.84,-13.78,-12.88,-11.76,-11.05,-10.29,-9.54,-8.97,-8.28,-7.78,-7.24,-6.82,-6.20,-5.87,-5.38,-5.03,-4.42,-3.99,-3.63,-3.34,-2.92,-2.58,-2.25,-1.93,-1.67,-1.30,-1.06,-0.76,-0.53,-0.27,-0.01,0.26,0.47,0.70,0.90,1.19,1.53,1.83,2.04,2.23,2.49,2.64,2.91,3.09,3.39,3.73,3.91,4.18,4.44,4.71,4.92,5.18,5.35,5.63,5.84,6.04,6.13,6.33,6.56,6.82,7.03,7.20,7.48,7.66,7.84,8.11,8.23,8.41,8.62,8.81,8.99,9.20,9.37,9.55,9.76,9.93,10.11,10.31,10.53,10.73,10.89,11.06,11.23,11.41,11.61,11.82,11.97,12.12,12.36,12.68,12.96,13.09,13.29,13.45,13.68,13.94,14.11,14.26,14.44,14.61,14.80,15.02,15.11,15.32,15.48,15.63,15.81,16.05,16.24,16.43,16.60,16.81,17.00,17.16,17.35,17.58,17.75,17.94,18.07,18.18,18.38,18.62,18.83,19.05,19.22,19.47,19.79,20.05,20.27,20.50,20.66,20.83,21.09,21.33,21.50,21.70,21.91,22.17,22.37,22.72,22.90,23.18,23.42,23.63,23.86,24.13,24.39,24.66,24.95,25.18,25.40,25.72,26.06,26.36,26.55,26.99,27.26,27.57,27.87,28.10,28.39,28.64,29.02,29.34,29.65,29.92,30.20,30.48,30.82,31.15,31.55,31.93,32.21,32.75,33.27,33.69,34.05,34.50,34.96,35.30,35.94,36.51,37.13,37.63,38.17,39.20,40.23,41.24,42.00,42.99,44.21,45.62,47.33,50.98,55.13]; }
+function ORANGE_BOWL_2023() { return [-32.57,-28.49,-26.41,-24.57,-22.83,-21.76,-20.38,-19.58,-18.67,-18.06,-17.13,-16.38,-15.77,-14.87,-14.33,-13.84,-13.34,-12.82,-12.36,-11.78,-11.30,-11.10,-10.71,-10.44,-10.09,-9.61,-9.26,-8.98,-8.73,-8.45,-8.17,-7.77,-7.46,-7.11,-6.87,-6.59,-6.40,-6.14,-5.83,-5.59,-5.20,-4.91,-4.63,-4.45,-4.24,-3.99,-3.74,-3.63,-3.28,-3.15,-2.92,-2.77,-2.56,-2.27,-1.98,-1.66,-1.42,-1.20,-0.89,-0.74,-0.56,-0.28,-0.01,0.19,0.42,0.64,0.87,1.11,1.26,1.48,1.70,1.95,2.11,2.35,2.50,2.69,2.88,2.98,3.23,3.41,3.66,3.82,3.97,4.09,4.33,4.53,4.74,4.89,5.07,5.37,5.54,5.73,5.94,6.07,6.27,6.52,6.81,6.93,7.16,7.35,7.52,7.72,7.87,8.11,8.25,8.44,8.67,8.90,9.05,9.26,9.43,9.59,9.81,9.96,10.15,10.38,10.58,10.82,11.03,11.26,11.40,11.65,11.85,12.00,12.20,12.47,12.59,12.84,13.11,13.29,13.43,13.59,13.82,13.99,14.19,14.43,14.73,14.96,15.17,15.38,15.63,15.91,16.20,16.39,16.59,16.75,16.99,17.28,17.50,17.79,18.12,18.42,18.70,18.95,19.13,19.38,19.58,19.85,20.08,20.31,20.58,20.92,21.12,21.42,21.72,21.96,22.16,22.58,22.97,23.34,23.84,24.17,24.49,24.81,25.11,25.43,25.73,26.02,26.51,26.99,27.27,27.77,28.23,28.68,29.11,29.70,30.23,30.65,31.05,31.66,32.20,33.17,34.04,34.90,36.08,37.24,39.71,43.20,48.13]; }
+</script>
+</body>
+</html>
