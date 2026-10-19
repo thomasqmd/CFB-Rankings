@@ -40,6 +40,20 @@ test_that("concluded weeks need finished games and a buffer after the last kicko
   expect_equal(concluded_weeks(games, now = as.POSIXct("2026-09-25", tz = "UTC"), min_share = 0.5), 1:3)
 })
 
+test_that("a week counts before the buffer once every FBS game is final with stats", {
+  games <- tibble::tibble(
+    week_seq = 1L, start_date = c("2026-09-05T16:00:00.000Z", "2026-09-06T03:00:00.000Z", "2026-09-05T18:00:00.000Z"),
+    completed = TRUE, home_points = c(10L, 20L, 30L),
+    home_class = c("fbs", "fbs", "fcs"), away_class = c("fbs", "fcs", "fcs"),
+    home_ppa = c(0.1, 0.2, NA), away_ppa = c(-0.1, NA, NA)
+  )
+  soon <- as.POSIXct("2026-09-06 05:00:00", tz = "UTC")      # 2h after the last kickoff
+  expect_equal(concluded_weeks(games, now = soon), 1L)          # FCS-only game needs no stats
+  games$home_ppa[2] <- NA                                       # an FBS game still without stats
+  expect_equal(concluded_weeks(games, now = soon), integer(0))
+  expect_equal(concluded_weeks(games, now = soon + 5 * 3600), 1L)  # the buffer still applies
+})
+
 test_that("spring games follow the fall postseason in date order", {
   g <- tibble::tibble(week = c(1L, 14L, 1L, 1L, 3L, 1L),
                       season_type = c("regular", "regular", "postseason", "spring_regular", "spring_regular", "spring_postseason"))
@@ -88,4 +102,18 @@ test_that("coach change: kept coach 0, new coach 1, same coach id on the same te
   expect_equal(out$coach_change, c(0L, 1L, 0L, NA, 1L))
   expect_type(out$coach_change, "integer")
   expect_true(all(is.na(coach_changes(now, parse_coaches(list()))$coach_change)))
+})
+
+test_that("parse_sp keeps teams' overall, offence and defence SP+ and drops the national averages", {
+  raw <- list(
+    list(team = "Georgia", rating = 25.1, ranking = 2L, offense = list(rating = 38.2), defense = list(rating = 13.4)),
+    list(team = "nationalAverages", rating = 0, ranking = NULL, offense = list(rating = 28), defense = list(rating = 28)),
+    list(team = "Ohio State", rating = 27.9, ranking = 1L, offense = list(rating = 40.0), defense = list(rating = 12.0)),
+    list(team = "Unrated", rating = NULL, ranking = NULL, offense = list(), defense = list())
+  )
+  sp <- parse_sp(raw)
+  expect_equal(sp$team, c("Georgia", "Ohio State"))
+  expect_equal(sp$sp_rank, c(2L, 1L))
+  expect_equal(sp$sp_off, c(38.2, 40.0))
+  expect_equal(nrow(parse_sp(list())), 0)
 })

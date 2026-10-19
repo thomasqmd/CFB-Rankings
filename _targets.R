@@ -192,7 +192,9 @@ list(
   tar_target(schedule_graph, schedule_components(games_all, snapshots$params)),
   tar_target(resume_check, resume_validation(ratings, games_all, last_full)),
   tar_target(data_hashes, data_fingerprint(season_data)),
-  tar_target(dashboard_data, build_dashboard_data(ratings, snapshots, games_all, teams_meta, backtest, cfg)),
+  # SP+ (CFBD): each season's latest ratings, shown on the dashboard only
+  tar_target(sp_ratings, { sync; read_sp(DB_PATH) }),
+  tar_target(dashboard_data, build_dashboard_data(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = sp_ratings)),
 
   # The stylesheets and navbar logo are tracked too, so editing only them re-renders the dashboard
   tar_quarto(dashboard, path = "docs/dashboard.qmd", quiet = TRUE,

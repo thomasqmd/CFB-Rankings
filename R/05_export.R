@@ -13,8 +13,10 @@ conference_group <- function(conf, season, tier) {
 
 clean_color <- function(x) ifelse(is.na(x) | !grepl("^#[0-9A-Fa-f]{6}$", x), NA_character_, x)
 
+#' @param sp each season's latest SP+ (read_sp()). CFBD has no weekly SP+ history, so it is shown on
+#'   each season's latest snapshot only: final SP+ for finished seasons, the newest fetch for the live one.
 #' @return list of data frames, each small enough to inline in a static HTML page
-build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, backtest, cfg) {
+build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = NULL) {
   params <- snapshots$params
 
   last_week <- params |> dplyr::group_by(season) |> dplyr::summarise(last = max(week), .groups = "drop")
@@ -41,6 +43,13 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
     dplyr::mutate(sor_rk = ifelse(g > 0, rank(sor, ties.method = "min", na.last = "keep"), NA_integer_)) |>
     dplyr::ungroup() |>
     dplyr::mutate(grp = conference_group(conf, s, tier), .after = conf)
+  if (!is.null(sp) && nrow(sp) > 0) {
+    sp_rows <- sp |>
+      dplyr::inner_join(last_week, by = "season") |>
+      dplyr::transmute(s = season, w = last, id = team_id, sp = round(sp, 1), sp_rk = sp_rank,
+                       sp_off = round(sp_off, 1), sp_def = round(sp_def, 1))
+    rank_rows <- rank_rows |> dplyr::left_join(sp_rows, by = c("s", "w", "id"))
+  }
 
   snaps_meta <- params |>
     dplyr::transmute(s = season, w = week, label = week_label, n_games, has_prior, family,
@@ -128,6 +137,8 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
                                                           dplyr::across(where(is.numeric), \(x) round(x, 3)))
     ),
     config = list(benchmark_rank = cfg$benchmark_rank, margin_family = cfg$margin_family,
-                  generated = format(Sys.time(), "%Y-%m-%d %H:%M %Z"))
+                  generated = format(Sys.time(), "%Y-%m-%d %H:%M %Z"),
+                  sp_asof = if (is.null(sp) || nrow(sp) == 0) NULL else
+                    format(max(sp$fetched[sp$season == max(sp$season)]), "%b %-d"))
   )
 }

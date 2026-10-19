@@ -67,7 +67,7 @@ Only new weeks are refit: a week's inputs contain nothing from later weeks. Fini
 
 | File | Contents |
 | :--- | :--- |
-| `R/01_ingest.R` | CFBD client, JSON cache, DuckDB tables (`games`, `game_stats`, `lines`, `polls`, `teams`), concluded-week rule |
+| `R/01_ingest.R` | CFBD client, JSON cache, DuckDB tables (`games`, `game_stats`, `lines`, `polls`, `teams`, `sp_ratings`), concluded-week rule. SP+ is stored per published version (CFBD keeps no weekly history) and shown on each season's latest dashboard week only |
 | `R/01_ingest_cbs.R` | CBS Sports 138: archive, Wayback/article backfill, poll alignment |
 | `R/02_model.R` | Model config, Stan inputs per snapshot, fitting with gates |
 | `R/03_rankings.R` | Power and Resume summaries, Colley, poll alignment |

@@ -220,6 +220,20 @@ parse_talent <- function(raw) {
   dplyr::bind_rows(rows)
 }
 
+#' SP+ per team (CFBD /ratings/sp, FBS only): overall, offence and defence ratings and the overall rank
+parse_sp <- function(raw) {
+  rows <- lapply(raw, function(x) {
+    if (identical(chr(x$team), "nationalAverages")) return(NULL)
+    tibble::tibble(team = chr(x$team), sp = num(x$rating), sp_rank = int(x$ranking),
+                   sp_off = num(x$offense$rating), sp_def = num(x$defense$rating))
+  })
+  out <- dplyr::bind_rows(rows)
+  if (nrow(out) == 0) {
+    return(tibble::tibble(team = character(0), sp = numeric(0), sp_rank = integer(0), sp_off = numeric(0), sp_def = numeric(0)))
+  }
+  dplyr::filter(out, !is.na(sp))
+}
+
 #' One row per coach per season entry (a coach who moved teams has one row for each team)
 parse_coaches <- function(raw) {
   rows <- lapply(raw, function(coach) {
@@ -346,6 +360,40 @@ sync_preseason <- function(con, seasons, raw_dir = "data/raw") {
   invisible(n)
 }
 
+#' SP+ for each season. CFBD serves only a season's latest SP+ (no weekly history), so a finished
+#' season is stored once (its final ratings) and a live season is refetched like the games (at most
+#' every `min_refresh_hours`). A version is stored only when the ratings change, stamped with the
+#' time it was fetched; readers use each season's latest version.
+sync_sp <- function(con, seasons, live, raw_dir = "data/raw", min_refresh_hours = 6) {
+  if (!DBI::dbExistsTable(con, "teams")) return(invisible(0L))
+  teams <- DBI::dbReadTable(con, "teams")
+  stored <- if (DBI::dbExistsTable(con, "sp_ratings")) DBI::dbReadTable(con, "sp_ratings") else NULL
+  n <- 0L
+  for (s in seasons) {
+    is_live <- s %in% live
+    if (!is_live && !is.null(stored) && s %in% stored$season) next
+    raw <- tryCatch(cfbd_cached("ratings_sp", s, "ratings/sp", list(year = s), raw_dir = raw_dir,
+                                refresh = is_live, min_refresh_hours = min_refresh_hours)$data,
+                    error = \(e) { warning("[SP+] ", s, " skipped: ", conditionMessage(e), call. = FALSE); NULL })
+    sp <- parse_sp(raw)
+    if (nrow(sp) == 0) next
+    sp <- sp |>
+      dplyr::mutate(team_id = teams$team_id[match(team, teams$school)]) |>
+      dplyr::filter(!is.na(team_id)) |>
+      dplyr::transmute(season = as.integer(s), fetched = file.mtime(file.path(raw_dir, sprintf("ratings_sp_%d.json", s))),
+                       team_id, sp, sp_rank, sp_off, sp_def) |>
+      dplyr::arrange(team_id)
+    if (!is.null(stored)) {
+      prev <- stored[stored$season == s, ]
+      prev <- prev[prev$fetched == max(prev$fetched), ] |> dplyr::arrange(team_id)
+      if (nrow(prev) == nrow(sp) && isTRUE(all.equal(prev$sp, sp$sp)) && all(prev$team_id == sp$team_id)) next
+    }
+    if (DBI::dbExistsTable(con, "sp_ratings")) DBI::dbAppendTable(con, "sp_ratings", sp) else DBI::dbWriteTable(con, "sp_ratings", sp)
+    n <- n + nrow(sp)
+  }
+  invisible(n)
+}
+
 #' Drop tables from the pre-2026-09 schema (cfbfastR schedules + play-by-play store)
 drop_legacy_tables <- function(con) {
   legacy_meta <- DBI::dbExistsTable(con, "sync_metadata") &&
@@ -379,8 +427,10 @@ sync_all <- function(seasons, db_path = "data/cfb.duckdb", full_refresh = FALSE,
   }
   if (full_refresh || !DBI::dbExistsTable(con, "teams")) sync_teams(con, refresh = full_refresh, raw_dir = raw_dir)
   sync_preseason(con, seasons, raw_dir = raw_dir)
+  live_seasons <- seasons[!vapply(seasons, \(s) { m <- meta[meta$season == s, ]; nrow(m) == 1 && season_is_final(s, m$last_sync) }, logical(1))]
+  sync_sp(con, seasons, live = live_seasons, raw_dir = raw_dir, min_refresh_hours = if (full_refresh) 0 else min_refresh_hours)
   # CBS Sports 138: archive this week's live ranking while a season is being played
-  live <- any(!vapply(seasons, \(s) { m <- meta[meta$season == s, ]; nrow(m) == 1 && season_is_final(s, m$last_sync) }, logical(1)))
+  live <- length(live_seasons) > 0
   sync_cbs138(con, raw_dir = raw_dir, live = live)
 
   fp <- DBI::dbGetQuery(con, sprintf(
@@ -400,6 +450,10 @@ sync_all <- function(seasons, db_path = "data/cfb.duckdb", full_refresh = FALSE,
   if (DBI::dbExistsTable(con, "preseason")) {
     pre <- DBI::dbGetQuery(con, "SELECT season, COUNT(*) AS preseason FROM preseason GROUP BY season")
     fp <- merge(fp, pre, all.x = TRUE)
+  }
+  if (DBI::dbExistsTable(con, "sp_ratings")) {
+    spv <- DBI::dbGetQuery(con, "SELECT season, COUNT(DISTINCT fetched) AS sp_versions FROM sp_ratings GROUP BY season")
+    fp <- merge(fp, spv, all.x = TRUE)
   }
   fp
 }
@@ -441,6 +495,18 @@ read_season <- function(season, db_path = "data/cfb.duckdb") {
   list(season = as.integer(season), games = games, polls = polls, preseason = preseason)
 }
 
+#' Each season's latest stored SP+ (final ratings for finished seasons, the newest fetch for a live one)
+read_sp <- function(db_path = "data/cfb.duckdb") {
+  con <- db_connect(db_path, read_only = TRUE)
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  if (!DBI::dbExistsTable(con, "sp_ratings")) {
+    return(tibble::tibble(season = integer(0), fetched = as.POSIXct(character(0)), team_id = integer(0),
+                          sp = numeric(0), sp_rank = integer(0), sp_off = numeric(0), sp_def = numeric(0)))
+  }
+  tibble::as_tibble(DBI::dbGetQuery(con, "SELECT s.* FROM sp_ratings s
+    WHERE s.fetched = (SELECT MAX(t.fetched) FROM sp_ratings t WHERE t.season = s.season)"))
+}
+
 read_teams <- function(db_path = "data/cfb.duckdb") {
   con <- db_connect(db_path, read_only = TRUE)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
@@ -448,19 +514,26 @@ read_teams <- function(db_path = "data/cfb.duckdb") {
   tibble::as_tibble(DBI::dbReadTable(con, "teams"))
 }
 
-#' Weeks whose games are concluded: the week's last kickoff was >= `buffer_hours` ago and
-#' >= `min_share` of its games have results (cancelled games never get one).
+#' Weeks whose games are concluded: >= `min_share` of its games have results (cancelled games never
+#' get one), and either the week's last kickoff was >= `buffer_hours` ago or every FBS game in it is
+#' final with its advanced stats. The buffer exists to wait for those stats (CFBD posts them after
+#' the score), so a week whose stats are all in counts without waiting it out.
 concluded_weeks <- function(games, now = Sys.time(), buffer_hours = 6, min_share = 0.9) {
   if (nrow(games) == 0) return(integer(0))
   starts <- as.POSIXct(games$start_date, format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
+  # Stats count as posted when either side has them (CFBD may never post an FCS opponent's side)
+  with_stats <- all(c("home_class", "away_class", "home_ppa", "away_ppa") %in% names(games))
+  fbs_game <- if (with_stats) games$home_class %in% "fbs" | games$away_class %in% "fbs" else rep(FALSE, nrow(games))
+  ready <- if (with_stats) games$completed & (!is.na(games$home_ppa) | !is.na(games$away_ppa)) else rep(FALSE, nrow(games))
   wk <- games |>
-    dplyr::mutate(start = starts) |>
+    dplyr::mutate(start = starts, fbs_game = fbs_game, ready = ready) |>
     dplyr::group_by(week_seq) |>
     dplyr::summarise(last_start = max(start, na.rm = TRUE),
-                     share = mean(completed & !is.na(home_points)), n_done = sum(completed), .groups = "drop") |>
+                     share = mean(completed & !is.na(home_points)), n_done = sum(completed),
+                     stats_in = any(fbs_game) && all(ready[fbs_game]), .groups = "drop") |>
     dplyr::arrange(week_seq)
   ok <- wk$n_done > 0 & wk$share >= min_share &
-    as.numeric(difftime(now, wk$last_start, units = "hours")) >= buffer_hours
+    (as.numeric(difftime(now, wk$last_start, units = "hours")) >= buffer_hours | wk$stats_in)
   # Only a contiguous prefix of weeks counts (a later week can't be done if an earlier one isn't)
   n_ok <- if (all(ok)) length(ok) else which(!ok)[1] - 1L
   as.integer(wk$week_seq[seq_len(n_ok)])
