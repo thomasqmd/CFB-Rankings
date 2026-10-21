@@ -104,14 +104,29 @@ body {
 .tile.power { border-top: 3px solid var(--power); }
 
 // ---- Tables -------------------------------------------------------------------
-.table-wrap { overflow: auto; max-height: 100%; }
+// The wrapper must be the table's vertical scroller as well as its horizontal one: sticky cells
+// stick within their nearest scroll container, and the wrapper is that container once it scrolls
+// sideways. On fill pages the cell output box becomes a flex column so the wrapper takes the card's
+// remaining height (text above or below a table keeps its natural height); phones get a
+// viewport-tall wrapper below. htl wraps a cell with several top-level nodes in a <span>.
+.table-wrap { overflow: auto; }
+@media (min-width: 576px) {
+  .observablehq:has(> .table-wrap, > span > .table-wrap), .observablehq > span:has(> .table-wrap) {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  }
+  :is(.observablehq, .observablehq > span) > .table-wrap { flex: 0 1 auto; min-height: 5rem; }
+}
+// A note after the last row scrolls in with the table but stays put when it scrolls sideways
+.table-wrap > .explain { position: sticky; left: 0; }
 .cfb-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.9rem; }
 .cfb-table thead th {
   position: sticky; top: 0; z-index: 1; background: var(--card);
   font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3);
   font-weight: 600; padding: 8px 8px; border-bottom: 1px solid var(--rule-strong); white-space: nowrap;
 }
-.cfb-table thead tr.group th { border-bottom: none; padding-bottom: 0; font-size: 0.68rem; }
+.cfb-table thead tr.group th { border-bottom: none; padding-bottom: 0; font-size: 0.68rem; height: 1.75rem; }
+// A two-row header: the column labels stick just below the group labels
+.cfb-table thead tr.group ~ tr th { top: 1.75rem; }
 .cfb-table thead tr.group th.resume { color: var(--resume); border-bottom: 2px solid var(--resume); }
 .cfb-table thead tr.group th.power { color: var(--power); border-bottom: 2px solid var(--power); }
 .cfb-table td { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: middle; white-space: nowrap; }
@@ -149,7 +164,7 @@ body.quarto-dark img.logo-light { display: none !important; }
 // ---- Team header --------------------------------------------------------------
 .team-header { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .team-header img { width: 64px; height: 64px; object-fit: contain; }
-.team-header h2 { margin: 0; font-size: 1.5rem; font-weight: 700; }
+.team-header h2 { margin: 0; font-size: 1.5rem; font-weight: 700; border-bottom: 0; padding-bottom: 0; }
 .team-header .facts { display: flex; gap: 20px; flex-wrap: wrap; margin-left: auto; }
 .team-header .fact .v { font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 
@@ -176,10 +191,14 @@ body.quarto-dark img.logo-light { display: none !important; }
 .seedstrip { display: inline-flex; gap: 2px; }
 .seedstrip span { width: 17px; height: 17px; border-radius: 3px; background: var(--power); color: #fff; font-size: 0.62rem;
   font-weight: 700; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
-.bracket { display: grid; grid-template-columns: 1fr 1.4fr; gap: 16px; font-size: 0.88rem; }
-.bracket-team { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
-.bracket-game { border-left: 3px solid var(--rule-strong); padding-left: 8px; margin: 6px 0 10px; }
-@media (max-width: 700px) { .bracket { grid-template-columns: 1fr; } }
+// One row per quarterfinal: the first-round game on the left, the bye seed its winner meets on the right
+.bracket { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 8px 14px; align-items: center; font-size: 0.88rem; }
+.bracket-team { display: flex; align-items: center; gap: 6px; padding: 2px 0; min-width: 0; }
+.bracket-team img, .bracket-team .pill { flex: 0 0 auto; }
+.bracket-team img { width: 20px; height: 20px; object-fit: contain; }
+.bracket-team .name { font-weight: 600; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bracket-game { border-left: 3px solid var(--rule-strong); padding-left: 8px; }
+.bracket-bye { border-left: 3px solid var(--resume); padding-left: 8px; }
 
 // Observable inputs
 form.oi-3a86ea, .oi-3a86ea { font-family: inherit !important; }
@@ -201,8 +220,9 @@ form.oi-3a86ea, .oi-3a86ea { font-family: inherit !important; }
   .xs-only { display: inline; }
   div.xs-only { display: block; }
 
-  // The collapsed sidebar (season / week) becomes a floating button instead of a 50px gutter
-  .bslib-sidebar-layout > .main { padding: 8px !important; }
+  // The collapsed sidebar (season / week) becomes a floating button instead of a 50px gutter;
+  // the bottom padding lets the last rows scroll clear of it
+  .bslib-sidebar-layout > .main { padding: 8px 8px 64px !important; }
   .bslib-sidebar-layout > .collapse-toggle {
     position: fixed !important; inset: auto auto 16px 12px !important; z-index: 1040;
     width: auto !important; height: 36px; padding: 0 12px 0 8px; border-radius: 18px; display: flex; align-items: center; gap: 2px;
@@ -227,11 +247,20 @@ form.oi-3a86ea, .oi-3a86ea { font-family: inherit !important; }
   .tile .value img { width: 20px; height: 20px; }
   .tile .sub { font-size: 0.72rem; }
 
-  .team-header { gap: 10px; }
+  // Logo beside the name, facts below in an even grid
+  .team-header { gap: 10px; display: grid; grid-template-columns: auto minmax(0, 1fr); }
   .team-header img { width: 44px; height: 44px; }
   .team-header h2 { font-size: 1.2rem; }
-  .team-header .facts { gap: 8px 14px; }
+  .team-header .facts { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr)); gap: 8px 12px; }
   .team-header .fact .v { font-size: 1rem; }
+
+  // Tables scroll inside a box about the screen's height, so the header row stays in view along
+  // with the pinned columns
+  .table-wrap { max-height: 85vh; max-height: calc(100svh - 80px); }
+  .cfb-table thead tr.group ~ tr th { top: 0; }
+
+  // Games: both teams stack in the pinned cell
+  .matchup-xs .team-cell + .team-cell { margin-top: 4px; }
 
   .cfb-table { font-size: 0.8rem; }
   .cfb-table thead th { padding: 6px 5px; font-size: 0.6rem; white-space: normal; vertical-align: bottom; }
@@ -246,7 +275,7 @@ form.oi-3a86ea, .oi-3a86ea { font-family: inherit !important; }
   .cfb-table :is(td, th).rank { width: 2rem; min-width: 2rem; max-width: 2rem; }
   .cfb-table :is(td, th).team:not(.team ~ .team) { box-shadow: 1px 0 0 var(--rule-strong); }
   .cfb-table:has(td.rank) :is(td, th).team:not(.team ~ .team) { left: 2rem; }
-  .cfb-table td.team { min-width: 0; width: 8.4rem; max-width: 8.4rem; white-space: normal; }
+  .cfb-table td.team { min-width: 8rem; width: 8.4rem; max-width: 8.4rem; white-space: normal; }
   .cfb-table tbody tr:hover td, .cfb-table tbody tr.selected td { background: var(--tint); }
   .team-cell { gap: 6px; }
   .team-cell img { width: 20px; height: 20px; flex: 0 0 auto; }
@@ -254,6 +283,8 @@ form.oi-3a86ea, .oi-3a86ea { font-family: inherit !important; }
   .team-cell .conf { font-size: 0.66rem; line-height: 1.2; }
 
   .seedstrip span { width: 14px; height: 14px; font-size: 0.55rem; }
+  .bracket { gap: 6px 8px; font-size: 0.8rem; }
+  .bracket .pill { min-width: 1.6em; padding: 1px 3px; }
 }
 
 // Quarto wraps each cell's (hidden) source in a fill item that otherwise claims card height
