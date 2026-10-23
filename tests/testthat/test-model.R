@@ -129,6 +129,10 @@ test_that("pooling: equal weights give the plain mean and sd; recency favours re
   flat <- tibble::tibble(season = 2015:2024, variable = "x", mean = rep(c(1, 1.2), 5), sd = 1)
   expect_equal(pool_priors(flat, exclude = integer(0), pool = list(sd_rule = "predictive"))$prior_sd, stats::sd(flat$mean) / sqrt(10))
   expect_equal(pool_priors(flat, exclude = integer(0), pool = list(sd_rule = "predictive", sd_floor = 0.5))$prior_sd, 0.5)
+  # floor_vars limits the floor to the variables named
+  two <- dplyr::bind_rows(flat, dplyr::mutate(flat, variable = "y"))
+  fl <- pool_priors(two, exclude = integer(0), pool = list(sd_rule = "predictive", sd_floor = 1, floor_vars = "y"))
+  expect_equal(fl$prior_sd, c(stats::sd(flat$mean) / sqrt(10), 1))
   # leaving a season out centres the weights on it
   lo <- pool_priors(refits, drop = 2016L, exclude = integer(0), pool = list(half_life = 1, sd_rule = "mult"))
   expect_lt(lo$pooled_mean, 2)

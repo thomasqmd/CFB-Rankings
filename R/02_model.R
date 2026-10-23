@@ -17,9 +17,15 @@ model_config <- function() {
     # random-effects predictive sd for a new season. Pooled 2026-10-11 from the 2015-2025 refits
     # under this model with the scale-t margin family (the margin_comparison choice since the
     # refits use a wide tau prior); check_build.R warns when the refits drift from these values.
-    pool = list(half_life = 3, sd_rule = "predictive", sd_mult = 2, sd_floor = 0),
+    # The tier offsets' sd is floored at one season's posterior sd: a full season pins the offset
+    # only to ~2 points, so the refits can't show season-to-season change below that, and the
+    # unfloored rule (the sd of the mean, 0.49) left 2026's FBS-FCS gap stuck while FBS teams
+    # beat FCS ones by 7 points more than predicted in weeks 0-3 (2026-10-23 variants: no cost
+    # on 2015-2025, MAE -0.34 on 2026's early FBS-FCS games)
+    pool = list(half_life = 3, sd_rule = "predictive", sd_mult = 2, sd_floor = 1,
+                floor_vars = c("mu_tier[2]", "mu_tier[3]")),
     hfa_mean = 2.44, hfa_sd = 0.369,
-    tier_mean = c(-28.4, -60.5), tier_sd = c(0.486, 1.22),     # FCS, non-D1 offsets vs. FBS
+    tier_mean = c(-28.4, -60.4), tier_sd = c(2.15, 4.85),      # FCS, non-D1 offsets vs. FBS
     b_prev_mean = 0.591, b_prev_sd = 0.0386,                    # year-to-year carry-over
     sigma_team_mean = c(5.00, 4.98, 11.4), sigma_team_sd = c(1.25, 0.476, 1.71),
     sigma_conf_prior = c(2.43, 0.330),

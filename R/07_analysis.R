@@ -77,8 +77,8 @@ run_prior_refits <- function(final_inputs, cfg = model_config(), workers = 2L, s
 #' dropped, else the season after the last refit. The prior is centred on the weighted mean; its sd
 #' is sd_mult x the between-season sd (sd_rule = "mult") or the random-effects predictive sd for a
 #' new season (sd_rule = "predictive"): the between-season sd in excess of the one-season posterior
-#' sd, plus the uncertainty of the mean, floored at sd_floor x the one-season posterior sd.
-#' The defaults come from model_config()$pool.
+#' sd, plus the uncertainty of the mean, floored at sd_floor x the one-season posterior sd (for the
+#' variables in floor_vars only, when it is set). The defaults come from model_config()$pool.
 pool_priors <- function(refits, drop = integer(0), exclude = 2014L, hfa_exclude = 2020L,
                         pool = model_config()$pool, target = NULL) {
   half_life <- pool$half_life %||% Inf
@@ -96,7 +96,8 @@ pool_priors <- function(refits, drop = integer(0), exclude = 2014L, hfa_exclude 
       min = min(mean), max = max(mean), n_seasons = dplyr::n(), .groups = "drop") |>
     dplyr::mutate(
       excess_sd = sqrt(pmax(between_sd^2 - typical_post_sd^2, 0)),
-      predictive_sd = pmax(sqrt(excess_sd^2 + between_sd^2 / n_eff), (pool$sd_floor %||% 0) * typical_post_sd),
+      floor = (pool$sd_floor %||% 0) * (is.null(pool$floor_vars) | variable %in% pool$floor_vars),
+      predictive_sd = pmax(sqrt(excess_sd^2 + between_sd^2 / n_eff), floor * typical_post_sd),
       prior_sd = if (identical(pool$sd_rule, "predictive")) predictive_sd else (pool$sd_mult %||% 2) * between_sd)
 }
 
