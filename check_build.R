@@ -190,7 +190,7 @@ if (tar_exist_objects("prior_refits") && !"prior_refits" %in% errs$name) {
 # ---- 8. Outputs ------------------------------------------------------------------
 section("Outputs")
 built <- max(meta$time[meta$name == "snapshots"], na.rm = TRUE)
-for (f in c("docs/dashboard.html", "docs/reports/season_retro.html", "docs/reports/model_diagnostics.html",
+for (f in c("docs/index.html", "docs/reports/season_retro.html", "docs/reports/model_diagnostics.html",
             "paper/cfb-paper.pdf")) {
   if (!file.exists(f)) { report("FAIL", f, "missing"); next }
   info <- file.info(f)

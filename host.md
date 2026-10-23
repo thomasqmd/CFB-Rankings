@@ -7,7 +7,7 @@ Notes on viewing the rendered outputs from other devices (phone, laptop, other p
 
 | Output | Path | Self-contained? |
 |---|---|---|
-| Dashboard | `docs/dashboard.html` | Yes (`embed-resources: true`), but uses OJS |
+| Dashboard | `docs/index.html` (live: <https://thomasqmd.github.io/CFB-Rankings/>) | Yes (`embed-resources: true`), but uses OJS |
 | Season report | `docs/reports/season_retro.html` + `season_retro_files/` | No |
 | Diagnostics report | `docs/reports/model_diagnostics.html` + `model_diagnostics_files/` | No |
 | Paper | `paper/cfb-paper.pdf` | Yes |

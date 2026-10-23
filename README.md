@@ -7,7 +7,7 @@ Two college football rankings, rebuilt every week from 2014 on:
 | **Power** | How good is a team right now? | Points vs. an average FBS team on a neutral field (A − B = predicted spread) |
 | **Resume** | What has a team earned? | Wins Above Benchmark (WAB): wins beyond what the #12 FBS team would have managed with the same schedule |
 
-Output: a static Quarto + Observable JS dashboard (`docs/dashboard.html`), two reports
+Output: a static Quarto + Observable JS dashboard (`docs/index.html`, live at <https://thomasqmd.github.io/CFB-Rankings/>), two reports
 (`docs/reports/season_retro.html`, `docs/reports/model_diagnostics.html`) and a methods paper
 (`paper/cfb-paper.pdf`) whose every number is computed from the pipeline at render time.
 
@@ -110,7 +110,8 @@ output freshness. Exits non-zero on any FAIL; WARNs are worth a look but don't b
   available later as a Wayback Machine capture or an article's top 25. One-off backfill:
   `cbs_backfill_wayback(from = 2022)` and `cbs_fetch_articles(urls)` (`R/01_ingest_cbs.R`).
 
-**Viewing the dashboard.** `docs/dashboard.html` is a single self-contained file, but Observable
+**Viewing the dashboard.** `docs/index.html` is a single self-contained file, but Observable
 JS will not run from `file://`. Serve it: `python3 -m http.server -d docs 8000` then open
-<http://localhost:8000/dashboard.html> (or publish `docs/` with GitHub Pages / Quarto Pub).
+<http://localhost:8000/>. GitHub Pages serves `docs/` from `main`, so pushing a rebuilt
+`docs/index.html` updates <https://thomasqmd.github.io/CFB-Rankings/>.
 The reports in `docs/reports/` open directly.

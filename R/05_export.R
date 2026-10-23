@@ -138,7 +138,10 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
     ),
     config = list(benchmark_rank = cfg$benchmark_rank, margin_family = cfg$margin_family,
                   generated = format(Sys.time(), "%Y-%m-%d %H:%M %Z"),
-                  sp_asof = if (is.null(sp) || nrow(sp) == 0) NULL else
-                    format(max(sp$fetched[sp$season == max(sp$season)]), "%b %-d"))
+                  # "%-d" (no leading zero) isn't portable, so build "Oct 6" by hand
+                  sp_asof = if (is.null(sp) || nrow(sp) == 0) NULL else {
+                    at <- max(sp$fetched[sp$season == max(sp$season)])
+                    paste(format(at, "%b"), as.integer(format(at, "%d")))
+                  })
   )
 }

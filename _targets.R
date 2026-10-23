@@ -196,10 +196,9 @@ list(
   tar_target(sp_ratings, { sync; read_sp(DB_PATH) }),
   tar_target(dashboard_data, build_dashboard_data(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = sp_ratings)),
 
-  # The stylesheets and navbar logo are tracked too, so editing only them re-renders the dashboard
+  # The stylesheet, logos and headline overrides are tracked too, so editing only them re-renders the dashboard
   tar_quarto(dashboard, path = "docs/dashboard.qmd", quiet = TRUE,
-             extra_files = c("docs/styles/dashboard.scss", "docs/styles/dashboard-light.scss", "docs/styles/dashboard-dark.scss",
-                             "logos/TRlogo-light.svg")),
+             extra_files = c("docs/styles/cfb.css", "docs/headlines.yml", "logos/TRlogo.svg", "logos/TRlogo-dark.svg")),
   tar_quarto(report_season, path = "docs/reports/season_retro.qmd", quiet = TRUE),
   tar_quarto(report_diagnostics, path = "docs/reports/model_diagnostics.qmd", quiet = TRUE),
   tar_quarto(paper, path = "paper/cfb-paper.qmd", quiet = TRUE)

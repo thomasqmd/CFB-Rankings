@@ -1,0 +1,8 @@
+# Hand-written headlines. Each tab's headline is generated from the data; an entry here replaces
+# it for one season and week. Tabs: rankings, matchup, games, trends, rvp, polls, conference,
+# postseason (conference and postseason use the simulation's week). Example:
+#
+# - season: 2026
+#   week: 7
+#   tab: rankings
+#   text: "BYU climbs to No. 1 on resume as Georgia slides to 11th."
