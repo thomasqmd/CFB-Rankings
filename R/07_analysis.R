@@ -457,7 +457,7 @@ run_external_ratings <- function(seasons, teams_meta, raw_dir = "data/raw") {
   }))
   out |>
     dplyr::filter(!is.na(rating), team != "nationalAverages") |>
-    dplyr::mutate(team_id = teams_meta$team_id[match(team, teams_meta$school)])
+    dplyr::mutate(team_id = school_team_id(team, teams_meta))
 }
 
 # ---- Final-week refits ----------------------------------------------------------------
@@ -831,6 +831,85 @@ data_fingerprint <- function(season_data) {
                    with_line = sum(!is.na(d$games$spread)), poll_rows = nrow(d$polls %||% data.frame()),
                    hash = digest::digest(d, algo = "xxhash64"))
   })) |> dplyr::mutate(built = Sys.time())
+}
+
+#' Counts and coverage shares of one season's games through week_seq `cut`, and of its
+#' preseason inputs. kind: "count" (flagged if far from the reference range either way),
+#' "share" (flagged if well below it) or "defect" (any above 0 fails).
+season_data_metrics <- function(d, cut, teams_meta = NULL) {
+  g <- d$games |> dplyr::filter(week_seq <= cut)
+  done <- g$completed & !is.na(g$home_points) & !is.na(g$away_points)
+  fbs_side <- g$home_class %in% "fbs" | g$away_class %in% "fbs"
+  both_fbs <- g$home_class %in% "fbs" & g$away_class %in% "fbs"
+  no_class <- is.na(g$home_class) | is.na(g$away_class)
+  fbs_ids <- unique(c(g$home_id[g$home_class %in% "fbs"], g$away_id[g$away_class %in% "fbs"]))
+  share <- function(x) if (length(x)) mean(x) else NA_real_
+  pre <- d$preseason
+  pre_cov <- function(col, key) {
+    if (d$season < PRESEASON_FIRST_SEASON[[key]] || !length(fbs_ids)) return(NA_real_)
+    have <- if (is.null(pre) || !nrow(pre)) integer(0) else pre$team_id[!is.na(pre[[col]])]
+    mean(fbs_ids %in% have)
+  }
+  pair <- paste(substr(g$start_date, 1, 10), pmin(g$home_id, g$away_id), pmax(g$home_id, g$away_id))
+  # Presence only: the table holds today's classification, so a team that has since left FBS
+  # (Idaho, 2018) is not stale
+  stale <- if (is.null(teams_meta) || !nrow(teams_meta)) NA_real_ else sum(!fbs_ids %in% teams_meta$team_id)
+  tibble::tribble(
+    ~metric,                                   ~kind,    ~value,
+    "FBS games",                               "count",  sum(done & fbs_side),
+    "Games without an FBS team",               "count",  sum(done & !fbs_side),
+    "Games with a team of unknown division",   "count",  sum(done & no_class),
+    "FBS teams",                               "count",  length(fbs_ids),
+    "Efficiency coverage (FBS games)",         "share",  share(!is.na(g$home_ppa[done & fbs_side]) & !is.na(g$away_ppa[done & fbs_side])),
+    "Line coverage (FBS vs FBS)",              "share",  share(!is.na(g$spread[done & both_fbs])),
+    "Returning production coverage (FBS)",     "share",  pre_cov("ret_ppa", "ret"),
+    "Talent coverage (FBS)",                   "share",  pre_cov("talent", "tal"),
+    "Duplicate games",                         "defect", sum(duplicated(g$game_id)) + sum(duplicated(pair)),
+    "Finished games without a score",          "defect", sum(g$completed & !done),
+    "FBS teams missing from the teams table",  "defect", stale
+  ) |> dplyr::mutate(season = d$season, .before = 1)
+}
+
+#' Data integrity: each season's data against the seasons before it, every season cut at the
+#' live season's latest concluded week so a partial season compares like for like. A defect
+#' (duplicate games, a finished game without a score, an FBS team the teams table lacks) FAILs;
+#' a count more than `tol` outside the range of the previous `n_ref` seasons (2020 left out), or
+#' a coverage share more than 5 points below it, WARNs. The live season's problems are raised
+#' as warnings so tar_make() shows them; check_build.R prints the live season's table.
+data_integrity <- function(season_data, teams_meta = NULL, n_ref = 5L, tol = 0.10) {
+  seasons <- vapply(season_data, `[[`, integer(1), "season")
+  live <- max(seasons)
+  cut <- max(c(0L, concluded_weeks(season_data[[which(seasons == live)]]$games)))
+  m <- dplyr::bind_rows(lapply(season_data, season_data_metrics, cut = cut, teams_meta = teams_meta))
+  ref <- dplyr::bind_rows(lapply(seasons, function(s) {
+    prev <- utils::tail(setdiff(seasons[seasons < s], 2020L), n_ref)
+    if (!length(prev)) return(NULL)
+    m |> dplyr::filter(season %in% prev, !is.na(value)) |>
+      dplyr::group_by(metric) |>
+      dplyr::summarise(ref_lo = min(value), ref_hi = max(value), n_ref = dplyr::n(), .groups = "drop") |>
+      dplyr::mutate(season = s)
+  }))
+  out <- m |>
+    dplyr::left_join(ref, by = c("season", "metric")) |>
+    dplyr::mutate(
+      week = cut,
+      level = dplyr::case_when(
+        is.na(value) ~ "INFO",
+        kind == "defect" ~ ifelse(value > 0, "FAIL", "PASS"),
+        # the counts of a preseason cut (no games yet) say nothing
+        kind == "count" & cut == 0L ~ "INFO",
+        is.na(n_ref) | n_ref < 3 ~ "INFO",
+        kind == "count" & (value > ref_hi * (1 + tol) | value < ref_lo * (1 - tol)) ~ "WARN",
+        kind == "share" & value < ref_lo - 0.05 ~ "WARN",
+        TRUE ~ "PASS")
+    ) |>
+    dplyr::select(season, week, metric, kind, value, ref_lo, ref_hi, level)
+  bad <- out |> dplyr::filter(season == live, level %in% c("WARN", "FAIL"))
+  for (i in seq_len(nrow(bad))) with(bad[i, ], warning(sprintf(
+    "[data] %d through week %d: %s = %s (%s)", season, week, metric, signif(value, 3),
+    if (kind == "defect") "should be 0" else sprintf("previous seasons %s-%s", signif(ref_lo, 3), signif(ref_hi, 3))),
+    call. = FALSE))
+  out
 }
 
 #' Score game predictions (pred_margin, pred_home_wp, and optionally pred_q -- predictive

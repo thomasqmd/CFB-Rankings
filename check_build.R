@@ -67,6 +67,14 @@ n_cbs <- sum(!is.na(rt$cbs_rank))
 report(if (n_cbs >= 130) "PASS" else if (n_cbs > 0) "WARN" else "FAIL", "CBS Sports 138 for latest week",
        sprintf("%d teams ranked%s", n_cbs, if (n_cbs > 0 && n_cbs < 130) " (top 25 only: no full-page capture)" else ""))
 
+dc <- tar_read(data_checks) |> filter(season == cur)
+section(sprintf("Data integrity (%d through week %d, against the previous seasons)", cur, dc$week[1]))
+for (i in seq_len(nrow(dc))) with(dc[i, ], {
+  fmt <- function(x) if (kind == "share") sprintf("%.1f%%", 100 * x) else format(round(x))
+  report(level, metric, if (is.na(value)) "n/a" else if (kind == "defect" || is.na(ref_lo)) fmt(value) else
+    sprintf("%s (previous %s-%s)", fmt(value), fmt(ref_lo), fmt(ref_hi)))
+})
+
 # ---- 4. Ratings sanity -----------------------------------------------------------
 section("Ratings sanity (latest snapshot)")
 r <- snaps$ratings |> filter(season == cur, week == latest$week)

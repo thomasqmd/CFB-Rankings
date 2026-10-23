@@ -59,6 +59,10 @@ model_config <- function() {
   )
 }
 
+# First season the provider has each preseason input (returning production, talent composite);
+# earlier seasons fit the term as 0
+PRESEASON_FIRST_SEASON <- c(ret = 2014L, tal = 2015L)
+
 tier_of <- function(class) {
   dplyr::case_when(class == "fbs" ~ 1L, class == "fcs" ~ 2L, TRUE ~ 3L)
 }
@@ -134,14 +138,31 @@ prev_deviation <- function(teams, prior, value = "rating", sd = paste0(value, "_
 
 #' Preseason covariates for FBS teams (0 for other tiers and for teams without the data):
 #' returning production share centred within FBS, talent composite standardised within FBS,
-#' and a new-head-coach indicator
+#' and a new-head-coach indicator. A term that is switched on must have data: a season with
+#' none (or for fewer than `min_share` of FBS teams) stops, and FBS teams that fall back to 0
+#' are named in a warning. Seasons before the provider's first (PRESEASON_FIRST_SEASON) are 0.
 #' @param preseason tibble(team_id, ret_ppa, talent, coach_change) from read_season(), or NULL
-preseason_covariates <- function(teams, preseason) {
+#' @param season the season being fitted (checks coverage against PRESEASON_FIRST_SEASON)
+preseason_covariates <- function(teams, preseason, season, cfg = model_config(), min_share = 0.5) {
   n <- nrow(teams)
-  none <- list(ret = rep(0, n), tal = rep(0, n), coach_new = rep(0, n))
-  if (is.null(preseason) || nrow(preseason) == 0) return(none)
-  x <- teams |> dplyr::left_join(preseason, by = "team_id")
   fbs <- teams$tier == 1L
+  if (is.null(preseason)) preseason <- tibble::tibble(team_id = integer(0), ret_ppa = numeric(0),
+                                                      talent = numeric(0), coach_change = integer(0))
+  x <- teams |> dplyr::left_join(preseason, by = "team_id")
+  check <- function(v, key, label, on) {
+    if (!isTRUE(on) || season < PRESEASON_FIRST_SEASON[[key]] || !any(fbs)) return(invisible())
+    miss <- fbs & is.na(v)
+    if (sum(!miss[fbs]) < min_share * sum(fbs)) {
+      stop(sprintf("[preseason] %d: %s for %d of %d FBS teams. Sync it (sync_preseason()) or switch off cfg$use_%s.",
+                   season, label, sum(!miss[fbs]), sum(fbs), key), call. = FALSE)
+    }
+    if (any(miss)) {
+      warning(sprintf("[preseason] %d: no %s for %s; fitted as 0 (the FBS mean)",
+                      season, label, paste(teams$team[miss], collapse = ", ")), call. = FALSE)
+    }
+  }
+  check(x$ret_ppa, "ret", "returning production", cfg$use_ret)
+  check(x$talent, "tal", "talent composite", cfg$use_tal)
   centre <- function(v, scale = FALSE) {
     v[!fbs] <- NA
     ok <- !is.na(v)
@@ -211,7 +232,7 @@ prepare_week_input <- function(season_data, week, prior = NULL, cfg = model_conf
   prev <- prev_deviation(teams, carry)
   prev_t <- prev_deviation(teams, carry, "total_t")
   prev2 <- prev_deviation(teams, if (isFALSE(cfg$carry_over)) NULL else prior2)
-  cov <- preseason_covariates(teams, season_data$preseason)
+  cov <- preseason_covariates(teams, season_data$preseason, season_data$season, cfg)
   ws <- walk_states(played, nrow(teams), week)
   use_eff <- !isFALSE(cfg$use_eff)
   fam <- margin_family_code(cfg$margin_family %||% "t")

@@ -59,9 +59,10 @@ test_that("model inputs don't depend on later results (cache stability)", {
     home_points = c(20L, NA), away_points = c(10L, NA), reg_margin = c(10, NA), ot = FALSE,
     home_ppa = 0.2, home_plays = 60L, away_ppa = 0.1, away_plays = 60L, spread = -3
   )
-  a <- prepare_week_input(list(season = 2025L, games = games), 1L)
+  pre <- tibble::tibble(team_id = 1:2, ret_ppa = c(0.7, 0.5), talent = c(800, 600), coach_change = 0L)
+  a <- prepare_week_input(list(season = 2025L, games = games, preseason = pre), 1L)
   games$completed[2] <- TRUE; games$home_points[2] <- 7L; games$away_points[2] <- 3L; games$reg_margin[2] <- 4
-  b <- prepare_week_input(list(season = 2025L, games = games), 1L)
+  b <- prepare_week_input(list(season = 2025L, games = games, preseason = pre), 1L)
   expect_identical(a, b)
   expect_equal(a$stan_data$N_games, 1L)
   expect_equal(a$stan_data$margin, 10)

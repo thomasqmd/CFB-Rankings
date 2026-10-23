@@ -92,15 +92,26 @@ test_that("total tendency carries over like the rating", {
 })
 
 test_that("preseason covariates are centred within FBS and 0 elsewhere", {
-  teams <- tibble::tibble(team_id = 1:5, tier = c(1L, 1L, 1L, 1L, 2L))
+  teams <- tibble::tibble(team_id = 1:5, team = LETTERS[1:5], tier = c(1L, 1L, 1L, 1L, 2L))
   pre <- tibble::tibble(team_id = c(1L, 2L, 3L, 5L), ret_ppa = c(0.8, 0.6, 0.4, 0.9),
                         talent = c(900, 700, 500, 300), coach_change = c(1L, 0L, NA, 1L))
-  cv <- preseason_covariates(teams, pre)
+  expect_warning(cv <- preseason_covariates(teams, pre, 2025L), "no returning production for D")
   expect_equal(cv$ret, c(0.2, 0, -0.2, 0, 0))            # team 4 has no data, team 5 is FCS
   expect_equal(cv$tal[1:3], c(1, 0, -1))                  # standardised within FBS
   expect_equal(cv$tal[4:5], c(0, 0))
   expect_equal(cv$coach_new, c(1, 0, 0, 0, 0))
-  expect_equal(preseason_covariates(teams, NULL)$ret, rep(0, 5))
+})
+
+test_that("a preseason term that is switched on but has no data stops the fit", {
+  teams <- tibble::tibble(team_id = 1:3, team = LETTERS[1:3], tier = c(1L, 1L, 2L))
+  full <- tibble::tibble(team_id = 1:2, ret_ppa = c(0.7, 0.5), talent = c(800, 600), coach_change = 0L)
+  expect_error(preseason_covariates(teams, NULL, 2026L), "returning production for 0 of 2 FBS teams")
+  expect_error(preseason_covariates(teams, dplyr::mutate(full, talent = NA_real_), 2026L), "use_tal")
+  # Off, or before the provider's first season: 0 by design, no error
+  off <- model_config(); off$use_ret <- FALSE; off$use_tal <- FALSE
+  expect_equal(preseason_covariates(teams, NULL, 2026L, off)$ret, rep(0, 3))
+  expect_silent(cv <- preseason_covariates(teams, dplyr::mutate(full, talent = NA_real_), 2014L))
+  expect_equal(cv$tal, rep(0, 3))
 })
 
 test_that("pooling: equal weights give the plain mean and sd; recency favours recent seasons", {

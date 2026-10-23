@@ -104,12 +104,29 @@ parse_games <- function(raw) {
   dplyr::bind_rows(rows)
 }
 
+#' Week 0 games: CFBD files the games before the first full weekend under week 1 (in 2026 a whole
+#' weekend, Aug 27-30, of mostly FCS games). They are the week-1 games kicked off (US Eastern)
+#' before the Tuesday of week 1's busiest Saturday.
+week0_games <- function(games) {
+  w1 <- games$season_type == "regular" & games$week == 1L
+  if (!"start_date" %in% names(games) || !any(w1)) return(rep(FALSE, nrow(games)))
+  day <- as.Date(as.POSIXct(games$start_date, format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC"), tz = "America/New_York")
+  sat <- day[w1 & !is.na(day) & format(day, "%u") == "6"]
+  if (!length(sat)) return(rep(FALSE, nrow(games)))
+  main <- as.Date(names(which.max(table(sat))))
+  w1 & !is.na(day) & day < main - 4
+}
+
 #' Consecutive week index: postseason games (which CFBD numbers from week 1 again) all
 #' share week_seq = last regular-season week + 1. Spring games (the 2020 FCS season, played
 #' Feb-May 2021) follow the fall postseason in date order: spring week w is week_seq
 #' last_reg + 1 + w, and the spring postseason comes after the last spring week.
+#' A season with week 0 games (week0_games()) gives them week_seq 1 and moves every later week
+#' up one, so week 0's results inform the week-1 predictions; CFBD's week stays in `week`.
 add_week_seq <- function(games) {
-  last_reg <- max(games$week[games$season_type == "regular"], na.rm = TRUE)
+  wk0 <- week0_games(games)
+  shift <- as.integer(any(wk0))
+  last_reg <- max(games$week[games$season_type == "regular"], na.rm = TRUE) + shift
   spring <- games$season_type == "spring_regular"
   last_spring <- if (any(spring)) max(games$week[spring], na.rm = TRUE) else 0L
   games |>
@@ -118,15 +135,28 @@ add_week_seq <- function(games) {
         season_type == "postseason" ~ last_reg + 1L,
         season_type == "spring_regular" ~ last_reg + 1L + week,
         season_type == "spring_postseason" ~ last_reg + 2L + last_spring,
-        TRUE ~ week
+        wk0 ~ 1L,
+        TRUE ~ week + shift
       ),
       week_label = dplyr::case_when(
         season_type == "postseason" ~ "Postseason",
         season_type == "spring_regular" ~ paste("Spring week", week),
         season_type == "spring_postseason" ~ "Spring postseason",
+        wk0 ~ "Week 0",
         TRUE ~ paste("Week", week)
       )
     )
+}
+
+#' AP-style polls on the week_seq scale: poll_for_week() pairs snapshot w with regular poll w + 1,
+#' and CFBD numbers polls by its own weeks (poll 1 = preseason). With a week 0 every poll moves up
+#' one, and the preseason poll also stands for the preseason snapshot (no poll follows week 0).
+polls_on_week_seq <- function(polls, games) {
+  if (is.null(polls) || nrow(polls) == 0 || !any(games$week_label == "Week 0")) return(polls)
+  reg <- polls$season_type == "regular"
+  pre <- polls[reg & polls$week == 1L, ]
+  polls$week[reg] <- polls$week[reg] + 1L
+  dplyr::bind_rows(pre, polls)
 }
 
 parse_game_stats <- function(raw) {
@@ -317,6 +347,14 @@ sync_season <- function(con, season, refresh = FALSE, raw_dir = "data/raw", min_
   invisible(list(season = season, games = nrow(games), completed = n_done))
 }
 
+#' team_id for each school name. CFBD's teams list repeats some names (an FBS Charlotte and an
+#' unclassified one), so a name goes to its highest classification: FBS, FCS, II, III, then none.
+school_team_id <- function(school, teams) {
+  rank <- match(teams$classification, c("fbs", "fcs", "ii", "iii"), nomatch = 5L)
+  t <- teams[order(rank), ]
+  t$team_id[match(school, t$school)]
+}
+
 sync_teams <- function(con, refresh = FALSE, raw_dir = "data/raw") {
   season <- current_cfb_season()
   teams <- parse_teams(cfbd_cached("teams", season, "teams", list(), raw_dir = raw_dir,
@@ -325,25 +363,42 @@ sync_teams <- function(con, refresh = FALSE, raw_dir = "data/raw") {
   invisible(nrow(teams))
 }
 
-#' Preseason inputs (returning production, talent, coach change) for seasons not yet stored.
-#' A season whose returning-production response is empty is skipped, so a later sync retries it.
+#' Preseason inputs (returning production, talent, coach change) for seasons not yet stored, or
+#' stored without returning production or (from its first season) talent. A season whose
+#' response is empty is skipped with a warning and its cached empty response dropped, so a later
+#' sync asks again.
 sync_preseason <- function(con, seasons, raw_dir = "data/raw") {
   if (!DBI::dbExistsTable(con, "teams")) return(invisible(0L))
-  have <- if (DBI::dbExistsTable(con, "preseason")) DBI::dbGetQuery(con, "SELECT DISTINCT season FROM preseason")$season else integer(0)
+  have <- if (DBI::dbExistsTable(con, "preseason")) {
+    DBI::dbGetQuery(con, sprintf(
+      "SELECT season FROM preseason GROUP BY season HAVING COUNT(ret_ppa) > 0 AND (season < %d OR COUNT(talent) > 0)",
+      PRESEASON_FIRST_SEASON[["tal"]]))$season
+  } else integer(0)
   teams <- DBI::dbReadTable(con, "teams")
   fetch <- function(name, path, s) cfbd_cached(name, s, path, list(year = s), raw_dir = raw_dir, refresh = FALSE)$data
+  # An empty cached response may predate publication: ask the API once more before giving up
+  fetch_nonempty <- function(name, path, s) {
+    file <- file.path(raw_dir, sprintf("%s_%d.json", name, s))
+    d <- fetch(name, path, s)
+    if (length(d) == 0) { unlink(file); d <- fetch(name, path, s) }
+    if (length(d) == 0) unlink(file)
+    d
+  }
   build <- function(s) {
-    ret <- parse_returning(fetch("returning", "player/returning", s))
+    ret <- parse_returning(fetch_nonempty("returning", "player/returning", s))
     if (nrow(ret) == 0) {
-      # not published yet: drop the cached empty response so the next sync asks again
-      unlink(file.path(raw_dir, sprintf("returning_%d.json", s)))
+      warning("[preseason] ", s, " skipped: no returning production yet", call. = FALSE)
       return(NULL)
     }
-    talent <- parse_talent(fetch("talent", "talent", s))
+    talent <- parse_talent(if (s >= PRESEASON_FIRST_SEASON[["tal"]]) fetch_nonempty("talent", "talent", s) else list())
+    if (nrow(talent) == 0 && s >= PRESEASON_FIRST_SEASON[["tal"]]) {
+      warning("[preseason] ", s, " skipped: no talent composite yet", call. = FALSE)
+      return(NULL)
+    }
     coaches <- parse_coaches(fetch("coaches", "coaches", s))
     prev <- parse_coaches(fetch("coaches", "coaches", s - 1L))
-    ret$team_id <- teams$team_id[match(ret$team, teams$school)]
-    talent$team_id <- teams$team_id[match(talent$team, teams$school)]
+    ret$team_id <- school_team_id(ret$team, teams)
+    talent$team_id <- school_team_id(talent$team, teams)
     dplyr::full_join(dplyr::select(ret, team_id, ret_ppa, ret_usage), dplyr::select(talent, team_id, talent), by = "team_id") |>
       dplyr::full_join(coach_changes(coaches, prev), by = "team_id") |>
       dplyr::filter(team_id %in% teams$team_id) |>
@@ -378,7 +433,7 @@ sync_sp <- function(con, seasons, live, raw_dir = "data/raw", min_refresh_hours 
     sp <- parse_sp(raw)
     if (nrow(sp) == 0) next
     sp <- sp |>
-      dplyr::mutate(team_id = teams$team_id[match(team, teams$school)]) |>
+      dplyr::mutate(team_id = school_team_id(team, teams)) |>
       dplyr::filter(!is.na(team_id)) |>
       dplyr::transmute(season = as.integer(s), fetched = file.mtime(file.path(raw_dir, sprintf("ratings_sp_%d.json", s))),
                        team_id, sp, sp_rank, sp_off, sp_def) |>
@@ -448,7 +503,9 @@ sync_all <- function(seasons, db_path = "data/cfb.duckdb", full_refresh = FALSE,
     fp <- merge(fp, cbs, all.x = TRUE)
   }
   if (DBI::dbExistsTable(con, "preseason")) {
-    pre <- DBI::dbGetQuery(con, "SELECT season, COUNT(*) AS preseason FROM preseason GROUP BY season")
+    # Counts of non-missing values too, so filling a season's talent re-reads that season
+    pre <- DBI::dbGetQuery(con, paste("SELECT season, COUNT(*) AS preseason, COUNT(ret_ppa) AS preseason_ret,",
+                                      "COUNT(talent) AS preseason_tal FROM preseason GROUP BY season"))
     fp <- merge(fp, pre, all.x = TRUE)
   }
   if (DBI::dbExistsTable(con, "sp_ratings")) {
@@ -491,7 +548,8 @@ read_season <- function(season, db_path = "data/cfb.duckdb") {
       tibble::tibble(game_id = character(0), spread = numeric(0), over_under = numeric(0)), by = "game_id") |>
     dplyr::arrange(week_seq, start_date, game_id)
 
-  polls <- dplyr::bind_rows(polls, cbs_as_polls(cbs, games))
+  # CBS rankings are aligned to week_seq already (cbs_as_polls() dates them against the games)
+  polls <- dplyr::bind_rows(polls_on_week_seq(polls, games), cbs_as_polls(cbs, games))
   list(season = as.integer(season), games = games, polls = polls, preseason = preseason)
 }
 

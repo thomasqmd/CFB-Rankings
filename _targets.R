@@ -192,6 +192,8 @@ list(
   tar_target(schedule_graph, schedule_components(games_all, snapshots$params)),
   tar_target(resume_check, resume_validation(ratings, games_all, last_full)),
   tar_target(data_hashes, data_fingerprint(season_data)),
+  # Each season's counts and coverage against the seasons before it (check_build.R prints it)
+  tar_target(data_checks, data_integrity(season_data, teams_meta)),
   # SP+ (CFBD): each season's latest ratings, shown on the dashboard only
   tar_target(sp_ratings, { sync; read_sp(DB_PATH) }),
   tar_target(dashboard_data, build_dashboard_data(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = sp_ratings)),
