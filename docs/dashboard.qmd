@@ -383,9 +383,12 @@ htl.html`<div>${postOdds}</div>`
   <span class="ft-l">
     <img class="logo-mark light" src="logos/TRlogo.svg" width="28" height="28" alt="">
     <img class="logo-mark dark" src="logos/TRlogo-dark.svg" width="28" height="28" alt="">
-    CFB Rankings · Thomas Reinke
+    <span>CFB Rankings · <a href="https://thomasqmd-website.share.connect.posit.cloud/">Thomas Reinke</a></span>
   </span>
-  <a href="https://github.com/thomasqmd/CFB-Rankings">Source on GitHub</a>
+  <span class="ft-r">
+    <a href="https://thomasqmd-website.share.connect.posit.cloud/">Personal website</a>
+    <a href="https://github.com/thomasqmd/CFB-Rankings">Source on GitHub</a>
+  </span>
 </footer>
 ```
 :::

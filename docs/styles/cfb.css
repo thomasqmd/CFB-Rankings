@@ -330,6 +330,7 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
 /* ---- footer ------------------------------------------------------------------------ */
 .ft { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0 40px; border-top: 3px double var(--navy); font-size: 14px; color: var(--ink-2); }
 .ft-l { display: flex; align-items: center; gap: 12px; }
+.ft-r { display: flex; flex-wrap: wrap; gap: 8px 24px; }
 .ft a { font-weight: 600; }
 
 /* ---- smaller screens ----------------------------------------------------------------- */
