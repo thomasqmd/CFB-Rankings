@@ -299,6 +299,20 @@ TODO:
       approximation.
 - [ ] **CBS Sports 138 history.** Only 2026 is covered. Look for another archive of past
       weekly rankings (articles for 2022–2025), or keep it as a current-season-only column.
+- [x] **Game dates are wrong for night games** (noted 2026-10-23; fixed 2026-10-24: the export
+      uses `kickoff_central()`, the dashboard shows the kickoff in CT or "TBA", and CFBD's
+      `startTimeTBD` is kept in a `game_times` table. `cbs_as_polls()`, `week0_games()` and the
+      duplicate check still use UTC/Eastern dates: changing them would re-run every season's
+      data target, and a one-day shift on night games can't move week 0's Tuesday cutoff and
+      only rarely moves the CBS ranking's week). Army beat Tulsa on Fri Oct 23,
+      but the dashboard listed the game as Oct 24. CFBD `start_date` is UTC
+      (`2026-10-24T00:30:00.000Z` = 7:30pm CT Oct 23), and `R/05_export.R:96` takes
+      `substr(start_date, 1, 10)`, the UTC date. 383 of 1,608 2026 games have a different date
+      in Central time than in UTC, so they show a day late. Same pattern at
+      `R/01_ingest_cbs.R:178` and `R/07_analysis.R:854`. Fix: convert to America/Chicago before
+      taking the date, and export the kickoff time (Central) so the dashboard can show it.
+      (`week0_games()` uses America/New_York; check whether to switch it too.) Handle TBA/placeholder times (CFBD uses midnight-ish values when no time is set) so
+      they don't shift a day.
 - [ ] **Host the dashboard publicly.** Investigate options: add to personal website, self-host,
       Quarto Pub / Posit Connect, GitHub Pages, etc. (Observable JS needs HTTP, not `file://`.)
 - [x] **Weekly random-walk ratings** (2026-10-06). r and t both walk: a state per (team, week

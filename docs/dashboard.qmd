@@ -464,6 +464,8 @@ ord = n => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v -
 toRoman = n => [[10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]].reduce((acc, [v, r]) => { while (n >= v) { acc += r; n -= v } return acc }, "")
 listAnd = xs => xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`
 dayFmt = iso => new Date(iso + "T12:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+// Kickoff, exported as "19:30" US Central (null when not yet announced)
+timeFmt = t => { if (!t) return "TBA"; const [h, m] = t.split(":").map(Number); return `${(h + 11) % 12 + 1}${m ? ":" + String(m).padStart(2, "0") : ""} ${h < 12 ? "a.m." : "p.m."} CT` }
 genAt = new Date(cfg.generated.slice(0, 16).replace(" ", "T"))
 dateLong = genAt.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
 updatedAt = `${genAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).replace("AM", "a.m.").replace("PM", "p.m.")} ${cfg.generated.slice(17)}`
@@ -727,7 +729,7 @@ teamBody = {
     return htl.html`<tr>
       <td class="muted" style="width:36px">${g.label === "Postseason" ? "Post" : g.wk}</td>
       <td>${teamCell(o, `${g.venue === "A" ? "Away" : g.venue === "N" ? "Neutral" : "Home"}${o.prk ? ` · Power #${o.prk}` : " · FCS"}`, 28)}</td>
-      <td>${played ? htl.html`<strong class=${win ? "up" : "down"}>${win ? "W" : "L"} ${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</strong>` : htl.html`<span class="muted">${dayFmt(g.date)}</span>`}</td>
+      <td>${played ? htl.html`<strong class=${win ? "up" : "down"}>${win ? "W" : "L"} ${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</strong>` : htl.html`<span class="muted">${dayFmt(g.date)} · ${timeFmt(g.time)}</span>`}</td>
       <td class="n">${mm == null ? "–" : fmtSigned(mm)}</td>
       <td class="n muted hide-sm">${g.line == null ? "–" : fmtSigned(g.line)}</td>
       <td class="hide-xs">${wp == null ? "–" : pbar(wp, played ? "var(--field)" : "var(--pow)", 80)}</td>
@@ -916,7 +918,7 @@ gamesBody = {
   const upCard = g => {
     const p = g.fut_pts ?? g.pre_pts, o = g.fut_opp_pts ?? g.pre_opp_pts, e = g.line == null || gm(g) == null ? null : gm(g) - g.line
     return htl.html`<article class="gcard up-next">
-      <div class="top"><span class="tag">${dayFmt(g.date)}</span><span class="note">${g.venue === "N" ? "Neutral site" : `at ${shortName(g.id, g.team)}`} · proj. score</span></div>
+      <div class="top"><span class="tag">${dayFmt(g.date)} · ${timeFmt(g.time)}</span><span class="note">${g.venue === "N" ? "Neutral site" : `at ${shortName(g.id, g.team)}`} · proj. score</span></div>
       ${nameRow(g.opp_id, g.opp, htl.html`<span class="proj">${o == null ? "" : Math.round(o)}</span>`)}
       ${nameRow(g.id, g.team, htl.html`<span class="proj">${p == null ? "" : Math.round(p)}</span>`)}
       ${gwp(g) == null ? "" : htl.html`<div class="wpbar"><span><span style=${{ width: `${(1 - gwp(g)) * 100}%`, background: "var(--pow)" }}></span></span>${shortName(g.opp_id, g.opp)} ${fmtPct(1 - gwp(g))}</div>`}
@@ -934,7 +936,7 @@ gamesBody = {
       <div class="gline"><span><span class="note">Model</span> ${favLine(g, mm)}</span><span><span class="note">Vegas</span> ${favLine(g, g.line)}</span>
         ${closer ? htl.html`<span style=${{ fontWeight: 700, color: closer === "Model" ? "var(--up)" : "var(--ink-3)" }}>${closer === "Model" ? "✓ Model closer" : closer === "Vegas" ? "Vegas closer" : "Tie"}</span>` : ""}</div></article>`
   }
-  const up = gamesUp.filter(keep).sort((a, b) => a.date.localeCompare(b.date) || rankKey(a) - rankKey(b))
+  const up = gamesUp.filter(keep).sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "99").localeCompare(b.time ?? "99") || rankKey(a) - rankKey(b))
   const fin = gamesFinal.filter(keep).sort((a, b) => rankKey(a) - rankKey(b))
   const empty = t => htl.html`<p class="note">${t}</p>`
   return htl.html`<div style="display:flex;flex-direction:column;gap:36px">

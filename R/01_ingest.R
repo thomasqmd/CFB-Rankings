@@ -104,6 +104,27 @@ parse_games <- function(raw) {
   dplyr::bind_rows(rows)
 }
 
+#' Whether each game's kickoff time is still to be announced. Kept in its own table (game_times)
+#' so the games table, and every fit built from it, is unchanged.
+parse_game_times <- function(raw) {
+  tibble::tibble(game_id = vapply(raw, \(g) as.character(g$id), ""),
+                 season = vapply(raw, \(g) as.integer(g$season), 1L),
+                 start_time_tbd = vapply(raw, \(g) isTRUE(g$startTimeTBD), TRUE))
+}
+
+#' Local date ("2026-10-23") and time ("19:30") of each kickoff in US Central. CFBD stores start
+#' times in UTC, so a night game's UTC date is the next day. A game with no time set (`tbd`) is
+#' stored at midnight Eastern, 11pm Central the day before: it keeps its Eastern date, and no time.
+kickoff_central <- function(start_date, tbd = FALSE) {
+  utc <- as.POSIXct(start_date, format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
+  tbd <- rep_len(tbd %in% TRUE, length(utc))
+  date <- format(utc, "%Y-%m-%d", tz = "America/Chicago")
+  date[tbd] <- format(utc[tbd], "%Y-%m-%d", tz = "America/New_York")
+  time <- format(utc, "%H:%M", tz = "America/Chicago")
+  time[tbd] <- NA_character_
+  tibble::tibble(date = date, time = time)
+}
+
 #' Week 0 games: CFBD files the games before the first full weekend under week 1 (in 2026 a whole
 #' weekend, Aug 27-30, of mostly FCS games). They are the week-1 games kicked off (US Eastern)
 #' before the Tuesday of week 1's busiest Saturday.
@@ -317,12 +338,12 @@ sync_season <- function(con, season, refresh = FALSE, raw_dir = "data/raw", min_
   }
   # /games without a classification returns FBS-involved games; the FCS call adds
   # FCS-vs-FCS games (and repeats FBS-vs-FCS ones, removed by distinct())
-  games <- dplyr::bind_rows(
-    parse_games(fetch("games_fbs", "games", list(year = season, seasonType = "both", classification = "fbs"))),
-    parse_games(fetch("games_fcs", "games", list(year = season, seasonType = "both", classification = "fcs")))
-  ) |>
+  raw_games <- c(fetch("games_fbs", "games", list(year = season, seasonType = "both", classification = "fbs")),
+                 fetch("games_fcs", "games", list(year = season, seasonType = "both", classification = "fcs")))
+  games <- parse_games(raw_games) |>
     dplyr::distinct(game_id, .keep_all = TRUE) |>
     add_week_seq()
+  times <- dplyr::distinct(parse_game_times(raw_games), game_id, .keep_all = TRUE)
 
   stats <- dplyr::bind_rows(
     parse_game_stats(fetch("stats_regular", "stats/game/advanced",
@@ -336,6 +357,7 @@ sync_season <- function(con, season, refresh = FALSE, raw_dir = "data/raw", min_
   polls <- parse_polls(fetch("rankings", "rankings", list(year = season, seasonType = "both")))
 
   db_replace_season(con, "games", games, season)
+  db_replace_season(con, "game_times", times, season)
   db_replace_season(con, "game_stats", stats, season)
   db_replace_season(con, "lines", lines, season)
   db_replace_season(con, "polls", polls, season)
@@ -563,6 +585,17 @@ read_sp <- function(db_path = "data/cfb.duckdb") {
   }
   tibble::as_tibble(DBI::dbGetQuery(con, "SELECT s.* FROM sp_ratings s
     WHERE s.fetched = (SELECT MAX(t.fetched) FROM sp_ratings t WHERE t.season = s.season)"))
+}
+
+#' Kickoff-time-TBD flags (game_times). Seasons synced before the table existed have no rows:
+#' their games are treated as having a set time.
+read_game_times <- function(db_path = "data/cfb.duckdb") {
+  con <- db_connect(db_path, read_only = TRUE)
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  if (!DBI::dbExistsTable(con, "game_times")) {
+    return(tibble::tibble(game_id = character(0), season = integer(0), start_time_tbd = logical(0)))
+  }
+  tibble::as_tibble(DBI::dbReadTable(con, "game_times"))
 }
 
 read_teams <- function(db_path = "data/cfb.duckdb") {

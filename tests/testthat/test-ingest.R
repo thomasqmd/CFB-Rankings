@@ -174,3 +174,14 @@ test_that("data integrity flags a season out of line with the ones before it", {
                c("WARN", "WARN", "FAIL", "PASS", "PASS"))
   expect_true(all(out$level[out$season == 2021] == "INFO" | out$kind[out$season == 2021] == "defect"))
 })
+
+test_that("kickoffs are dated in US Central; a time still TBA keeps its Eastern date", {
+  # Army at Tulsa, 7:30pm CT Fri Oct 23 2026; a noon CT kickoff; a TBA game (midnight Eastern)
+  k <- kickoff_central(c("2026-10-24T00:30:00.000Z", "2026-10-24T17:00:00.000Z", "2026-11-28T05:00:00.000Z"),
+                       tbd = c(FALSE, FALSE, TRUE))
+  expect_equal(k$date, c("2026-10-23", "2026-10-24", "2026-11-28"))
+  expect_equal(k$time, c("19:30", "12:00", NA))
+  expect_equal(kickoff_central("2025-12-01T02:00:00.000Z")$date, "2025-11-30")   # standard time
+  raw <- list(list(id = 1, season = 2026, startTimeTBD = TRUE), list(id = 2, season = 2026))
+  expect_equal(parse_game_times(raw)$start_time_tbd, c(TRUE, FALSE))
+})

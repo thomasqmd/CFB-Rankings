@@ -15,8 +15,10 @@ clean_color <- function(x) ifelse(is.na(x) | !grepl("^#[0-9A-Fa-f]{6}$", x), NA_
 
 #' @param sp each season's latest SP+ (read_sp()). CFBD has no weekly SP+ history, so it is shown on
 #'   each season's latest snapshot only: final SP+ for finished seasons, the newest fetch for the live one.
+#' @param game_times kickoff-time-TBD flags (read_game_times()); dates and times are US Central
 #' @return list of data frames, each small enough to inline in a static HTML page
-build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = NULL) {
+build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = NULL,
+                                 game_times = NULL) {
   params <- snapshots$params
 
   last_week <- params |> dplyr::group_by(season) |> dplyr::summarise(last = max(week), .groups = "drop")
@@ -84,7 +86,9 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
   line_wp <- backtest$games |> dplyr::filter(!is.na(line_wp)) |> dplyr::select(season, game_id, line_wp)
 
   fbs_ids <- unique(ratings$team_id[ratings$tier == 1L])
-  g <- games_all |>
+  tbd <- if (is.null(game_times)) FALSE else
+    dplyr::left_join(games_all[c("season", "game_id")], game_times, by = c("season", "game_id"))$start_time_tbd
+  g <- dplyr::bind_cols(games_all, kickoff_central(games_all$start_date, tbd)) |>
     dplyr::left_join(pre, by = c("season", "game_id")) |>
     dplyr::left_join(future, by = c("season", "game_id")) |>
     dplyr::left_join(line_wp, by = c("season", "game_id")) |>
@@ -93,7 +97,7 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
   side <- function(df, home) {
     sgn <- if (home) 1 else -1
     df |> dplyr::transmute(
-      s = season, wk = week_seq, label = week_label, date = substr(start_date, 1, 10), game_id,
+      s = season, wk = week_seq, label = week_label, date, time, game_id,
       id = if (home) home_id else away_id, opp_id = if (home) away_id else home_id,
       team = if (home) home_team else away_team, opp = if (home) away_team else home_team,
       venue = dplyr::case_when(neutral_site ~ "N", home ~ "H", TRUE ~ "A"),

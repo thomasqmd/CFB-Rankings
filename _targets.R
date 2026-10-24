@@ -196,7 +196,9 @@ list(
   tar_target(data_checks, data_integrity(season_data, teams_meta)),
   # SP+ (CFBD): each season's latest ratings, shown on the dashboard only
   tar_target(sp_ratings, { sync; read_sp(DB_PATH) }),
-  tar_target(dashboard_data, build_dashboard_data(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = sp_ratings)),
+  tar_target(game_times, { sync; read_game_times(DB_PATH) }),
+  tar_target(dashboard_data, build_dashboard_data(ratings, snapshots, games_all, teams_meta, backtest, cfg,
+                                                  sp = sp_ratings, game_times = game_times)),
 
   # The stylesheet, logos and headline overrides are tracked too, so editing only them re-renders the dashboard
   tar_quarto(dashboard, path = "docs/dashboard.qmd", quiet = TRUE,
