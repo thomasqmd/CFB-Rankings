@@ -1097,6 +1097,10 @@ pollsHeadline = {
 pollsBody = {
   const sys = [["cfp", "CFP committee", "Selects the playoff field"], ["ap", "AP poll", "Media voters"], ["coaches", "Coaches poll", "FBS head coaches"],
     ["cbs", "CBS Sports 138", "One writer, every team"], ["colley", "Colley matrix", "Record and schedule only"]]
+  const sim = simLive ? new Map(simRows.map(d => [d.id, d])) : new Map()
+  const confAbbr = { "American Athletic": "AAC", "Big Ten": "B1G", "Big 12": "B12", "Conference USA": "CUSA", "FBS Independents": "Ind",
+    "Mid-American": "MAC", "Mountain West": "MW", "Pac-12": "P12", "Sun Belt": "SBC" }
+  const rec = d => { const c = sim.get(d.id); return `${confAbbr[d.conf] ?? d.conf} · ${d.wins}–${d.losses}${c && c.cg > 0 ? ` (${c.cw}–${c.cl})` : ""}` }
   const col = ([k, t, sub]) => {
     const rows = fbs.filter(d => d[k] != null).sort((a, b) => a[k] - b[k]).slice(0, pollDepth)
     const head = htl.html`<h2 class="disp" style="font-size:24px">${t}</h2><span class="note">${sub}</span>`
@@ -1104,7 +1108,7 @@ pollsBody = {
       <div class="empty">No rankings yet.<div class="note" style="margin-top:6px">${k === "cfp" ? "The committee's first top 25 comes out in November." : "Not released for this week."}</div></div></section>`
     return htl.html`<section style="border-top:3px double var(--navy);padding-top:12px">${head}<div style="margin-top:8px">${rows.map(d => {
       const far = hasResume && Math.abs(d.rrk - d[k]) >= 8
-      return htl.html`<div class="poll-row"><span style="text-align:right;font-weight:700">${d[k]}</span>${logo(d.id, 22)}<span class="nm">${teamLink(d)}</span>
+      return htl.html`<div class="poll-row"><span style="text-align:right;font-weight:700">${d[k]}</span>${logo(d.id, 22)}<span class="nm">${teamLink(d)}<span class="rec">${rec(d)}</span></span>
         <span class=${far ? "r far" : "r"}>${hasResume ? `R #${d.rrk}` : ""}</span></div>` })}</div></section>`
   }
   const notAP = hasResume && fbs.some(d => d.ap != null) ? byRes.slice(0, 25).filter(d => d.ap == null) : []
