@@ -322,8 +322,9 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
 /* ---- Polls ------------------------------------------------------------------------- */
 .polls { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 24px; }
 .poll-row { display: grid; grid-template-columns: 22px 22px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 38px; border-bottom: 1px solid var(--rule); font-size: 15px; }
-.poll-row .rec { display: block; font-size: 12px; font-weight: 400; color: var(--ink-2); line-height: 1.2; font-variant-numeric: tabular-nums; }
-.poll-row .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.poll-row .rec { display: block; font-size: 12px; font-weight: 400; color: var(--ink-2); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.poll-row .nm .tc-n { display: block; line-height: 1.15; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.poll-row .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.15; }
 .poll-row .r { font-size: 13px; color: var(--ink-3); }
 .poll-row .r.far { color: var(--ink); font-weight: 700; }
 .empty { margin-top: 8px; padding: 28px 16px; border: 1px dashed var(--field); border-radius: 8px; text-align: center; color: var(--ink-2); font-size: 15px; }
