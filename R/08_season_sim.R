@@ -438,17 +438,44 @@ summarise_season_sim <- function(sim, input, divisions = NULL) {
 }
 
 #' Refit the live season's latest snapshot and simulate the rest of its season. Same data, config
-#' and seed as the published snapshot (run_snapshot()), so the posterior is the same; only this
-#' one week is refit, because snapshots keep summaries, not draws.
-run_season_sim <- function(inputs, season_data, cfg = model_config(), reps = 4L, seed = 2026L) {
+#' and seed as the published snapshot (run_snapshot()), so it targets the same posterior; only this
+#' one week is refit, because snapshots keep summaries, not draws. The refit samples longer than
+#' the snapshot so the simulation can use `n_draws` rating draws, each played out `reps` times
+#' (10,000 x 25 = 250,000 seasons). More draws, not more reps, is what shrinks the noise once
+#' reps is past a handful, since every rep of a draw shares its ratings.
+run_season_sim <- function(inputs, season_data, cfg = model_config(), n_draws = 10000L, reps = 25L,
+                           cores = as.integer(Sys.getenv("CFB_CORES", parallel::detectCores())), seed = 2026L) {
   input <- inputs[[length(inputs)]]
-  f <- fit_power(input, cfg)
+  cfg_sim <- cfg
+  cfg_sim$iter_sampling <- max(cfg$iter_sampling, ceiling(n_draws / cfg$chains))
+  f <- fit_power(input, cfg_sim)
   draws <- extract_draws(f$fit, family = cfg$margin_family)
   unlink(f$fit$output_files())
-  thin <- unique(round(seq(1, nrow(draws$r), length.out = min(cfg$summary_draws, nrow(draws$r)))))
+  thin <- unique(round(seq(1, nrow(draws$r), length.out = min(n_draws, nrow(draws$r)))))
   draws <- list(r = draws$r[thin, , drop = FALSE], par = draws$par[thin, ], family = draws$family)
   divisions <- tryCatch(team_divisions(input$season), error = \(e) NULL)
+  # The draws are split into one chunk per core and each chunk's seasons are simulated in a forked
+  # process; seasons are independent, so stacking the chunks gives the same simulation. Each fork
+  # gets its own L'Ecuyer stream, so results repeat for a given seed and core count.
+  n_chunks <- max(1L, min(cores, nrow(draws$r)))
+  chunk <- split(seq_len(nrow(draws$r)), cut(seq_len(nrow(draws$r)), n_chunks, labels = FALSE))
+  RNGkind("L'Ecuyer-CMRG")
   set.seed(seed)
-  sim <- simulate_season(draws, input, season_data$games, divisions, reps = reps, benchmark_rank = cfg$benchmark_rank)
-  summarise_season_sim(sim, input, divisions)
+  parts <- parallel::mclapply(chunk, function(i) {
+    d <- list(r = draws$r[i, , drop = FALSE], par = draws$par[i, , drop = FALSE], family = draws$family)
+    simulate_season(d, input, season_data$games, divisions, reps = reps, benchmark_rank = cfg$benchmark_rank)
+  }, mc.cores = n_chunks, mc.set.seed = TRUE)
+  failed <- vapply(parts, inherits, logical(1), "try-error")
+  if (any(failed)) stop("season simulation failed in a worker: ", parts[[which(failed)[1]]])
+  summarise_season_sim(stack_season_sims(parts), input, divisions)
+}
+
+#' Stack per-chunk simulate_season() results: the per-season matrices are bound by row; the
+#' teams, schedule and formats are the same in every chunk
+stack_season_sims <- function(parts) {
+  per_season <- c("W", "wins", "eligible", "conf_wins", "in_ccg", "is_champ", "wab", "rk",
+                  "cfp_seed", "auto", "bowl_pick", "seed1", "seed2")
+  out <- parts[[1]]
+  for (k in per_season) out[[k]] <- do.call(rbind, lapply(parts, `[[`, k))
+  out
 }

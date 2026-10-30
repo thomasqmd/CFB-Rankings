@@ -387,7 +387,8 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
   .np-ear, .np-ear.right { text-align: left; max-width: none; margin-left: 0; }
   .np-title .disp { font-size: 48px; }
   .np-title img { width: 44px; height: 44px; }
-  .np-tag { font-size: 19px; text-align: center; }
+  /* One line on any phone: shrinks with the screen below 19px (the tagline is about 17.4em wide) */
+  .np-tag { font-size: min(19px, calc((100vw - 34px) / 18.5)); text-align: center; white-space: nowrap; }
   .nav-wide { display: none; }
   .nav-menu { display: block; }
   .lede h1, .lede.big h1 { font-size: 34px; line-height: 1.1; }
