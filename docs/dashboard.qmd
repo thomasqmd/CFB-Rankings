@@ -136,7 +136,7 @@ htl.html`<div>${briefs}</div>`
 
 ::: {.rk-section}
 ```{ojs}
-htl.html`<div class="rk-head"><h2 class="disp" id="fbs-title">The FBS rankings</h2></div>`
+htl.html`<div class="rk-head" style="padding:0 0 18px"><h2 class="sr-only" id="fbs-title">FBS rankings</h2></div>`
 ```
 ::: {.ctl-row .ctl style="padding-bottom:12px"}
 ```{ojs}
@@ -178,6 +178,9 @@ viewof teamConf = Inputs.select(confKeys(fbs), { label: "Conference", format: co
 ```{ojs}
 viewof teamId = teamPicker(fbs, teamConf, "Team", pickedTeam ?? byRes[0].id)
 ```
+```{ojs}
+htl.html`<button type="button" class="btn" onclick=${() => goCompare(tRow.id)}>Compare with…</button>`
+```
 :::
 ```{ojs}
 htl.html`<div>${teamBody}</div>`
@@ -202,7 +205,12 @@ viewof teamB = Inputs.select(mTeams.map(d => d.id), { label: "Team B", format: i
 :::
 ::: {.ctl-row .ctl .seg}
 ```{ojs}
-viewof venue = Inputs.radio(new Map([["Neutral field", 0], [`At ${mById.get(teamA).team}`, 1], [`At ${mById.get(teamB).team}`, -1]]), { label: "Site", value: 0 })
+viewof mView = Inputs.radio(["Power", "Resume"], { label: "Compare", value: "Power" })
+```
+:::
+::: {.ctl-row .ctl .seg .venue-row}
+```{ojs}
+viewof venue =Inputs.radio(new Map([["Neutral field", 0], [`At ${mById.get(teamA).team}`, 1], [`At ${mById.get(teamB).team}`, -1]]), { label: "Site", value: 0 })
 ```
 :::
 ```{ojs}
@@ -409,6 +417,7 @@ OVERRIDES = rows0(headline_overrides)
 seasons = [...new Set(S.map(d => d.s))].sort((a, b) => b - a)
 mutable pickedTeam = null
 mutable racePick = null
+mutable mResSort = "Resume ±"
 ```
 
 ```{ojs}
@@ -466,6 +475,9 @@ fmtPct = x => x == null ? "–" : x >= 0.995 ? ">99%" : x < 0.005 ? (x > 0 ? "<1
 ord = n => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]) }
 // Snapshot w is one ahead of the week it covers (w = 1 is "Week 0"); this gives the week's number
 weekNum = w => (seasonSnaps.find(d => d.w === w)?.label ?? `Week ${w}`).replace("Week ", "")
+// Games carry `wk` on the model's week sequence (shifted when a season has a Week 0); show the real label
+wkLabels = new Map(G.filter(g => g.s === season).map(g => [g.wk, g.label]))
+wkLab = w => { const l = wkLabels.get(w); return l == null ? weekNum(w) : l === "Postseason" ? "Post" : l.replace("Week ", "") }
 toRoman = n => [[10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]].reduce((acc, [v, r]) => { while (n >= v) { acc += r; n -= v } return acc }, "")
 listAnd = xs => xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`
 dayFmt = iso => new Date(iso + "T12:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
@@ -586,17 +598,14 @@ SORTS = [
 ```{ojs}
 //| output: false
 rankingsHeadline = {
-  if (!hasResume) return `Preseason: ${byPow[0].team} starts at No. 1 in power.`
-  const r1 = byRes[0], p1 = byPow[0], pr = id => prevRows.get(id)
-  let a = pr(r1.id)?.rrk === 1 ? `${r1.team} stays No. 1 on resume` : `${r1.team} ${pr(r1.id)?.rrk ? "climbs" : "starts"} at No. 1 on resume`
-  if (pr(r1.id)?.rrk > 1) a = `${r1.team} climbs to No. 1 on resume`
+  if (!hasResume) return `${byPow[0].team} opens No. 1 in power`
+  const r1 = byRes[0], p1 = byPow[0], was = prevRows.get(r1.id)?.rrk
+  const a = `${r1.team} ${was === 1 ? "holds" : was ? "climbs to" : "opens at"} No. 1`
   // Biggest fall among last week's top five
   const fall = [...prevRows.values()].filter(d => d.rrk <= 5 && byId.get(d.id)).map(d => ({ d: byId.get(d.id), from: d.rrk }))
     .filter(x => x.d.rrk - x.from >= 4).sort((x, y) => (y.d.rrk - y.from) - (x.d.rrk - x.from))[0]
-  if (fall) a += ` as ${fall.d.team} slides to ${ord(fall.d.rrk)}`
-  const b = p1.id === r1.id ? `It is also the best team on the field.`
-    : `${p1.team} is ${pr(p1.id)?.prk === 1 ? "still" : "now"} the best team on the field.`
-  return `${a}. ${b}`
+  if (fall) return `${a}; ${fall.d.team} falls to ${ord(fall.d.rrk)}`
+  return p1.id === r1.id ? a : `${a}; ${p1.team} tops power`
 }
 ```
 
@@ -651,7 +660,7 @@ rankingsTable = {
       <div class="c r" role="cell" title=${d.def == null ? "" : `${d.def.toFixed(1)} pts allowed vs. an average FBS offense`}>${d.def_rk ?? "–"}</div>
       <div class="c r" role="cell">${d.sos_rk ?? "–"}</div>
       <div class="c r" role="cell">${(sort.key === "cfp" ? d.cfp : d.ap) ?? "–"}</div>
-    </div>${d.id === cutAfter ? htl.html`<div class="rk-cut" role="row"><span><span class="eb">Benchmark line · WAB 0</span>Teams above have won more than the #${cfg.benchmark_rank} team by power would have with their schedule.</span></div>` : ""}`
+    </div>${d.id === cutAfter ? htl.html`<div class="rk-cut" role="row"><span><span class="eb">Benchmark line · WAB 0</span>Teams above have won more than the #${cfg.benchmark_rank} power-rated team would have with their schedule.</span></div>` : ""}`
   }
   return htl.html`<div>
     <div class="rk-box"><div class="rk" role="table" aria-labelledby="fbs-title">
@@ -682,7 +691,7 @@ rankingsTable = {
     </div></div>
     <div class="rk-foot">
       <span>${snap.passed ? "✓ Model converged" : "⚠ Convergence checks failed"} · home field ${fmtSigned(snap.hfa)} pts</span>
-      <span>Dot = median · bar and small numbers = 80% range · Top ${cfg.benchmark_rank} = chance the resume ranks top ${cfg.benchmark_rank} this week</span>
+      <span>WAB is wins above what the #${cfg.benchmark_rank} power-rated team would have on the same schedule. Dot is the median; bars and ranges are 80% intervals. Top ${cfg.benchmark_rank} is the chance of a top-${cfg.benchmark_rank} resume this week.</span>
     </div></div>`
 }
 ```
@@ -813,11 +822,11 @@ teamBody = {
     const played = g.result != null, win = played && g.pts > g.opp_pts
     const mm = played ? g.pre_margin : g.fut_margin, wp = played ? g.pre_wp : g.fut_wp
     return htl.html`<tr>
-      <td class="muted hide-xs" style="width:36px">${g.label === "Postseason" ? "Post" : g.wk}</td>
+      <td class="muted hide-xs" style="width:36px">${wkLab(g.wk)}</td>
       <td>${teamCell(o, `${g.venue === "A" ? "Away" : g.venue === "N" ? "Neutral" : "Home"}${o.prk ? ` (${o.rrk ?? "–"}/${o.prk})` : " · FCS"}`, 28)}</td>
       <td>${played ? htl.html`<strong class=${win ? "up" : "down"}>${win ? "W" : "L"} ${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</strong>` : htl.html`<span class="muted" style="display:block;line-height:1.25">${dayFmt(g.date)}<br>${timeFmt(g.time, false)}</span>`}</td>
-      <td class="n">${mm == null ? "–" : fmtSigned(mm)}</td>
-      <td class="n muted hide-sm">${g.line == null ? "–" : fmtSigned(g.line)}</td>
+      <td class="n">${mm == null ? "–" : fmtSigned(-mm)}</td>
+      <td class="n muted hide-sm">${g.line == null ? "–" : fmtSigned(-g.line)}</td>
       <td class="hide-xs">${wp == null ? "–" : pbar(wp, played ? "var(--field)" : "var(--pow)", 80)}</td>
       <td class="n">${played && g.wab_game != null ? htl.html`<strong style=${{ color: g.wab_game >= 0 ? "var(--res-t)" : "var(--down)" }}>${fmtSigned(g.wab_game, 2)}</strong>` : htl.html`<span class="muted">–</span>`}</td>
     </tr>`
@@ -825,8 +834,6 @@ teamBody = {
   const played = tGames.filter(g => g.result != null), left = tGames.filter(g => g.result == null)
   const lastWk = played.at(-1)?.wk, nextWk = left[0]?.wk
   const byes = lastWk != null && nextWk != null ? d3.range(lastWk + 1, nextWk) : []
-  const best = played.filter(g => g.wab_game != null && g.result === "W").sort((a, b) => b.wab_game - a.wab_game)[0]
-  const worst = played.filter(g => g.wab_game != null && g.wab_game < 0).sort((a, b) => a.wab_game - b.wab_game)[0]
   return htl.html`<div class="team-grid">
     <aside>
       <div>${eyebrow("Ratings, as percentiles of FBS", "var(--ink-3)")}
@@ -842,10 +849,9 @@ teamBody = {
         ${mini}<span class="note">Dashed line: #${cfg.benchmark_rank}</span></div>` : ""}
     </aside>
     <section style="min-width:0">
-      ${secH("Schedule", htl.html`<span class="note">Model and Vegas: ${tRow.team}'s expected margin before kickoff</span>`)}
+      ${secH("Schedule", htl.html`<span class="note">Model and Vegas: ${tRow.team}'s line before kickoff</span>`)}
       <div class="tbl-wrap"><table class="t"><thead><tr><th class="hide-xs">Wk</th><th>Opponent<br><span style="font-weight:400">(resume/power)</span></th><th>Result</th><th class="n pow-t">Model</th><th class="n hide-sm">Vegas</th><th class="hide-xs">Win chance</th><th class="n res-t">Resume ±</th></tr></thead>
-      <tbody>${played.map(tr)}${left.length ? htl.html`<tr class="grp"><td colspan="7"><span class="eb" style="color:var(--ink-3)">${byes.length ? `Week ${byes.join(", ")} bye · ` : ""}Still to play</span></td></tr>` : ""}${left.map(tr)}</tbody></table></div>
-      ${best || worst || left.length ? htl.html`<p class="note">${left.length ? "Kickoff times are Central. " : ""}Resume ± is how much each result moved ${tRow.team} against the #${cfg.benchmark_rank} team by power. ${worst ? `The ${worst.pts}–${worst.opp_pts} loss ${worst.venue === "A" ? "at" : "to"} ${worst.opp} cost ${Math.abs(worst.wab_game).toFixed(2)}. ` : ""}${best ? `Beating ${best.opp} added ${best.wab_game.toFixed(2)}.` : ""}</p>` : ""}
+      <tbody>${played.map(tr)}${left.length ? htl.html`<tr class="grp"><td colspan="7"><span class="eb" style="color:var(--ink-3)">${byes.length ? `Week ${byes.map(wkLab).join(", ")} bye · ` : ""}Still to play</span></td></tr>` : ""}${left.map(tr)}</tbody></table></div>
     </section></div>`
 }
 ```
@@ -860,6 +866,17 @@ mTeams = {
   return [...fbs, ...fcs].sort((a, b) => a.team.localeCompare(b.team))
 }
 mById = new Map(mTeams.map(d => [d.id, d]))
+// Team page → Matchup resume view: this team as A, the next team up the resume (or down, for
+// No. 1) as B, ready to change
+goCompare = id => {
+  const list = hasResume ? byRes : byPow, i = list.findIndex(d => d.id === id)
+  const set = (v, x) => { v.value = x; v.dispatchEvent(new Event("input", { bubbles: true })) }
+  set(viewof teamA, id)
+  set(viewof teamB, list[i <= 0 ? 1 : i - 1].id)
+  set(viewof mView, hasResume ? "Resume" : "Power")
+  location.hash = "matchup"
+  window.scrollTo(0, 0)
+}
 matchup = {
   const a = mById.get(teamA), b = mById.get(teamB), v = venue
   const mean = a.pw - b.pw + snap.hfa * v
@@ -874,19 +891,84 @@ favTxt = m => `${m.mean >= 0 ? m.a.team : m.b.team} by ${Math.abs(m.mean).toFixe
 matchupHeadline = {
   const { a, b, mean } = matchup
   if (a.id === b.id) return "Pick two different teams"
-  const site = venue === 0 ? "on a neutral field" : `at ${venue > 0 ? a.team : b.team}`
-  if (Math.abs(mean) < 1.5) return `${a.team} vs. ${b.team} is a coin flip ${site}`
+  if (mView === "Resume") {
+    if (!hasResume || a.wab == null || b.wab == null) return `${a.team} vs. ${b.team}`
+    const [lead, trail] = a.wab >= b.wab ? [a, b] : [b, a]
+    return `${lead.team} leads ${trail.team} by ${(lead.wab - trail.wab).toFixed(2)} WAB`
+  }
+  if (Math.abs(mean) < 1.5) return `${a.team}, ${b.team} a toss-up`
   const [fav, dog] = mean >= 0 ? [a, b] : [b, a]
-  return `${fav.team} by ${Math.abs(mean).toFixed(1)} over ${dog.team} ${site}`
+  return `${fav.team} by ${Math.abs(mean).toFixed(1)} over ${dog.team}`
 }
 ```
 
 ```{ojs}
 //| output: false
 matchupBody = {
+  // Site only matters for the power view
+  const vr = document.querySelector(".venue-row")
+  if (vr) vr.style.display = mView === "Power" ? "" : "none"
+  return mView === "Power" ? powerBody : resumeBody
+}
+mSide = (d, cls) => htl.html`<div class=${"side " + cls}>${logo(d.id, 96)}<h2 class="disp">${d.team}</h2>
+  <span style="color:var(--ink-2)">${d.wins}–${d.losses} · Power #${d.prk}${d.rrk ? ` · Resume #${d.rrk}` : ""}</span></div>`
+resumeBody = {
+  const a = mById.get(teamA), b = mById.get(teamB)
+  if (!hasResume) return htl.html`<p class="note">Resume rankings start after Week 1.</p>`
+  if (a.wab == null || b.wab == null) return htl.html`<p class="note">Resume comparisons cover FBS teams only.</p>`
+  const played = d => G.filter(g => g.s === season && g.id === d.id && g.result != null)
+  const oppRk = g => byId.get(g.opp_id)?.prk ?? null
+  const rec = gs => `${gs.filter(g => g.result === "W").length}–${gs.filter(g => g.result === "L").length}`
+  const vs = (d, lo, hi) => rec(played(d).filter(g => { const r = oppRk(g); return lo == null ? r == null : r != null && r >= lo && r <= hi }))
+  const row = (lab, av, bv, better) => htl.html`<div class="tape-row"><span class=${better === "a" ? "w" : "l"}>${av}</span>
+    <span class="eb">${lab}</span><span class=${better === "b" ? "w" : "l"}>${bv}</span></div>`
+  const cmp = (x, y, hi = true) => x == null || y == null || x === y ? null : (hi ? x > y : x < y) ? "a" : "b"
+  const rng = d => d.rrk_lo == null ? "" : htl.html` <span class="note">${d.rrk_lo}–${d.rrk_hi}</span>`
+  const tape = [
+    row("WAB", htl.html`${fmtSigned(a.wab, 2)} <span class="note">#${a.rrk}</span>`, htl.html`<span class="note">#${b.rrk}</span> ${fmtSigned(b.wab, 2)}`, cmp(a.wab, b.wab)),
+    row("Rank · 80%", htl.html`#${a.rrk}${rng(a)}`, htl.html`#${b.rrk}${rng(b)}`, cmp(a.rrk, b.rrk, false)),
+    row(`Top ${cfg.benchmark_rank}`, fmtPct(a.p12), fmtPct(b.p12), cmp(a.p12, b.p12)),
+    row("Schedule", `#${a.sos_rk ?? "–"}`, `#${b.sos_rk ?? "–"}`, cmp(a.sos_rk, b.sos_rk, false)),
+    row("Record", `${a.wins}–${a.losses}`, `${b.wins}–${b.losses}`, null),
+    row("vs. power top 25", vs(a, 1, 25), vs(b, 1, 25), null),
+    row("vs. 26–50", vs(a, 26, 50), vs(b, 26, 50), null),
+    row("vs. 51+", vs(a, 51, 999), vs(b, 51, 999), null),
+    row("vs. FCS", vs(a, null), vs(b, null), null)
+  ]
+  const [lead, trail] = a.wab >= b.wab ? [a, b] : [b, a]
+  const oppPow = g => byId.get(g.opp_id)?.prk ?? 999
+  const order = { "Week": (x, y) => x.wk - y.wk, "Resume ±": (x, y) => y.wab_game - x.wab_game, "Opponent power": (x, y) => oppPow(x) - oppPow(y) }[mResSort]
+  const sortCtl = Inputs.radio(["Week", "Resume ±", "Opponent power"], { label: "Sort games", value: mResSort })
+  sortCtl.addEventListener("input", () => { mutable mResSort = sortCtl.value })
+  const listOf = d => played(d).filter(g => g.wab_game != null).sort(order)
+  // By week, both lists run over the same weeks, with byes filled in so the rows line up
+  const wkKey = g => g.label === "Postseason" ? 999 : g.wk
+  const wks = [a, b].flatMap(d => listOf(d).map(wkKey)), reg = wks.filter(w => w < 999)
+  const weeks = [...(reg.length ? d3.range(d3.min(reg), d3.max(reg) + 1) : []), ...(wks.includes(999) ? [999] : [])]
+  const byWeek = gs => weeks.flatMap(w => { const ws = gs.filter(g => wkKey(g) === w); return ws.length ? ws : [{ bye: true, wk: w }] })
+  const games = d => {
+    const gs = mResSort === "Week" ? byWeek(listOf(d)) : listOf(d)
+    return htl.html`<section style="min-width:0">${secH(d.team)}
+      <div class="tbl-wrap"><table class="t"><thead><tr><th class="hide-xs">Wk</th><th>Opponent<br><span style="font-weight:400">(power rank)</span></th><th>Result</th><th class="n res-t">Resume ±</th></tr></thead>
+      <tbody>${gs.map(g => { if (g.bye) return htl.html`<tr class="muted"><td class="hide-xs" style="width:36px">${wkLab(g.wk)}</td><td>${teamCell({ id: null, team: "Bye" }, "No game", 24, false)}</td><td></td><td></td></tr>`
+        const o = byId.get(g.opp_id) ?? { id: g.opp_id, team: g.opp }
+        return htl.html`<tr><td class="muted hide-xs" style="width:36px">${wkLab(g.wk)}</td><td>${teamCell(o, `${g.venue === "A" ? "Away" : g.venue === "N" ? "Neutral" : "Home"}${o.prk ? ` · #${o.prk}` : " · FCS"}`, 24)}</td>
+          <td><strong class=${g.result === "W" ? "up" : "down"}>${g.result} ${g.pts}–${g.opp_pts}${g.ot ? " OT" : ""}</strong></td>
+          <td class="n"><strong style=${{ color: g.wab_game >= 0 ? "var(--res-t)" : "var(--down)" }}>${fmtSigned(g.wab_game, 2)}</strong></td></tr>` })}</tbody></table></div></section>`
+  }
+  return htl.html`<div style="display:flex;flex-direction:column;gap:36px">
+    <section class="faceoff">${mSide(a, "a")}
+      <div class="verdict">${eyebrow("Resume", "var(--res-t)")}
+        <span class="disp">${lead.team} by ${(lead.wab - trail.wab).toFixed(2)}</span>
+        <span style="font-size:15px;color:var(--ink-2)">WAB gap · wins above the #${cfg.benchmark_rank} power-rated team on the same schedule</span>
+      </div>${mSide(b, "b")}</section>
+    <section class="tape">${tape}</section>
+    <div style="display:flex;flex-direction:column;gap:12px"><div class="ctl seg">${sortCtl}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:24px 36px">${games(a)}${games(b)}</div></div></div>`
+}
+powerBody = {
   const m = matchup, { a, b } = m
-  const side = (d, cls) => htl.html`<div class=${"side " + cls}>${logo(d.id, 96)}<h2 class="disp">${d.team}</h2>
-    <span style="color:var(--ink-2)">${d.wins}–${d.losses} · Power #${d.prk}${d.rrk ? ` · Resume #${d.rrk}` : ""}</span></div>`
+  const side = mSide
   const stats = [["Power", "pw", "prk", v => fmtSigned(v), true], ["Offense", "off", "off_rk", v => v.toFixed(1), true],
     ["Defense", "def", "def_rk", v => v.toFixed(1), false], ["SP+", "sp", "sp_rk", v => fmtSigned(v), true], ["Resume", "wab", "rrk", v => fmtSigned(v, 2), true]]
     .filter(([, k]) => a[k] != null && b[k] != null)
@@ -920,10 +1002,8 @@ matchupBody = {
         <span style="display:flex;justify-content:space-between;width:100%;font-weight:700"><span class="pow-t">${fmtPct(m.pA)}</span><span class="res-t">${fmtPct(1 - m.pA)}</span></span>
         ${m.ptsA == null ? "" : htl.html`<span style="font-size:15px;color:var(--ink-2)">Projected score <strong style="color:var(--ink)">${Math.round(m.ptsA)}–${Math.round(m.ptsB)}</strong> · total ${(m.ptsA + m.ptsB).toFixed(0)}</span>`}
       </div>${side(b, "b")}</section>
-    <section class="tape">${tape}<div class="tape-row"><span class="l">${a.wins}–${a.losses}</span><span class="eb">Record</span><span class="l">${b.wins}–${b.losses}</span></div>
-      <p class="note" style="text-align:center">Bold is the better number. Offense: points scored, defense: points allowed, each against an average FBS team.</p></section>
-    <section>${secH("How it could go", htl.html`<span class="note">Final margin, ${a.team} minus ${b.team}. Includes game-day noise and doubt about both ratings.</span>`)}
-      <div class="chart-scroll">${chart}</div></section></div>`
+    <section class="tape">${tape}<div class="tape-row"><span class="l">${a.wins}–${a.losses}</span><span class="eb">Record</span><span class="l">${b.wins}–${b.losses}</span></div></section>
+    <section><div class="chart-scroll">${chart}</div></section></div>`
 }
 ```
 
@@ -968,11 +1048,11 @@ gamesHeadline = {
   const where = g => g.venue === "N" ? "vs." : "at"
   const flip = pool.filter(isRanked).filter(g => Math.sign(gm(g)) !== Math.sign(g.line) && Math.abs(gm(g) - g.line) >= 2)
     .sort((a, b) => Math.abs(gm(b) - b.line) - Math.abs(gm(a) - a.line))[0]
-  if (flip) return `The model and Vegas pick different favorites for ${flip.opp} ${where(flip)} ${flip.team}.`
+  if (flip) return `Model, Vegas split on ${flip.opp} ${where(flip)} ${flip.team}`
   const big = [...pool].sort((a, b) => Math.abs(gm(b) - b.line) - Math.abs(gm(a) - a.line))[0]
-  if (big) return `The model's biggest split with Vegas this week: ${big.opp} ${where(big)} ${big.team}, ${Math.abs(gm(big) - big.line).toFixed(1)} points apart.`
+  if (big) return `Model ${Math.abs(gm(big) - big.line).toFixed(1)} off Vegas on ${big.opp} ${where(big)} ${big.team}`
   const fin = gamesFinal.filter(g => gm(g) != null && g.pts !== g.opp_pts)
-  return fin.length ? `The model picked ${d3.sum(fin, g => Math.sign(gm(g)) === Math.sign(g.pts - g.opp_pts))} of ${fin.length} winners.` : "No games this week."
+  return fin.length ? `Model picks ${d3.sum(fin, g => Math.sign(gm(g)) === Math.sign(g.pts - g.opp_pts))} of ${fin.length} winners` : "No games this week"
 }
 ```
 
@@ -1041,15 +1121,15 @@ gamesBody = {
 ```{ojs}
 //| output: false
 trendsHeadline = {
-  if (snap.w < 2) return { text: "Trends start after Week 2.", id: byPow[0].id }
+  if (snap.w < 2) return { text: "Trends start after Week 2", id: byPow[0].id }
   const first = d => histOf(d.id)[0]
   const climb = byRes.slice(0, 10).map(d => ({ d, from: first(d)?.rrk, w0: first(d)?.w })).filter(x => x.from != null)
     .sort((a, b) => (b.from - b.d.rrk) - (a.from - a.d.rrk))[0]
   const weeks = snap.w - climb.w0
-  let t = `${climb.d.team} climbed from ${ord(climb.from)} to ${ord(climb.d.rrk)} in ${weeks} week${weeks === 1 ? "" : "s"}.`
+  let t = `${climb.d.team} up from ${ord(climb.from)} to ${ord(climb.d.rrk)} in ${weeks} week${weeks === 1 ? "" : "s"}`
   const fall = [...prevRows.values()].filter(p => p.rrk <= 10 && byId.get(p.id)).map(p => ({ d: byId.get(p.id), from: p.rrk }))
     .sort((a, b) => (b.d.rrk - b.from) - (a.d.rrk - a.from))[0]
-  if (fall && fall.d.rrk - fall.from >= 5) t += ` ${fall.d.team} fell from ${fall.from === 1 ? "No. 1" : ord(fall.from)} to ${ord(fall.d.rrk)} in one week.`
+  if (fall && fall.d.rrk - fall.from >= 5) t += `; ${fall.d.team} drops ${fall.d.rrk - fall.from}`
   return { text: t, id: climb.d.id }
 }
 ```
@@ -1092,13 +1172,12 @@ trendsChart = {
 ```{ojs}
 //| output: false
 rvpHeadline = {
-  if (!hasResume) return "Resume rankings start after Week 1."
+  if (!hasResume) return "Resume rankings start after Week 1"
   const gap = byPow.slice(0, 5).filter(d => d.rrk - d.prk >= 8)[0]
-  if (gap) return gap.prk === 1 ? `${gap.team} plays like the best team in the country. Its resume says ${ord(gap.rrk)}.`
-    : `${gap.team} plays like a top-${Math.max(5, gap.prk)} team. Its resume says ${ord(gap.rrk)}.`
+  if (gap) return `${gap.team}: ${ord(gap.prk)} in power, ${ord(gap.rrk)} on resume`
   const rev = byRes.slice(0, 5).filter(d => d.prk - d.rrk >= 10)[0]
-  if (rev) return `${rev.team} is No. ${rev.rrk} on resume. Its play rates ${ord(rev.prk)}.`
-  return "Resume and power agree on the top five this week."
+  if (rev) return `${rev.team}: ${ord(rev.rrk)} on resume, ${ord(rev.prk)} in power`
+  return "Resume, power agree on top five"
 }
 // Label placement in the spirit of ggrepel: each label tries spots around its dot, nearest
 // first, then rings further out, and takes the first that clears the plot edges, every label
@@ -1148,10 +1227,10 @@ rvpBody = {
     width: PW, height: PH, marginLeft: m.l, marginRight: m.r, marginTop: m.t, marginBottom: m.b,
     style: { background: "transparent", fontSize: "13px" }, grid: true, color: { type: "identity" },
     x: { domain: x.domain(), label: "Power rating (points vs. average FBS team) →" },
-    y: { domain: y.domain(), label: `↑ Wins above the #${cfg.benchmark_rank} team by power` },
+    y: { domain: y.domain(), label: `↑ Wins above the #${cfg.benchmark_rank} power-rated team` },
     marks: [
       Plot.ruleY([0], { stroke: "var(--res-t)", strokeDasharray: "5,4" }),
-      Plot.text([[x.domain()[0], 0]], { dx: 6, dy: -8, textAnchor: "start", text: () => `Benchmark: the #${cfg.benchmark_rank} team by power`, fill: "var(--res-t)", fontSize: 12 }),
+      Plot.text([[x.domain()[0], 0]], { dx: 6, dy: -8, textAnchor: "start", text: () => `Benchmark: the #${cfg.benchmark_rank} power-rated team`, fill: "var(--res-t)", fontSize: 12 }),
       Plot.dot(fbs.filter(d => !on(d)), { x: "pw", y: "wab", r: 4.5, fill: d => `var(${GRPVAR[d.grp]})`, fillOpacity: 0.15 }),
       Plot.dot(hi, { x: "pw", y: "wab", r: d => big(d) ? 6.5 : 4.5, fill: d => `var(${GRPVAR[d.grp]})`, fillOpacity: d => big(d) ? 0.95 : 0.45, stroke: "var(--paper)", strokeWidth: 1 }),
       ...labelMarks(labs, { text: "team", fontSize: 12.5, fontWeight: 600, fill: "var(--ink)", stroke: "var(--paper)", strokeWidth: 3, paintOrder: "stroke" }),
@@ -1177,11 +1256,10 @@ rvpBody = {
 ```{ojs}
 //| output: false
 pollsHeadline = {
-  if (!fbs.some(d => d.ap != null)) return "No AP poll yet this season."
-  if (!hasResume) return "The preseason polls are in. Resume rankings start after Week 1."
+  if (!fbs.some(d => d.ap != null)) return "No AP poll yet this season"
+  if (!hasResume) return "Preseason polls are in"
   const top = byRes.slice(0, 25), shared = top.filter(d => d.ap != null && d.ap <= 25).length
-  const out = top.filter(d => d.ap == null || d.ap > 25).map(d => d.team)
-  return `The AP poll and the resume share ${shared} of their top 25.` + (out.length && out.length <= 4 ? ` The other ${out.length === 1 ? "one is" : `${out.length} are`} ${listAnd(out)}.` : "")
+  return `AP poll, resume share ${shared} of top 25`
 }
 ```
 
@@ -1234,8 +1312,7 @@ simBannerEl = () => htl.html`<p class="note" style="margin:0">Simulated ${sim_me
 confHeadline = {
   const t = simRows.filter(d => d.conf === raceConf).sort((a, b) => b.p_title - a.p_title)[0]
   if (!t) return raceConf
-  return t.p_title >= 0.5 ? `${t.team} is the clear ${raceConf} favorite, at ${fmtPct(t.p_title)}.`
-    : `${t.team} is the ${raceConf} favorite, at ${fmtPct(t.p_title)}. The rest of the field has ${fmtPct(1 - t.p_title)}.`
+  return `${t.team} ${fmtPct(t.p_title)} to win ${raceConf}`
 }
 ```
 
@@ -1252,7 +1329,7 @@ confBody = {
   const live = rows.filter(r => r.p_ccg >= 0.005), out = rows.filter(r => r.p_ccg < 0.005)
   const paths = SIMPATH.filter(x => x.id === d?.id).sort((a, b) => a.wk - b.wk)
   const stake = g => htl.html`<article class="card stake">
-    <div class="tc">${logo(g.opp_id, 32)}<div class="tc-t"><strong>${g.venue === "A" ? "at " : g.venue === "N" ? "vs. " : ""}${g.opp}</strong><span class="tc-s">Week ${g.wk} · ${fmtPct(g.p_win)} to win${g.conf_game ? "" : " · non-conf."}</span></div></div>
+    <div class="tc">${logo(g.opp_id, 32)}<div class="tc-t"><strong>${g.venue === "A" ? "at " : g.venue === "N" ? "vs. " : ""}${g.opp}</strong><span class="tc-s">Week ${wkLab(g.wk)} · ${fmtPct(g.p_win)} to win${g.conf_game ? "" : " · non-conf."}</span></div></div>
     <span class="disp" style="font-size:36px;line-height:1;color:var(--ink)">${g.ccg_w == null || g.ccg_l == null ? "–" : `${Math.round((g.ccg_w - g.ccg_l) * 100)} pts`}</span><span class="note" style="margin-top:-6px">swing in title-game odds</span>
     <div style="display:flex;justify-content:space-between;font-size:14px;border-top:1px solid var(--rule);padding-top:8px"><span>Win → <strong class="up">${fmtPct(g.ccg_w)}</strong></span><span>Loss → <strong class="down">${fmtPct(g.ccg_l)}</strong></span></div></article>`
   const roots = SIMROOT.filter(x => x.id === d?.id).sort((a, b) => (b.p_root - b.p_vs) - (a.p_root - a.p_vs)).slice(0, 6)
@@ -1266,7 +1343,7 @@ confBody = {
       ${paths.length ? htl.html`<div class="stakes">${paths.map(stake)}</div>` : htl.html`<p class="note">No regular-season games left.</p>`}</section>
     <section>${secH(`${d.team} fans should root for`, htl.html`<span class="note">Other ${raceConf} games that move ${d.team}'s title-game odds most</span>`)}
       ${roots.length ? htl.html`<div class="tbl-wrap"><table class="t"><thead><tr><th>Wk</th><th>Root for</th><th>Over</th><th style="white-space:normal">Title game odds</th></tr></thead><tbody>
-      ${roots.map(r => htl.html`<tr><td class="muted">${r.wk}</td><td>${teamCell(nm(r.root_id), "", 24, false)}</td><td>${teamCell(nm(r.vs_id), "", 24, false)}</td><td>${wl(r.p_root, r.p_vs)}</td></tr>`)}</tbody></table></div>`
+      ${roots.map(r => htl.html`<tr><td class="muted">${wkLab(r.wk)}</td><td>${teamCell(nm(r.root_id), "", 24, false)}</td><td>${teamCell(nm(r.vs_id), "", 24, false)}</td><td>${wl(r.p_root, r.p_vs)}</td></tr>`)}</tbody></table></div>`
         : htl.html`<p class="note">${d.p_ccg >= 0.99 || d.p_ccg <= 0.01 ? `${d.team}'s title-game fate is all but settled.` : `No other conference game moves ${d.team}'s odds by a point or more.`}</p>`}</section>` : ""}
   </div>`
 }
@@ -1289,7 +1366,7 @@ seed1 = d => d.seeds.get(1) ?? 0
 postHeadline = {
   const t1 = [...simRows].sort((a, b) => seed1(b) - seed1(a))[0]
   const g = byCfp.filter(d => d.grp === "Group")[0]
-  return `${t1.team} is the likeliest No. 1 seed, at ${fmtPct(seed1(t1))}.` + (g ? ` ${g.team} is the ${grpName("Group")}'s best hope, at ${fmtPct(g.p_cfp)}.` : "")
+  return `${t1.team} likeliest No. 1 seed` + (g ? `; ${g.team} leads ${grpName("Group")}` : "")
 }
 postTiles = {
   const t1 = [...simRows].sort((a, b) => seed1(b) - seed1(a))[0]
@@ -1343,9 +1420,8 @@ postBracket = {
     <span style="font-family:var(--mono);font-size:13px;color:var(--ink-3);width:18px">${k}</span>${logo(d.id, 22)}<strong style="flex:1">${d.team}</strong><span class="note">${fmtPct(d.p_cfp)}</span></div>` }
   const stack = htl.html`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px">${[[1, 8, 9], [4, 5, 12], [2, 7, 10], [3, 6, 11]].map(([s, a, b]) =>
     htl.html`<div style="display:flex;flex-direction:column;gap:6px">${team(s)}<span class="note" style="padding-left:10px">hosts the winner of</span>${team(a)}${team(b)}</div>`)}</div>`
-  return htl.html`<section>${secH("If the season ended the way it usually does", htl.html`<span class="note">Five likeliest champions plus the seven likeliest others, at their typical seed · % = chance to make the field</span>`)}
-    <div class="bracket">${width >= 1100 ? svg : stack}</div>
-    <p class="note">First-round games are on campus, hosted by seeds 5–8. The 1–8–9 and 4–5–12 quarters meet in one semifinal, 2–7–10 and 3–6–11 in the other.</p></section>`
+  return htl.html`<section>${secH("Projected bracket")}
+    <div class="bracket">${width >= 1100 ? svg : stack}</div></section>`
 }
 ```
 
@@ -1363,8 +1439,7 @@ postOdds = {
       ...ts.map(d => htl.html`<tr class=${d.id === lastIn && postConf === "all" ? "last-in" : ""}><td>${teamCell(d, `${d.conf} · ${d.w}–${d.l}`, 26)}</td><td>${pbar(d.p_cfp, "var(--pow)", 100)}</td>
         <td class="n hide-xs">${fmtPct(d.p_bye)}</td><td class="hide-sm">${pbar(d.p_title, "var(--res)", 80)}</td><td class="n">${d.xw.toFixed(1)}</td><td class="n hide-xs">${fmtPct(d.p_bowl)}</td>
         <td class="n muted hide-sm">${d.rrk_now ?? "–"} → ${d.rrk}</td><td class="hide-sm">${strip(d)}</td></tr>`)] })
-  return htl.html`<div><div class="tbl-wrap tbl-box"><table class="t sticky-head"><thead><tr><th>Team</th><th>Playoff</th><th class="n hide-xs">Bye</th><th class="hide-sm">Conf. title</th><th class="n">Proj. W</th><th class="n hide-xs" title="Six wins and a .500 record">Bowl</th><th class="n hide-sm">Resume now → final</th><th class="hide-sm">Likely seed (darker = likelier)</th></tr></thead>
-    <tbody>${body}</tbody></table></div>
-    <p class="note">${postConf === "all" ? "Orange underline: last at-large team in by odds. " : ""}Bowl: chance of six wins and a .500 record. Field: the five highest-ranked conference champions plus the seven highest-ranked others, seeded by rank. The final resume ranking stands in for the committee, so treat these as resume-based odds, not a forecast of the committee.</p></div>`
+  return htl.html`<div><div class="tbl-wrap tbl-box"><table class="t sticky-head"><thead><tr><th>Team</th><th>Playoff</th><th class="n hide-xs">Bye</th><th class="hide-sm">Conf. title</th><th class="n">Proj. W</th><th class="n hide-xs" title="Six wins and a .500 record">Bowl</th><th class="n hide-sm">Resume now → final</th><th class="hide-sm">Likely seed (<span class="shade-light">darker</span><span class="shade-dark">brighter</span> is likelier)</th></tr></thead>
+    <tbody>${body}</tbody></table></div></div>`
 }
 ```

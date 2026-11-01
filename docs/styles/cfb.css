@@ -167,8 +167,8 @@ body[data-tab="rankings"] .inner-only { display: none !important; }
 
 /* ---- shared pieces -------------------------------------------------------------- */
 .lede { display: flex; flex-direction: column; gap: 12px; }
-.lede h1 { font-size: 48px; line-height: 1.05; letter-spacing: -0.02em; text-wrap: balance; max-width: 1100px; }
-.lede.big h1 { font-size: 66px; line-height: 1.02; letter-spacing: -0.025em; }
+.lede h1 { font-size: 48px; line-height: 1.05; letter-spacing: -0.02em; text-wrap: balance; }
+.lede.big h1 { font-size: 52px; line-height: 1.02; letter-spacing: -0.025em; }
 .sec-h { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; padding-top: 16px; border-top: 3px double var(--navy); margin-bottom: 12px; }
 .sec-h h2 { font-size: 34px; line-height: 1.1; }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); row-gap: 20px; border-top: 1px solid var(--navy); padding-top: 16px; overflow: hidden; }
@@ -355,6 +355,10 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
 .seeds { display: inline-flex; gap: 2px; }
 .seeds > span { width: 20px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 12px; border-radius: 3px; color: var(--ink-3); }
 .seeds > span.hi { color: var(--on-navy); }
+/* Seed-strip key: the shade gets darker with odds in light mode, lighter in dark mode */
+.shade-dark { display: none; }
+:root[data-theme="dark"] .shade-dark { display: inline; }
+:root[data-theme="dark"] .shade-light { display: none; }
 .bracket svg { display: block; }
 
 /* ---- Polls ------------------------------------------------------------------------- */
