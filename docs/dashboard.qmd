@@ -1277,7 +1277,14 @@ confBody = {
 ```{ojs}
 //| output: false
 byCfp = [...simRows].sort((a, b) => b.p_cfp - a.p_cfp)
-field = byCfp.slice(0, 12).sort((a, b) => a.xseed - b.xseed)
+// Projected field, built like the sim's: each conference's likeliest champion; the five of those
+// with the best playoff odds get automatic bids, and the seven likeliest others fill the field
+autoBids = d3.groups(simRows.filter(d => d.p_title > 0), d => d.conf)
+  .map(([, ts]) => d3.greatest(ts, d => d.p_title))
+  .sort((a, b) => b.p_cfp - a.p_cfp).slice(0, 5)
+autoIds = new Set(autoBids.map(d => d.id))
+atLarge = byCfp.filter(d => !autoIds.has(d.id))
+field = [...autoBids, ...atLarge.slice(0, 7)].sort((a, b) => a.xseed - b.xseed)
 seed1 = d => d.seeds.get(1) ?? 0
 postHeadline = {
   const t1 = [...simRows].sort((a, b) => seed1(b) - seed1(a))[0]
@@ -1290,8 +1297,8 @@ postTiles = {
   const who = d => htl.html`${logo(d.id, 34)}<span>${d.team}</span>`
   return htl.html`<div style="display:flex;flex-direction:column;gap:12px">${simBannerEl()}<div class="cols">
     ${kv("Likeliest No. 1 seed", who(t1), `${fmtPct(seed1(t1))} to be the top seed`)}
-    ${kv("Last in · 12th-best odds", who(byCfp[11]), `${fmtPct(byCfp[11].p_cfp)} to make the field`)}
-    ${kv("First out · 13th", who(byCfp[12]), `${fmtPct(byCfp[12].p_cfp)} to make the field`)}
+    ${kv("Last at-large in", who(atLarge[6]), `${fmtPct(atLarge[6].p_cfp)} to make the field`)}
+    ${kv("First at-large out", who(atLarge[7]), `${fmtPct(atLarge[7].p_cfp)} to make the field`)}
     ${kv(`${grpName("Group")} in the field`, `${g6.toFixed(2)} teams`, `Expected · ${d3.sum(simRows, d => d.p_bowl).toFixed(0)} of ${simRows.length} bowl-eligible`)}
   </div></div>`
 }
@@ -1336,7 +1343,7 @@ postBracket = {
     <span style="font-family:var(--mono);font-size:13px;color:var(--ink-3);width:18px">${k}</span>${logo(d.id, 22)}<strong style="flex:1">${d.team}</strong><span class="note">${fmtPct(d.p_cfp)}</span></div>` }
   const stack = htl.html`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px">${[[1, 8, 9], [4, 5, 12], [2, 7, 10], [3, 6, 11]].map(([s, a, b]) =>
     htl.html`<div style="display:flex;flex-direction:column;gap:6px">${team(s)}<span class="note" style="padding-left:10px">hosts the winner of</span>${team(a)}${team(b)}</div>`)}</div>`
-  return htl.html`<section>${secH("If the season ended the way it usually does", htl.html`<span class="note">The 12 likeliest teams at their typical seed · % = chance to make the field</span>`)}
+  return htl.html`<section>${secH("If the season ended the way it usually does", htl.html`<span class="note">Five likeliest champions plus the seven likeliest others, at their typical seed · % = chance to make the field</span>`)}
     <div class="bracket">${width >= 1100 ? svg : stack}</div>
     <p class="note">First-round games are on campus, hosted by seeds 5–8. The 1–8–9 and 4–5–12 quarters meet in one semifinal, 2–7–10 and 3–6–11 in the other.</p></section>`
 }
@@ -1348,7 +1355,7 @@ postOdds = {
   const rows = simRows.filter(d => inConf(d, postConf)).sort((a, b) => b.p_cfp - a.p_cfp || b.p_title - a.p_title || (a.rrk ?? 99) - (b.rrk ?? 99))
   const tiers = [["Near locks", 0.8, 1.01], ["Likely", 0.55, 0.8], ["On the bubble", 0.3, 0.55], ["Need help", 0.1, 0.3], ["Long shots", 0.02, 0.1], ["Outside looking in", -1, 0.02]]
     .filter(t => postShow === "All" || t[1] >= 0.02)
-  const lastIn = byCfp[11]?.id
+  const lastIn = atLarge[6]?.id
   const strip = d => htl.html`<span class="seeds">${d3.range(1, 13).map(k => { const p = d.seeds.get(k) ?? 0, a = p > 0 ? 0.08 + 0.9 * Math.min(1, p / 0.35) : 0.03
     return htl.html`<span class=${a > 0.5 ? "hi" : ""} title=${`Seed ${k}: ${fmtPct(p)}`} style=${{ background: `rgba(var(--shade), ${a})` }}>${k}</span>` })}</span>`
   const body = tiers.flatMap(([t, lo, hi]) => { const ts = rows.filter(d => d.p_cfp >= lo && d.p_cfp < hi); if (!ts.length) return []
@@ -1358,6 +1365,6 @@ postOdds = {
         <td class="n muted hide-sm">${d.rrk_now ?? "–"} → ${d.rrk}</td><td class="hide-sm">${strip(d)}</td></tr>`)] })
   return htl.html`<div><div class="tbl-wrap tbl-box"><table class="t sticky-head"><thead><tr><th>Team</th><th>Playoff</th><th class="n hide-xs">Bye</th><th class="hide-sm">Conf. title</th><th class="n">Proj. W</th><th class="n hide-xs" title="Six wins and a .500 record">Bowl</th><th class="n hide-sm">Resume now → final</th><th class="hide-sm">Likely seed (darker = likelier)</th></tr></thead>
     <tbody>${body}</tbody></table></div>
-    <p class="note">${postConf === "all" ? "Orange underline: last team in by odds. " : ""}Bowl: chance of six wins and a .500 record. Field: the five highest-ranked conference champions plus the seven highest-ranked others, seeded by rank. The final resume ranking stands in for the committee, so treat these as resume-based odds, not a forecast of the committee.</p></div>`
+    <p class="note">${postConf === "all" ? "Orange underline: last at-large team in by odds. " : ""}Bowl: chance of six wins and a .500 record. Field: the five highest-ranked conference champions plus the seven highest-ranked others, seeded by rank. The final resume ranking stands in for the committee, so treat these as resume-based odds, not a forecast of the committee.</p></div>`
 }
 ```
