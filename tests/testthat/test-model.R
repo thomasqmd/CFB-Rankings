@@ -156,3 +156,21 @@ test_that("perturbing the Gamma nu prior moves its mean and sd, not shape and ra
   expect_equal(sqrt(up[1]) / up[2], 5 * s)
   expect_equal(perturb_priors(cfg, sd_mult = 5, groups = "hfa")$nu_prior, cfg$nu_prior)
 })
+
+test_that("margin families: seasons better counts seasons, not the pooled difference", {
+  # two seasons, five games each: scale_t beats t in both; mixture beats it in one but loses
+  # overall (pooled, scale_t would count once and mixture never)
+  run <- function(s, f, elpd) list(season = s, family = f, elpd = elpd, n_bad_k = 0L, health = list(passed = TRUE),
+                                   ppc = tibble::tibble(statistic = "x", observed = 0, rep_lo = 0, rep_hi = 0, p_value = 0.5))
+  base <- c(-1, -2, -3, -2, -1)
+  comparison <- list(run(2020L, "t", base), run(2020L, "scale_t", base + c(2, 2, 2, 2, 3)), run(2020L, "mixture", base + 0.1),
+                     run(2021L, "t", base), run(2021L, "scale_t", base + 0.5), run(2021L, "mixture", base - c(1, 1, 1, 1, 2)))
+  out <- compare_margin_families(comparison, incumbent = "t")
+  p <- out$pooled[match(c("scale_t", "mixture", "t"), out$pooled$family), ]
+  expect_equal(p$diff, c(11 + 2.5, 0.5 - 6, 0))
+  expect_equal(p$seasons_better, c(2L, 1L, 0L))
+  expect_equal(p$seasons, c(2L, 2L, 2L))
+  # the pooled se is built from the per-season se, not the pooled one
+  ps <- out$per_season
+  expect_equal(p$se, vapply(p$family, \(f) sqrt(sum(ps$se[ps$family == f]^2)), numeric(1), USE.NAMES = FALSE))
+})

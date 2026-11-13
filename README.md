@@ -23,7 +23,7 @@ with μ = r_home − r_away + hfa·(not neutral). Conditioning the margin on the
 keeps the two signals from being counted as independent evidence; λ, κ, σ's are estimated, so
 there are no hand-set weights.
 
-Hierarchy: r = μ_conference + b·(last season's rating relative to its conference) + σ_tier·z,
+Hierarchy: r = μ_conference + b·(last season's rating relative to its tier's mean) + σ_tier·z,
 with conferences nested in tiers (FBS anchored at 0, FCS, non-D1). *b* is the year-to-year
 carry-over, estimated from the data, so early-season ratings lean on last season and the
 data takes over as games are played. FBS, FCS and lower-division games are all included.
@@ -46,8 +46,10 @@ squares, CFBD Elo, SP+, FPI), leave-one-season-out priors, simulation-based cali
 benchmark ranks 4/12/25, and agreement with CFP committee selections.
 
 **Priors** on the structural parameters (home field, tier offsets, carry-over, scales) are
-centred on full-season refits of 2015–2025 under vague priors, with sd = 2× the between-season
-sd (`prior_refits` target → `pool_priors()` → `priors_from_pool()`, rounded into
+centred on full-season refits of 2015–2025 under vague priors, with sd the predictive sd for a
+new season: the between-season sd beyond one season's posterior sd, plus the uncertainty of the
+mean (tier offsets floored at one season's posterior sd; `prior_refits` target → `pool_priors()`
+→ `priors_from_pool()`, rounded into
 `model_config()`). `check_build.R` warns when a rebuild's refits drift from the configured
 values.
 

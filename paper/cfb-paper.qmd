@@ -316,10 +316,12 @@ ablation_order <- c("Published model", "Margin only", "No carry-over", "No confe
 mf <- targets::tar_read(margin_families, store = store)
 fam_lab <- c(t = "Student-$t$", mixture = "Mixture", scale_t = "Scale-$t$", normal = "Normal")
 mf_season <- mf$per_season
+# per-season tallies first: summarise() replaces diff and se with their pooled values in order
 mf_pool <- mf_season |>
+  mutate(better = diff > 0, better2 = diff > 2 * se) |>
   group_by(family) |>
   summarise(elpd = sum(elpd), diff = sum(diff), se = sqrt(sum(se^2)), seasons = n(),
-            better = sum(diff > 0), better2 = sum(diff > 2 * se), bad_k = sum(n_bad_k),
+            better = sum(better), better2 = sum(better2), bad_k = sum(n_bad_k),
             passed = all(passed), .groups = "drop") |>
   arrange(desc(elpd))
 mf_best <- mf_pool$family[1]

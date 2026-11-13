@@ -719,7 +719,8 @@ run_margin_comparison <- function(season_data, cfg = model_config(), families = 
 
 #' Pooled LOO comparison of the margin families against the incumbent (cfg$margin_family):
 #' per season, the summed pointwise elpd difference and its standard error; pooled over seasons
-#' (independent), the sum and sqrt(sum se^2)
+#' (independent), the sum and sqrt(sum se^2). seasons_better counts the seasons whose own
+#' difference is positive (taken before summarise() replaces diff with the pooled sum).
 compare_margin_families <- function(comparison, incumbent = "t") {
   seasons <- unique(vapply(comparison, `[[`, integer(1), "season"))
   get <- function(s, f) Filter(\(x) x$season == s && x$family == f, comparison)[[1]]
@@ -734,9 +735,10 @@ compare_margin_families <- function(comparison, incumbent = "t") {
     }))
   }))
   pooled <- per_season |>
+    dplyr::mutate(better = diff > 0) |>
     dplyr::group_by(family) |>
     dplyr::summarise(elpd = sum(elpd), diff = sum(diff), se = sqrt(sum(se^2)), seasons = dplyr::n(),
-                     seasons_better = sum(diff > 0), all_passed = all(passed), .groups = "drop") |>
+                     seasons_better = sum(better), all_passed = all(passed), .groups = "drop") |>
     dplyr::arrange(dplyr::desc(elpd))
   ppc <- dplyr::bind_rows(lapply(comparison, \(x) dplyr::mutate(x$ppc, season = x$season, family = x$family)))
   list(per_season = per_season, pooled = pooled, ppc = ppc)
