@@ -139,7 +139,9 @@ list(
                                                      .(as.symbol(paste0("data_", CURRENT_SEASON))), cfg = cfg))),
   tar_target(ratings, attach_polls(snapshots$ratings, season_data)),
   tar_target(games_all, dplyr::bind_rows(lapply(season_data, `[[`, "games"))),
-  tar_target(backtest, run_backtest(snapshots$predictions, games_all, snapshots$params)),
+  # Totals get a mismatch calibration fitted on earlier games only (calibrate_totals())
+  tar_target(predictions, calibrate_totals(snapshots$predictions, games_all)),
+  tar_target(backtest, run_backtest(predictions, games_all, snapshots$params)),
 
   # ---- Analyses for the paper (R/07_analysis.R) ----
   tar_target_raw("weeks_all", as.call(c(quote(list), setNames(weeks_syms, SEASONS)))),
@@ -198,7 +200,8 @@ list(
   tar_target(sp_ratings, { sync; read_sp(DB_PATH) }),
   tar_target(game_times, { sync; read_game_times(DB_PATH) }),
   tar_target(dashboard_data, build_dashboard_data(ratings, snapshots, games_all, teams_meta, backtest, cfg,
-                                                  sp = sp_ratings, game_times = game_times)),
+                                                  sp = sp_ratings, game_times = game_times,
+                                                  predictions = predictions)),
 
   # The stylesheet, logos and headline overrides are tracked too, so editing only them re-renders the dashboard
   tar_quarto(dashboard, path = "docs/dashboard.qmd", quiet = TRUE,

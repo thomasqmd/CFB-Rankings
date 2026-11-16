@@ -18,7 +18,7 @@ clean_color <- function(x) ifelse(is.na(x) | !grepl("^#[0-9A-Fa-f]{6}$", x), NA_
 #' @param game_times kickoff-time-TBD flags (read_game_times()); dates and times are US Central
 #' @return list of data frames, each small enough to inline in a static HTML page
 build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = NULL,
-                                 game_times = NULL) {
+                                 game_times = NULL, predictions = snapshots$predictions) {
   params <- snapshots$params
 
   last_week <- params |> dplyr::group_by(season) |> dplyr::summarise(last = max(week), .groups = "drop")
@@ -62,7 +62,7 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
                      min_ess = round(pmin(min_ess_bulk, min_ess_tail)), divergences)
 
   # Pre-game view of each game: the prediction made by the previous week's snapshot
-  preds <- snapshots$predictions
+  preds <- predictions
   for (nm in c("pred_home_pts", "pred_away_pts")) if (!nm %in% names(preds)) preds[[nm]] <- NA_real_
   pre <- preds |>
     dplyr::inner_join(games_all |> dplyr::select(season, game_id, week_seq), by = c("season", "game_id")) |>

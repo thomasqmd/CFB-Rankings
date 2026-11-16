@@ -863,6 +863,8 @@ whose difference is the expected margin $\mu_g$ and whose sum is the expected to
 
 The total model shares no parameter with the margin model of @eq-lik, and its likelihood involves only the total tendencies, so the joint posterior factorises: adding it changes neither the power rating nor the resume, only what is reported alongside them. The price of that separation is that the noise of the margin and the noise of the total are modelled as independent, and that overtime games inform the total only through $e^+_g$. The total is scored against the closing over/under in @sec-bt-accuracy.
 
+**Mismatch calibration.** Because $T_g$ adds two team tendencies, the expected total does not depend on how lopsided a game is: a 45-point favourite's game is projected at about the same total as an even one, although such games average about seven points more, and the underdog's projected score $\theta + \frac12(T_g - \mu_g)$ can fall below zero. Published totals therefore add $\gamma_x (x_g - \bar x)$ with $x_g = \min(|\hat\mu_g|, 50)^2/100$, where $\gamma_x$ and $\bar x$ come from a regression of total residuals on $x_g$ over the next-week predictions of every game played before the predicted week (no overtime games), so the calibration uses no future information and leaves the average total unchanged; a total still below $|\hat\mu_g|$ is raised to it. Each projected score moves by half the adjustment, and the margin, the win probability and both products are unchanged. The same term inside the model is not equivalent: conditioned on the played margin, its slope absorbs the correlation of the margin and total residuals, which rises from zero in even games to about $0.6$ beyond 42 points, and with that correlation modelled the in-model version predicted the totals of 2024--2025 worse ($12.79$ points of mean absolute error against $12.76$) while moving the ratings.
+
 ## Priors {#sec-priors}
 
 The structural parameters --- tier offsets, spreads, the carry-over and the preseason terms, home field, the likelihood scales, the random-walk steps and the total model --- describe the sport rather than any team. In the first weeks of a season, with about one game per team, the data cannot estimate them, and a vague prior leaves the sampler in a funnel. They are therefore given informative priors, set from history. Each complete season's final snapshot (about 1,550 games) is refitted under deliberately vague priors (@sec-supp-justify); the refits are the `prior_refits` target of the pipeline. The season-by-season posterior means $\hat\theta_s$, with posterior standard deviations $v_s$, are then pooled as in a random-effects meta-analysis. Each prior is centred at the weighted mean of the $\hat\theta_s$, with weights $w_s = 2^{-|s - s^\ast|/h}$ that halve every $h = `r cfg$pool$half_life`$ seasons away from the season $s^\ast$ the prior is for, and its standard deviation is the predictive standard deviation for a new season,
@@ -1662,6 +1664,7 @@ tibble::tribble(
   "Benchmark rank $b$", as.character(cfg$benchmark_rank), "Playoff size (Section~\\ref{sec-bench})", "No",
   "Family shape priors", "Table~\\ref{tbl-priors-other}", if (has_nu) "$\\nu$ pooled like the structural priors" else "Weakly informative", if (has_nu) "Yes" else "No",
   "Minimum plays for $e_g$", as.character(cfg$min_plays), "Judgement", "No",
+  "Total mismatch calibration", "slope refitted each week, cap 50", "Regression on earlier games' next-week predictions (Section~\\ref{sec-total})", "No (fitted walk-forward)",
   "Garbage-time filter", "provider's", "CFBD definition", "No",
   "Sampler and gates", paste0(cfg$chains, " chains, ", cfg$iter_warmup, "/", cfg$iter_sampling), "Conventional thresholds", "No"
 ) |>
@@ -1676,7 +1679,7 @@ This section uses the `r last_full` season to show what the two products look li
 g_last <- games |> filter(season == last_full)
 nc <- g_last |> filter(season_type == "postseason", grepl("National Championship", notes)) |> slice(1)
 nc_w <- nc$week_seq - 1L
-nc_pred <- snapshots$predictions |> filter(season == last_full, week == nc_w, game_id == nc$game_id)
+nc_pred <- targets::tar_read(predictions) |> filter(season == last_full, week == nc_w, game_id == nc$game_id)
 nc_par <- params |> filter(season == last_full, week == nc_w)
 nc_r <- ratings |> filter(season == last_full, week == nc_w, team_id %in% c(nc$home_id, nc$away_id))
 r_h <- nc_r$power[nc_r$team_id == nc$home_id]; r_a <- nc_r$power[nc_r$team_id == nc$away_id]

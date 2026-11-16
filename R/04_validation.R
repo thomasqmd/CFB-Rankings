@@ -130,6 +130,53 @@ spiegelhalter_z <- function(p, y) {
   sum((y - p) * (1 - 2 * p)) / sqrt(sum((1 - 2 * p)^2 * p * (1 - p)))
 }
 
+#' Mismatch calibration of predicted totals. The total model adds the two teams' tendencies, so
+#' it projects a 45-point mismatch at the same ~54 points as an even game, while such games
+#' average ~62 and the underdog's projected score can go negative. Each snapshot's totals get
+#' gamma * (x - xbar), x = min(|pred_margin|, cap)^2 / 100, with gamma and xbar from a regression
+#' of total residuals on x over every earlier game's next-week prediction (games before the
+#' predicted week, no overtime), so the adjustment uses no future information and leaves the
+#' average total unchanged. The scores move by half the adjustment each; margins are untouched.
+#' A total still below the margin is raised to it, so neither projected score is negative.
+#' A term inside the Stan model was tested instead (2026-11-15): conditioned on the played
+#' margin, the fitted slope absorbed the correlation of margin and total residuals in blowouts,
+#' and with that correlation modelled it predicted totals worse (2024-25 MAE 12.79 vs 12.76).
+#' @return predictions with pred_total / pred_home_pts / pred_away_pts adjusted and a tot_adj column
+calibrate_totals <- function(predictions, games, cap = 50, min_games = 500L) {
+  x_of <- function(m) pmin(abs(m), cap)^2 / 100
+  played <- games |>
+    dplyr::filter(completed, !is.na(home_points), !is.na(away_points), !dplyr::coalesce(ot, FALSE)) |>
+    dplyr::transmute(season, game_id, week_seq, total = home_points + away_points)
+  # Training rows: each game's next-week prediction, ordered by when the game was played
+  tr <- predictions |>
+    dplyr::select(season, week, game_id, pred_margin, pred_total) |>
+    dplyr::inner_join(played, by = c("season", "game_id")) |>
+    dplyr::filter(week_seq == week + 1L, !is.na(pred_total)) |>
+    dplyr::transmute(key = season * 100L + week_seq, x = x_of(pred_margin), y = total - pred_total) |>
+    dplyr::group_by(key) |>
+    dplyr::summarise(n = dplyr::n(), sx = sum(x), sy = sum(y), sxx = sum(x^2), sxy = sum(x * y), .groups = "drop") |>
+    dplyr::arrange(key) |>
+    dplyr::mutate(dplyr::across(c(n, sx, sy, sxx, sxy), cumsum))
+  # A snapshot at (season, week) predicts week + 1 onwards: it may use games with key <= season*100 + week
+  snaps <- predictions |> dplyr::distinct(season, week) |>
+    dplyr::mutate(cut = season * 100L + week,
+                  i = findInterval(cut, tr$key))
+  cs <- tr[pmax(snaps$i, 1L), ]
+  ok <- snaps$i > 0 & cs$n >= min_games
+  xbar <- cs$sx / cs$n
+  gamma <- (cs$sxy - cs$n * xbar * (cs$sy / cs$n)) / (cs$sxx - cs$n * xbar^2)
+  snaps$gamma <- ifelse(ok, gamma, 0)
+  snaps$xbar <- ifelse(ok, xbar, 0)
+  predictions |>
+    dplyr::left_join(snaps |> dplyr::select(season, week, gamma, xbar), by = c("season", "week")) |>
+    dplyr::mutate(tot_adj = ifelse(is.na(pred_total), NA_real_, gamma * (x_of(pred_margin) - xbar)),
+                  tot_adj = pmax(pred_total + tot_adj, abs(pred_margin)) - pred_total,
+                  pred_total = pred_total + tot_adj,
+                  pred_home_pts = pred_home_pts + tot_adj / 2,
+                  pred_away_pts = pred_away_pts + tot_adj / 2) |>
+    dplyr::select(-gamma, -xbar)
+}
+
 #' Out-of-sample backtest: each game is predicted by the snapshot fitted through the
 #' previous week (no future information), then compared with the result and the line.
 #' The predictive distribution of the margin is the snapshot's own (pred_q: quantiles of
