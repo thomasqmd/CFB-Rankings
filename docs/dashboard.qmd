@@ -88,7 +88,7 @@ htl.html`<div>${themeButton}</div>`
 <div class="nameplate">
   <div class="np-ear">
     <div class="eb" style="color:var(--res-t)">Resume</div>
-    Wins beyond #12 power rated team with the same schedule<br>(Wins Above Baseline)
+    Wins beyond the last at-large playoff team with the same schedule<br>(Wins Above Baseline)
   </div>
   <a class="np-center" href="#rankings">
     <span class="np-title">
@@ -168,7 +168,7 @@ htl.html`<div>${rankView === "Rank chart" ? rankChart : rankingsTable}</div>`
 ```{ojs}
 htl.html`<section class="team-top"><div class="tc" style="gap:18px">${logo(tRow.id, 64)}<div>
   <h1 class="disp">${tRow.team}</h1>
-  <span style="color:var(--ink-2)">${[tRow.conf, `${tRow.wins}–${tRow.losses}${tSim && tSim.cg > 0 ? ` (${tSim.cw}–${tSim.cl})` : ""}`, tRow.ap ? `AP #${tRow.ap}` : null, tRow.cfp ? `CFP #${tRow.cfp}` : null].filter(Boolean).join(" · ")}</span></div></div></section>`
+  <span style="color:var(--ink-2)">${[tRow.conf, `${tRow.wins}–${tRow.losses}${tSim && tSim.cg > 0 ? ` (${tSim.cw}–${tSim.cl})` : ""}`, tRow.ap ? `AP #${tRow.ap}` : null, tRow.cfp ? `CFP #${tRow.cfp}` : null, tRow.sp_rk ? `SP+ #${tRow.sp_rk}` : null].filter(Boolean).join(" · ")}</span></div></div></section>`
 ```
 ::: {.ctl-row .ctl}
 ```{ojs}
@@ -309,7 +309,7 @@ htl.html`<section class="lede"><div class="eb">Polls</div><h1 class="disp">${hea
 ```
 ::: {.ctl-row .ctl .seg .spread}
 ```{ojs}
-htl.html`<p class="lead-p">Each column is another ranking's top ${pollDepth}. <strong class="res-t">R #</strong> is where our resume has that team; bold when it is 8 or more places away.</p>`
+htl.html`<p class="lead-p">Each column is one ranking's top ${pollDepth}. <strong class="res-t">R #</strong> is where our resume has that team; bold when it is 8 or more places away.</p>`
 ```
 ```{ojs}
 viewof pollDepth = Inputs.radio([15, 25], { label: "Show", value: 15, format: n => `Top ${n}` })
@@ -526,9 +526,9 @@ eyebrow = (t, color = "var(--link)") => htl.html`<div class="eb" style=${{ color
 kv = (k, v, s) => htl.html`<div class="kv"><span class="k">${k}</span><span class="v">${v}</span>${s ? htl.html`<span class="s">${s}</span>` : ""}</div>`
 secH = (title, right) => htl.html`<div class="sec-h"><h2 class="disp">${title}</h2>${right ?? ""}</div>`
 // Point and 80% range on a fixed scale
-ibar = (v, lo, hi, [min, max], color) => {
-  const x = d3.scaleLinear([min, max], [6, 114]).clamp(true)
-  return htl.svg`<svg width="120" height="16" viewBox="0 0 120 16" aria-hidden="true">
+ibar = (v, lo, hi, [min, max], color, w = 120) => {
+  const x = d3.scaleLinear([min, max], [6, w - 6]).clamp(true)
+  return htl.svg`<svg width=${w} height="16" viewBox=${`0 0 ${w} 16`} aria-hidden="true">
     ${min < 0 && max > 0 ? htl.svg`<line x1=${x(0)} x2=${x(0)} y1="2" y2="14" stroke="var(--field)"/>` : ""}
     <line x1=${x(lo)} x2=${x(hi)} y1="8" y2="8" stroke=${color} stroke-opacity="0.3" stroke-width="4" stroke-linecap="round"/>
     <circle cx=${x(v)} cy="8" r="5" fill=${color} stroke="var(--paper)" stroke-width="1.5"/></svg>`
@@ -591,8 +591,10 @@ SORTS = [
   { key: "def", label: "Defense", col: "def_rk" },
   { key: "sos", label: "Schedule", col: "sos_rk" },
   { key: "ap", label: "AP poll", col: "ap" },
-  ...(fbs.some(d => d.cfp != null) ? [{ key: "cfp", label: "CFP", col: "cfp" }] : [])
-].filter(s => hasResume || !["resume", "sos"].includes(s.key))
+  ...(fbs.some(d => d.cfp != null) ? [{ key: "cfp", label: "CFP", col: "cfp" }] : []),
+  ...(fbs.some(d => d.sp_rk != null) ? [{ key: "sp", label: "SP+", col: "sp_rk" }] : []),
+  ...(fbs.some(d => d.sp_rrk != null) ? [{ key: "spres", label: "SP+ WAB", col: "sp_rrk" }] : [])
+].filter(s => hasResume || !["resume", "sos", "spres"].includes(s.key))
 ```
 
 ```{ojs}
@@ -639,9 +641,14 @@ rankingsTable = {
   const wDom = [Math.min(-6, d3.min(fbs, d => d.wab_lo) ?? -6), Math.max(2, d3.max(fbs, d => d.wab_hi) ?? 2)]
   const pDom = d3.extent(fbs.flatMap(d => [d.pw_lo, d.pw_hi]))
   const hc = k => sort.key === k ? "var(--navy)" : "var(--ink-3)"
+  // SP+ is kept for each season's latest week only; its two columns appear on that snapshot and
+  // the grid tightens to make room (.rk.sp in cfb.css)
+  const hasSp = hasResume && fbs.some(d => d.sp_rrk != null)
+  const barW = hasSp ? 104 : 120
+  const spAsof = season === seasons[0] && cfg.sp_asof ? ` as of ${cfg.sp_asof}` : ""
   const rng = (lo, hi) => lo == null || lo === hi ? "" : htl.html`<div class="note" style="font-size:12px;font-weight:400;line-height:1.1">${lo}–${hi}</div>`
   // The benchmark line sits where WAB turns negative: teams above it have won more than the
-  // #12 team by power would have with their schedule (any number of teams can)
+  // last at-large playoff team would have with their schedule (any number of teams can)
   const showCut = sort.key === "resume" && confPick === "all" && !q && hasResume
   const cutAfter = showCut ? rows.filter(d => d.wab > 0).at(-1)?.id : null
   const row = d => {
@@ -651,24 +658,27 @@ rankingsTable = {
       <div class="stick s2" role="cell">${sort.prev ? move(now, before) : ""}</div>
       <div class="stick s3" role="cell">${logo(d.id, 30)}<span class="tc-t">${teamLink(d)}<span class="tc-s">${d.conf}</span></span></div>
       <div class="c r" role="cell">${d.wins}–${d.losses}</div>
-      <div class="rk-val" role="cell">${hasResume ? [htl.html`<span class="res-t">${fmtSigned(d.wab, 2)}</span>`, ibar(d.wab, d.wab_lo, d.wab_hi, wDom, "var(--res)")] : htl.html`<span class="muted">–</span>`}</div>
+      <div class="rk-val" role="cell">${hasResume ? [htl.html`<span class="res-t">${fmtSigned(d.wab, 2)}</span>`, ibar(d.wab, d.wab_lo, d.wab_hi, wDom, "var(--res)", barW)] : htl.html`<span class="muted">–</span>`}</div>
       <div class="c b r" role="cell">${d.rrk ?? "–"}${rng(d.rrk_lo, d.rrk_hi)}</div>
       <div class="c r" role="cell">${hasResume ? fmtPct(d.p12) : "–"}</div>
-      <div class="rk-val" role="cell"><span class="pow-t">${fmtSigned(d.pw)}</span>${ibar(d.pw, d.pw_lo, d.pw_hi, pDom, "var(--pow)")}</div>
+      <div class="rk-val" role="cell"><span class="pow-t">${fmtSigned(d.pw)}</span>${ibar(d.pw, d.pw_lo, d.pw_hi, pDom, "var(--pow)", barW)}</div>
       <div class="c b r" role="cell">${d.prk}${rng(d.prk_lo, d.prk_hi)}</div>
       <div class="c r" role="cell" title=${d.off == null ? "" : `${d.off.toFixed(1)} pts scored vs. an average FBS defense`}>${d.off_rk ?? "–"}</div>
       <div class="c r" role="cell" title=${d.def == null ? "" : `${d.def.toFixed(1)} pts allowed vs. an average FBS offense`}>${d.def_rk ?? "–"}</div>
       <div class="c r" role="cell">${d.sos_rk ?? "–"}</div>
       <div class="c r" role="cell">${(sort.key === "cfp" ? d.cfp : d.ap) ?? "–"}</div>
-    </div>${d.id === cutAfter ? htl.html`<div class="rk-cut" role="row"><span><span class="eb">Benchmark line · WAB 0</span>Teams above have won more than the #${cfg.benchmark_rank} power-rated team would have with their schedule.</span></div>` : ""}`
+      ${hasSp ? [htl.html`<div class="c r" role="cell" title=${d.sp_rk == null ? "" : `#${d.sp_rk} in SP+`}>${d.sp == null ? "–" : fmtSigned(d.sp)}</div>`,
+        htl.html`<div class="c b r" role="cell" title=${d.sp_wab == null ? "" : `${fmtSigned(d.sp_wab, 2)} WAB on SP+ ratings`}>${d.sp_rrk ?? "–"}</div>`] : ""}
+    </div>${d.id === cutAfter ? htl.html`<div class="rk-cut" role="row"><span><span class="eb">Benchmark line · WAB 0</span>Teams above have won more than the last at-large playoff team would have with their schedule.</span></div>` : ""}`
   }
   return htl.html`<div>
-    <div class="rk-box"><div class="rk" role="table" aria-labelledby="fbs-title">
+    <div class="rk-box"><div class=${hasSp ? "rk sp" : "rk"} role="table" aria-labelledby="fbs-title">
       <div class="rk-head-rows">
         <div class="rk-row rk-groups" role="presentation">
           <div style="grid-column:5 / span 3;color:var(--res-t);border-bottom:2px solid var(--res)">Resume</div>
           <div style="grid-column:8 / span 4;color:var(--pow-t);border-bottom:2px solid var(--pow)">Power</div>
           <div style="grid-column:12 / span 2;color:var(--ink-3);border-bottom:2px solid var(--field)">Context</div>
+          ${hasSp ? htl.html`<div style="grid-column:14 / span 2;color:var(--ink-3);border-bottom:2px solid var(--field)">SP+</div>` : ""}
         </div>
         <div class="rk-row rk-cols" role="row">
           <div class="stick s1" role="columnheader">#</div>
@@ -684,6 +694,8 @@ rankingsTable = {
           <div class="r" role="columnheader" style=${{ color: hc("def") }}>Def</div>
           <div class="r" role="columnheader" style=${{ color: hc("sos") }}>SOS</div>
           <div class="r" role="columnheader" style=${{ color: hc(sort.key === "cfp" ? "cfp" : "ap") }}>${sort.key === "cfp" ? "CFP" : "AP"}</div>
+          ${hasSp ? [htl.html`<div class="r" role="columnheader" title=${`Published SP+ rating${spAsof}, points vs. an average team`} style=${{ color: hc("sp") }}>Rating</div>`,
+            htl.html`<div class="r" role="columnheader" title="Rank of the WAB computed with SP+ ratings in place of ours" style=${{ color: hc("spres") }}>WAB rank</div>`] : ""}
         </div>
       </div>
       <div class="rk-body">${rows.map(row)}</div>
@@ -691,7 +703,7 @@ rankingsTable = {
     </div></div>
     <div class="rk-foot">
       <span>${snap.passed ? "✓ Model converged" : "⚠ Convergence checks failed"} · home field ${fmtSigned(snap.hfa)} pts</span>
-      <span>WAB is wins above what the #${cfg.benchmark_rank} power-rated team would have on the same schedule. Dot is the median; bars and ranges are 80% intervals. Top ${cfg.benchmark_rank} is the chance of a top-${cfg.benchmark_rank} resume this week.</span>
+      <span>WAB is wins above what the last at-large playoff team would have on the same schedule: by power rating, the ${ord(cfg.benchmark_rank - cfg.n_auto)}-best team outside the ${cfg.n_auto} top-rated conference champions${snap.bench_rank == null ? "" : ` (about #${Math.round(snap.bench_rank)} overall this week)`}. Dot is the median; bars and ranges are 80% intervals. Top ${cfg.benchmark_rank} is the chance of a top-${cfg.benchmark_rank} resume this week.${hasSp ? ` SP+ is the published rating${spAsof}; WAB rank is the same WAB computed with SP+ ratings in place of ours.` : ""}</span>
     </div></div>`
 }
 ```
@@ -841,7 +853,9 @@ teamBody = {
         ${rating("Power", `${fmtSigned(tRow.pw)} pts`, tRow.prk, "var(--pow)", mvTxt(tRow.prk, pm?.prk))}
         ${tRow.off == null ? "" : rating("Offense", `${tRow.off.toFixed(1)} pts`, tRow.off_rk, "var(--navy)", "points scored")}
         ${tRow.def == null ? "" : rating("Defense", `${tRow.def.toFixed(1)} pts`, tRow.def_rk, "var(--navy)", "points allowed")}
-        ${hasResume ? rating("Schedule", "SOS", tRow.sos_rk, "var(--ink-3)", "opponents so far") : ""}</div>
+        ${hasResume ? rating("Schedule", "SOS", tRow.sos_rk, "var(--ink-3)", "opponents so far") : ""}
+        ${tRow.sp == null ? "" : rating("SP+", `${fmtSigned(tRow.sp)} pts`, tRow.sp_rk, "var(--ink-3)", "published rating")}
+        ${tRow.sp_wab == null ? "" : rating("SP+ WAB", `${fmtSigned(tRow.sp_wab, 2)} WAB`, tRow.sp_rrk, "var(--ink-3)", "resume on SP+ ratings")}</div>
       <div style="padding-top:16px">${eyebrow("Outlook", "var(--ink-3)")}${outlook}</div>
       ${mini ? htl.html`<div style="padding-top:22px;margin-top:18px;border-top:1px solid var(--rule)">
         <div style="display:flex;justify-content:space-between;align-items:baseline">${eyebrow("Rank by week", "var(--ink-3)")}
@@ -928,6 +942,8 @@ resumeBody = {
     row("WAB", htl.html`${fmtSigned(a.wab, 2)} <span class="note">#${a.rrk}</span>`, htl.html`<span class="note">#${b.rrk}</span> ${fmtSigned(b.wab, 2)}`, cmp(a.wab, b.wab)),
     row("Rank · 80%", htl.html`#${a.rrk}${rng(a)}`, htl.html`#${b.rrk}${rng(b)}`, cmp(a.rrk, b.rrk, false)),
     row(`Top ${cfg.benchmark_rank}`, fmtPct(a.p12), fmtPct(b.p12), cmp(a.p12, b.p12)),
+    ...(a.sp_wab == null || b.sp_wab == null ? [] : [row("SP+ WAB", htl.html`${fmtSigned(a.sp_wab, 2)} <span class="note">#${a.sp_rrk}</span>`,
+      htl.html`<span class="note">#${b.sp_rrk}</span> ${fmtSigned(b.sp_wab, 2)}`, cmp(a.sp_wab, b.sp_wab))]),
     row("Schedule", `#${a.sos_rk ?? "–"}`, `#${b.sos_rk ?? "–"}`, cmp(a.sos_rk, b.sos_rk, false)),
     row("Record", `${a.wins}–${a.losses}`, `${b.wins}–${b.losses}`, null),
     row("vs. power top 25", vs(a, 1, 25), vs(b, 1, 25), null),
@@ -960,7 +976,7 @@ resumeBody = {
     <section class="faceoff">${mSide(a, "a")}
       <div class="verdict">${eyebrow("Resume", "var(--res-t)")}
         <span class="disp">${lead.team} by ${(lead.wab - trail.wab).toFixed(2)}</span>
-        <span style="font-size:15px;color:var(--ink-2)">WAB gap · wins above the #${cfg.benchmark_rank} power-rated team on the same schedule</span>
+        <span style="font-size:15px;color:var(--ink-2)">WAB gap · wins above the last at-large playoff team on the same schedule</span>
       </div>${mSide(b, "b")}</section>
     <section class="tape">${tape}</section>
     <div style="display:flex;flex-direction:column;gap:12px"><div class="ctl seg">${sortCtl}</div>
@@ -1001,6 +1017,7 @@ powerBody = {
         <span class="split"><span style=${{ width: `${m.pA * 100}%`, background: "var(--pow)" }}></span><span style="flex:1;background:var(--res)"></span></span>
         <span style="display:flex;justify-content:space-between;width:100%;font-weight:700"><span class="pow-t">${fmtPct(m.pA)}</span><span class="res-t">${fmtPct(1 - m.pA)}</span></span>
         ${m.ptsA == null ? "" : htl.html`<span style="font-size:15px;color:var(--ink-2)">Projected score <strong style="color:var(--ink)">${Math.round(m.ptsA)}–${Math.round(m.ptsB)}</strong> · total ${(m.ptsA + m.ptsB).toFixed(0)}</span>`}
+        ${a.sp == null || b.sp == null ? "" : htl.html`<span style="font-size:15px;color:var(--ink-2)">SP+ line <strong style="color:var(--ink)">${favTxt({ a, b, mean: a.sp - b.sp + snap.hfa * venue })}</strong></span>`}
       </div>${side(b, "b")}</section>
     <section class="tape">${tape}<div class="tape-row"><span class="l">${a.wins}–${a.losses}</span><span class="eb">Record</span><span class="l">${b.wins}–${b.losses}</span></div></section>
     <section><div class="chart-scroll">${chart}</div></section></div>`
@@ -1227,10 +1244,10 @@ rvpBody = {
     width: PW, height: PH, marginLeft: m.l, marginRight: m.r, marginTop: m.t, marginBottom: m.b,
     style: { background: "transparent", fontSize: "13px" }, grid: true, color: { type: "identity" },
     x: { domain: x.domain(), label: "Power rating (points vs. average FBS team) →" },
-    y: { domain: y.domain(), label: `↑ Wins above the #${cfg.benchmark_rank} power-rated team` },
+    y: { domain: y.domain(), label: "↑ Wins above the last at-large playoff team" },
     marks: [
       Plot.ruleY([0], { stroke: "var(--res-t)", strokeDasharray: "5,4" }),
-      Plot.text([[x.domain()[0], 0]], { dx: 6, dy: -8, textAnchor: "start", text: () => `Benchmark: the #${cfg.benchmark_rank} power-rated team`, fill: "var(--res-t)", fontSize: 12 }),
+      Plot.text([[x.domain()[0], 0]], { dx: 6, dy: -8, textAnchor: "start", text: () => "Benchmark: the last at-large playoff team", fill: "var(--res-t)", fontSize: 12 }),
       Plot.dot(fbs.filter(d => !on(d)), { x: "pw", y: "wab", r: 4.5, fill: d => `var(${GRPVAR[d.grp]})`, fillOpacity: 0.15 }),
       Plot.dot(hi, { x: "pw", y: "wab", r: d => big(d) ? 6.5 : 4.5, fill: d => `var(${GRPVAR[d.grp]})`, fillOpacity: d => big(d) ? 0.95 : 0.45, stroke: "var(--paper)", strokeWidth: 1 }),
       ...labelMarks(labs, { text: "team", fontSize: 12.5, fontWeight: 600, fill: "var(--ink)", stroke: "var(--paper)", strokeWidth: 3, paintOrder: "stroke" }),
@@ -1267,7 +1284,10 @@ pollsHeadline = {
 //| output: false
 pollsBody = {
   const sys = [["cfp", "CFP committee", "Selects the playoff field"], ["ap", "AP poll", "Media voters"], ["coaches", "Coaches poll", "FBS head coaches"],
-    ["cbs", "CBS Sports 138", "One writer, every team"], ["colley", "Colley matrix", "Record and schedule only"]]
+    ["cbs", "CBS Sports 138", "One writer, every team"], ["colley", "Colley matrix", "Record and schedule only"],
+    ["prk", "Power rating", "Ours, from margin and efficiency"],
+    // SP+ is kept for each season's latest week only
+    ...(fbs.some(d => d.sp_rk != null) ? [["sp_rk", "SP+", "Published power rating"], ["sp_rrk", "SP+ WAB", "Our resume formula on SP+ ratings"]] : [])]
   const sim = simLive ? new Map(simRows.map(d => [d.id, d])) : new Map()
   const confAbbr = { "American Athletic": "AAC", "Big Ten": "B1G", "Big 12": "B12", "Conference USA": "CUSA", "FBS Independents": "Ind",
     "Mid-American": "MAC", "Mountain West": "MW", "Pac-12": "P12", "Sun Belt": "SBC" }

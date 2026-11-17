@@ -36,9 +36,11 @@ Estimated home-field advantage: **`r sprintf("%.1f", snap$hfa)` points**.
 
 ## Resume: what teams have earned
 
-A team's resume is its **wins above benchmark (WAB)**. For each game it scores 1 − P(the #`r bench`
+A team's resume is its **wins above baseline (WAB)**. For each game it scores 1 − P(the benchmark
 team would have won it) for a win, and −P(…) for a loss, with opponent strength and venue from
-the Power model. Zero means the team did exactly what a playoff-bubble team would have.
+the Power model. The benchmark is the last at-large team of a `r bench`-team playoff: by power
+rating, the best team left once the top-rated conference champions and the other at-large teams
+are in. Zero means the team did exactly what a playoff-bubble team would have.
 
 ```{r}
 #| label: tbl-resume
@@ -89,7 +91,7 @@ ggplot(fbs, aes(power, wab)) +
   geom_point(aes(color = resume_rank <= 12), size = 2.4, alpha = 0.8, show.legend = FALSE) +
   geom_text(data = lab, aes(label = team), vjust = -0.9, size = 3, color = c_ink, check_overlap = TRUE) +
   scale_color_manual(values = c(`TRUE` = c_resume, `FALSE` = "#a9b5c3")) +
-  labs(x = "Power rating (points vs. average FBS team)", y = sprintf("Wins above #%d team", bench)) +
+  labs(x = "Power rating (points vs. average FBS team)", y = "Wins above baseline") +
   theme_report
 ```
 

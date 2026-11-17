@@ -25,6 +25,15 @@ ccg_formats <- function() {
   )
 }
 
+#' Conference title games: a regular-season game between two members of the same FBS conference
+#' that CFBD labels a championship. The label is the test, not `conference_game`: CFBD set that
+#' flag to FALSE for every 2025 title game, which made them look like ordinary non-conference games
+is_title_game <- function(games) {
+  games$season_type == "regular" & games$home_class %in% "fbs" & games$away_class %in% "fbs" &
+    dplyr::coalesce(games$home_conference == games$away_conference, FALSE) &
+    games$home_conference != "FBS Independents" & grepl("Championship", games$notes)
+}
+
 #' Each team's division (CFBD /teams, read from the cache sync_teams() keeps; NA when none)
 team_divisions <- function(season, raw_dir = "data/raw") {
   raw <- cfbd_cached("teams", season, "teams", list(), raw_dir = raw_dir, refresh = FALSE)$data
@@ -125,7 +134,8 @@ cfp_field <- function(rk, champs, n_auto = 5L, n_field = 12L) {
 #' @param divisions tibble(team_id, division) or NULL
 #' @param reps simulated seasons per posterior draw
 #' @return list of per-simulation matrices over FBS teams, and the games behind them
-simulate_season <- function(draws, input, games, divisions = NULL, reps = 4L, benchmark_rank = 12L) {
+simulate_season <- function(draws, input, games, divisions = NULL, reps = 4L, benchmark_rank = 12L,
+                            n_auto = 0L, champions = NULL) {
   teams <- input$teams
   family <- draws$family %||% "t"
   S0 <- nrow(draws$r)
@@ -143,7 +153,7 @@ simulate_season <- function(draws, input, games, divisions = NULL, reps = 4L, be
     dplyr::mutate(home = match(home_id, teams$team_id), away = match(away_id, teams$team_id),
                   home_adv = ifelse(neutral_site, 0, 1),
                   conference_game = dplyr::coalesce(conference_game, FALSE),
-                  ccg = conference_game & grepl("Championship", notes),
+                  ccg = is_title_game(dplyr::pick(dplyr::everything())),
                   done = completed & !is.na(home_points) & !is.na(away_points)) |>
     dplyr::filter(!is.na(home), !is.na(away)) |>
     dplyr::filter(fbs[home] | fbs[away])
@@ -196,9 +206,9 @@ simulate_season <- function(draws, input, games, divisions = NULL, reps = 4L, be
   eligible <- bowl_eligible(wins, wins_fbs, n_games)
 
   # Resume after the regular season: each game adds win - P(benchmark wins it), with the
-  # benchmark (the draw's #benchmark_rank FBS team) and opponents at their snapshot ratings
+  # benchmark (the snapshot's own: benchmark_strength()) and opponents at their snapshot ratings
   r0 <- draws$r
-  bench0 <- apply(r0[, fbs_idx, drop = FALSE], 1, \(x) sort(x, decreasing = TRUE)[benchmark_rank])
+  bench0 <- benchmark_strength(r0, teams, benchmark_rank, n_auto, champions)
   adv0 <- matrix(reg$home_adv, S0, nrow(reg), byrow = TRUE)
   pb_home <- win_prob(bench0 + draws$par$hfa * adv0 - r0[, reg$away, drop = FALSE], draws$par, family)
   pb_away <- win_prob(bench0 - draws$par$hfa * adv0 - r0[, reg$home, drop = FALSE], draws$par, family)
@@ -444,8 +454,10 @@ summarise_season_sim <- function(sim, input, divisions = NULL) {
 #' (10,000 x 25 = 250,000 seasons). More draws, not more reps, is what shrinks the noise once
 #' reps is past a handful, since every rep of a draw shares its ratings.
 run_season_sim <- function(inputs, season_data, cfg = model_config(), n_draws = 10000L, reps = 25L,
-                           cores = as.integer(Sys.getenv("CFB_CORES", parallel::detectCores())), seed = 2026L) {
+                           cores = as.integer(Sys.getenv("CFB_CORES", parallel::detectCores())), seed = 2026L,
+                           champions = NULL) {
   input <- inputs[[length(inputs)]]
+  decided <- decided_champions(champions, input$teams, input$week)
   cfg_sim <- cfg
   cfg_sim$iter_sampling <- max(cfg$iter_sampling, ceiling(n_draws / cfg$chains))
   f <- fit_power(input, cfg_sim)
@@ -463,7 +475,8 @@ run_season_sim <- function(inputs, season_data, cfg = model_config(), n_draws = 
   set.seed(seed)
   parts <- parallel::mclapply(chunk, function(i) {
     d <- list(r = draws$r[i, , drop = FALSE], par = draws$par[i, , drop = FALSE], family = draws$family)
-    simulate_season(d, input, season_data$games, divisions, reps = reps, benchmark_rank = cfg$benchmark_rank)
+    simulate_season(d, input, season_data$games, divisions, reps = reps, benchmark_rank = cfg$benchmark_rank,
+                    n_auto = playoff_auto_bids(), champions = decided)
   }, mc.cores = n_chunks, mc.set.seed = TRUE)
   failed <- vapply(parts, inherits, logical(1), "try-error")
   if (any(failed)) stop("season simulation failed in a worker: ", parts[[which(failed)[1]]])

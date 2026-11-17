@@ -156,10 +156,13 @@ body[data-tab="rankings"] .inner-only { display: none !important; }
 .ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
 .ctl-row.spread { justify-content: space-between; }
 /* Radio inputs drawn as segmented buttons */
-.seg form > div { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Pills wrap as balanced lines, so a row never ends with one pill alone; the Inputs library's
+   640px cap on the form is lifted so they use the room there is */
+.seg form { max-width: none !important; }
+.seg form > div { display: block; text-wrap: balance; margin-bottom: -6px; }
 .seg form > div > label { position: relative; display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border: 1px solid var(--sky);
   border-radius: 6px; background: var(--card); color: var(--navy); font-family: var(--sans); font-size: 15px; font-weight: 600; letter-spacing: 0;
-  text-transform: none; cursor: pointer; margin: 0 !important; }
+  text-transform: none; cursor: pointer; margin: 0 6px 6px 0 !important; vertical-align: top; }
 .seg form > div > label:has(input:checked) { background: var(--sel-bg); border-color: var(--sel-bg); color: var(--sel-fg); }
 .seg form > div > label:has(input:focus-visible) { outline: 2px solid var(--link); outline-offset: 2px; }
 .seg input[type="radio"] { position: absolute; opacity: 0; width: 1px; height: 1px; }
@@ -239,6 +242,10 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
 /* The first three columns stick; their widths are variables so phones can narrow them */
 .rk-row { --c1: 40px; --c2: 40px; --c3: 190px; --g: 12px; --cb: 184px; display: grid; align-items: center; padding: 0 6px; column-gap: var(--g);
   grid-template-columns: var(--c1) var(--c2) minmax(var(--c3), 1fr) 48px var(--cb) 48px 60px var(--cb) 48px 44px 44px 44px 40px; }
+/* With the two SP+ columns (each season's latest week): tighter gaps and narrower small columns */
+.rk.sp { min-width: 1184px; }
+.rk.sp .rk-row { --c2: 32px; --c3: 176px; --g: 10px; --cb: 166px;
+  grid-template-columns: var(--c1) var(--c2) minmax(var(--c3), 1fr) 44px var(--cb) 48px 52px var(--cb) 48px 38px 38px 38px 34px 50px 62px; }
 .rk-head-rows { position: sticky; top: 0; z-index: 3; background: var(--paper); }
 .rk-groups { padding-top: 12px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
 .rk-groups > div { padding-bottom: 6px; }
@@ -362,7 +369,8 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
 .bracket svg { display: block; }
 
 /* ---- Polls ------------------------------------------------------------------------- */
-.polls { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 24px; }
+/* 6 or 8 columns: rows of 4, 2 or 1, so no column is left alone on a row */
+.polls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
 .poll-row { display: grid; grid-template-columns: 22px 22px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 54px; border-bottom: 1px solid var(--rule); font-size: 15px; }
 .poll-row .rec { display: block; font-size: 13px; font-weight: 400; color: var(--ink-2); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .poll-row .nm .tc-n { display: block; height: auto; line-height: 1.15; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
@@ -379,6 +387,7 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
 
 /* ---- smaller screens ----------------------------------------------------------------- */
 @media (max-width: 1100px) {
+  .polls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .team-grid { grid-template-columns: minmax(0, 1fr); }
   .team-grid aside { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 0 32px; }
   .faceoff { grid-template-columns: 1fr 1fr; }
@@ -416,6 +425,7 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
   .hide-sm { display: none !important; }
 }
 @media (max-width: 520px) {
+  .polls { grid-template-columns: minmax(0, 1fr); }
   .strip { font-size: 12px; }
   .strip-ctl { gap: 6px 10px; }
   .strip-ctl select { max-width: 7rem; }
@@ -425,8 +435,15 @@ figure.plot, .plot-d6a7b5 { margin: 0; }
   /* Fixed widths: a flexible team column would grow to fit the longest name */
   .rk-row { --c1: 28px; --c2: 0px; --c3: 96px; --g: 6px; --cb: 46px; padding: 0 4px;
     grid-template-columns: var(--c1) var(--c2) var(--c3) 34px var(--cb) 30px 38px var(--cb) 30px 26px 26px 28px 26px; }
-  .rk-row .s1 { left: 4px; box-shadow: -4px 0 0 var(--paper), var(--g) 0 0 var(--paper); }
+  .rk.sp { min-width: 0; }
+  .rk.sp .rk-row { --c2: 0px; --c3: 96px; --g: 6px; --cb: 46px;
+    grid-template-columns: var(--c1) var(--c2) var(--c3) 34px var(--cb) 30px 38px var(--cb) 30px 26px 26px 28px 26px 38px 54px; }
+  /* The change column is 0 wide here, so the rank column's shadow covers both gaps up to the team */
+  .rk-row .s1 { left: 4px; box-shadow: -4px 0 0 var(--paper), calc(2 * var(--g)) 0 0 var(--paper); }
   .rk-row .s2 { overflow: hidden; }
+  /* The benchmark line must not set the table's width (it is max-content): its text wraps in view */
+  .rk-cut { contain: inline-size; }
+  .rk-cut > span { max-width: calc(100vw - 56px); }
   .rk-row .s3 { left: calc(4px + var(--c1) + var(--c2) + 2 * var(--g)); gap: 6px; }
   .rk-row .s3 img, .rk-row .s3 .logo-none { width: 20px; height: 20px; }
   /* The table is dense on a phone: one step smaller than the rest of the page */

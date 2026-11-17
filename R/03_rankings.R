@@ -2,7 +2,7 @@
 # R/03_rankings.R
 # Turn posterior draws into the published products for one snapshot:
 #   Power  : rating (points vs. average FBS team, neutral field) + rank distribution
-#   Resume : Wins Above Benchmark (WAB) vs. the #12 FBS team + rank distribution
+#   Resume : Wins Above Baseline (WAB) vs. the last at-large playoff team + rank distribution
 # plus expected wins / luck, schedule strength, Colley, and poll ranks.
 # ==============================================================================
 
@@ -166,16 +166,87 @@ summarise_off_def <- function(r, t, base, teams) {
   out
 }
 
-#' Resume: Wins Above Benchmark per draw.
+#' Automatic playoff bids for conference champions; the field has cfg$benchmark_rank teams
+playoff_auto_bids <- function() 5L
+
+#' Conference champions decided on the field: the winner of each completed FBS title game and the
+#' week it was played. CFBD labels title games in `notes` only from 2022, so a conference without a
+#' labelled game falls back on the schedule: its title game is the one game of its last week in
+#' which both teams play one more game against conference members than is usual in that conference
+#' (the only neutral-site one, if several qualify). A conference where that picks no single game
+#' (no title game that year, a disrupted season, or conference games still to play) has no decided
+#' champion.
+conference_champions <- function(games) {
+  g <- games |>
+    dplyr::filter(season_type == "regular", home_class %in% "fbs", away_class %in% "fbs", !is.na(home_conference),
+                  home_conference == away_conference, home_conference != "FBS Independents")
+  done <- g$completed %in% TRUE & !is.na(g$home_points) & !is.na(g$away_points)
+  labelled <- grepl("Championship", g$notes)
+  title <- lapply(split(seq_len(nrow(g)), g$home_conference), function(i) {
+    if (any(labelled[i] & done[i])) return(i[labelled[i] & done[i]][1])
+    if (any(labelled[i]) || !all(done[i])) return(integer(0))     # title game or other games still to play
+    n_games <- table(c(g$home_id[i], g$away_id[i]))
+    usual <- as.integer(names(which.max(table(n_games))))
+    extra <- as.integer(names(n_games)[n_games > usual])
+    cand <- i[g$week_seq[i] == max(g$week_seq[i]) & g$home_id[i] %in% extra & g$away_id[i] %in% extra]
+    if (length(cand) > 1) cand <- cand[g$neutral_site[cand] %in% TRUE]
+    if (length(cand) == 1) cand else integer(0)
+  })
+  g <- g[sort(unlist(title, use.names = FALSE)), ]
+  tibble::tibble(team_id = ifelse(g$home_points > g$away_points, g$home_id, g$away_id), week_seq = g$week_seq)
+}
+
+#' Positions (teams$idx) of the champions decided by snapshot week `week`
+decided_champions <- function(champions, teams, week) {
+  if (is.null(champions) || nrow(champions) == 0) return(integer(0))
+  idx <- match(champions$team_id[champions$week_seq <= week], teams$team_id)
+  idx[!is.na(idx)]
+}
+
+#' Benchmark strength per draw: the last at-large team of a playoff of `field` teams, `n_auto` of
+#' them automatic bids for conference champions. In each draw a conference's champion is the team
+#' that has won its title game (`champions`) or, until that game is played, its best-rated member;
+#' the `n_auto` best-rated champions take the automatic bids, and the benchmark is the
+#' (field - n_auto)-th best of the other FBS teams. Only champions rated above the benchmark move
+#' it, so which of the weaker champions gets a bid does not matter. With n_auto = 0 the benchmark
+#' is the `field`-th best FBS team.
+#' @param r S x N matrix of rating draws
+#' @param champions teams$idx of the champions already decided (decided_champions()), or NULL
+benchmark_strength <- function(r, teams, field = 12L, n_auto = 0L, champions = NULL) {
+  fbs <- which(teams$tier == 1L)
+  rf <- r[, fbs, drop = FALSE]
+  confs <- setdiff(unique(teams$conference[fbs]), c("FBS Independents", NA))
+  n_auto <- min(n_auto, length(confs))
+  if (n_auto > 0L) {
+    S <- nrow(rf)
+    rows <- seq_len(S)
+    champ <- matrix(NA_integer_, S, length(confs))    # each conference's champion, as a column of rf
+    for (j in seq_along(confs)) {
+      known <- match(champions[teams$conference[champions] %in% confs[j]], fbs)
+      known <- known[!is.na(known)]
+      members <- which(teams$conference[fbs] == confs[j])
+      champ[, j] <- if (length(known)) known[1] else members[max.col(rf[, members, drop = FALSE], ties.method = "first")]
+    }
+    champ_r <- matrix(rf[cbind(rep(rows, length(confs)), as.vector(champ))], S)
+    best <- t(matrix(apply(-champ_r, 1, order), nrow = length(confs)))[, seq_len(n_auto), drop = FALSE]
+    auto <- champ[cbind(rep(rows, n_auto), as.vector(best))]
+    rf[cbind(rep(rows, n_auto), auto)] <- -Inf
+  }
+  apply(rf, 1, function(x) sort(x, decreasing = TRUE)[field - n_auto])
+}
+
+#' Resume: Wins Above Baseline per draw.
 #' For each game, WAB adds (win - P(benchmark team wins that game at that venue)), where the
-#' benchmark is the `benchmark_rank`-th best FBS team in that posterior draw.
-summarise_resume <- function(draws, teams, played, benchmark_rank = 12L) {
+#' benchmark is the last at-large team of the playoff in that posterior draw (benchmark_strength()).
+summarise_resume <- function(draws, teams, played, benchmark_rank = 12L, n_auto = 0L, champions = NULL) {
   r <- draws$r
   par <- draws$par
   family <- draws$family %||% "t"
   S <- nrow(r)
   fbs_cols <- which(teams$tier == 1L)
-  bench <- apply(r[, fbs_cols, drop = FALSE], 1, function(x) sort(x, decreasing = TRUE)[benchmark_rank])
+  bench <- benchmark_strength(r, teams, benchmark_rank, n_auto, champions)
+  # The benchmark's rating and its place in the power order, averaged over draws
+  bench_info <- c(rating = mean(bench), rank = mean(rowSums(r[, fbs_cols, drop = FALSE] > bench) + 1))
 
   tg <- team_game_rows(played)
   if (nrow(tg) == 0) {
@@ -184,7 +255,8 @@ summarise_resume <- function(draws, teams, played, benchmark_rank = 12L) {
                               xwins = 0, sos = NA_real_, bench_xlosses = 0, sor_prob = NA_real_,
                               close_w = 0L, close_l = 0L, luck = 0, resume_rank = NA_integer_, sos_rank = NA_integer_)
     return(list(summary = summary, games = tibble::tibble(game_id = character(0), team = integer(0),
-                                                          wab_game = numeric(0), p_bench = numeric(0), p_win = numeric(0))))
+                                                          wab_game = numeric(0), p_bench = numeric(0), p_win = numeric(0)),
+                bench = bench_info))
   }
   opp_r <- r[, tg$opp, drop = FALSE]
   venue <- matrix(tg$venue, S, nrow(tg), byrow = TRUE)
@@ -237,7 +309,42 @@ summarise_resume <- function(draws, teams, played, benchmark_rank = 12L) {
   # Per-game resume contribution (win - P(benchmark wins)) for the team pages
   game_wab <- tg |> dplyr::transmute(game_id, team, wab_game = win - p_bench_mean,
                                      p_bench = p_bench_mean, p_win = colMeans(p_self))
-  list(summary = out, games = game_wab)
+  list(summary = out, games = game_wab, bench = bench_info)
+}
+
+#' The resume recomputed from published SP+ ratings: Wins Above Baseline with SP+ in place of the
+#' power ratings and the same benchmark rule as the published resume, applied to SP+: the last
+#' at-large team of a `benchmark_rank`-team field once the `n_auto` best SP+-rated conference
+#' champions take the automatic bids (benchmark_strength()). SP+ is a point
+#' estimate, so this is one number per team with no interval; the win probability is the model's
+#' own, at the snapshot's posterior-mean margin parameters and home-field value. SP+ covers FBS
+#' only: any other opponent takes the SP+ value that a linear fit of SP+ on power (over the FBS
+#' teams) gives its power rating.
+#' @param teams one snapshot's ratings rows (team_id, tier, power)
+#' @param tg team-game rows: team_id, opp_id, venue (1 home, 0 neutral, -1 away), win (0/1)
+#' @param sp tibble(team_id, sp)
+#' @param par one row of margin parameters: hfa, sigma_marg, nu, gamma_m, p_wide, sigma_marg_w
+#' @param champions row indices of `teams` for the decided conference champions (decided_champions());
+#'   `teams` then needs `conference`
+#' @return tibble(team_id, sp_wab, sp_resume_rank), one row per FBS team; no rows without games
+#'   or with too few SP+ ratings to set the benchmark
+sp_resume <- function(teams, tg, sp, par, family = "t", benchmark_rank = 12L, n_auto = 0L, champions = NULL) {
+  none <- tibble::tibble(team_id = integer(0), sp_wab = numeric(0), sp_resume_rank = integer(0))
+  fbs <- teams$tier == 1L
+  rating <- sp$sp[match(teams$team_id, sp$team_id)]
+  have <- fbs & !is.na(rating) & !is.na(teams$power)
+  if (nrow(tg) == 0 || sum(have) < max(benchmark_rank, 3L)) return(none)
+  fit <- stats::lm(sp ~ power, data = data.frame(sp = rating[have], power = teams$power[have]))
+  fill <- is.na(rating)
+  rating[fill] <- stats::predict(fit, data.frame(power = teams$power[fill]))
+  # FBS teams without SP+ (rare) are left out of the benchmark's ranking
+  bench <- benchmark_strength(matrix(ifelse(fbs & !have, -Inf, rating), 1), teams, benchmark_rank, n_auto, champions)
+  p_bench <- win_prob(bench + par$hfa * tg$venue - rating[match(tg$opp_id, teams$team_id)], par, family)
+  wab <- tapply(tg$win - p_bench, tg$team_id, sum)
+  out <- tibble::tibble(team_id = teams$team_id[fbs], sp_wab = unname(wab[as.character(teams$team_id[fbs])])) |>
+    dplyr::filter(!is.na(sp_wab))
+  out$sp_resume_rank <- rank(-out$sp_wab, ties.method = "first")
+  out
 }
 
 #' Spread, win probability, total and projected score for unplayed games (home perspective).
@@ -347,14 +454,16 @@ poll_for_week <- function(polls, week, last_regular_week, poll_name) {
 
 #' Full snapshot summary (one row per team) plus per-game rows. Poll ranks are attached
 #' later (attach_polls) so a new poll never invalidates a cached fit.
-summarise_snapshot <- function(input, draws, health, cfg = model_config()) {
+#' @param champions the season's decided title games (conference_champions()), or NULL
+summarise_snapshot <- function(input, draws, health, cfg = model_config(), champions = NULL) {
   teams <- input$teams
   draws$family <- draws$family %||% cfg$margin_family %||% "t"
   pw <- summarise_power(draws, teams)
   thin <- unique(round(seq(1, nrow(draws$r), length.out = min(cfg$summary_draws, nrow(draws$r)))))
   thinned <- list(r = pw$r_centered[thin, , drop = FALSE], par = draws$par[thin, ], family = draws$family,
                   t = if (!is.null(draws$t)) draws$t[thin, , drop = FALSE])
-  rs <- summarise_resume(thinned, teams, input$played, cfg$benchmark_rank)
+  rs <- summarise_resume(thinned, teams, input$played, cfg$benchmark_rank, playoff_auto_bids(),
+                         decided_champions(champions, teams, input$week))
   colley <- compute_colley(teams, input$played)
 
   ratings <- teams |>
@@ -382,7 +491,8 @@ summarise_snapshot <- function(input, draws, health, cfg = model_config()) {
     sigma_team_nond1 = mean(par$`sigma_team[3]`),
     base = m(par$base), tau_t = m(par$tau_t), sigma_tot = m(par$sigma_tot_marg), b_prev_t = m(par$b_prev_t),
     b_prev_low = m(par$b_prev_low), b_ret = m(par$b_ret), c_ret = m(par$c_ret), b_tal = m(par$b_tal),
-    b_prev2 = m(par$b_prev2), delta_coach = m(par$delta_coach)
+    b_prev2 = m(par$b_prev2), delta_coach = m(par$delta_coach),
+    bench = rs$bench[["rating"]], bench_rank = rs$bench[["rank"]]
   ) |> dplyr::bind_cols(health)
 
   game_ids <- function(df) df |> dplyr::mutate(team_id = teams$team_id[team]) |> dplyr::select(-team)

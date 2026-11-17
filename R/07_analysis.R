@@ -478,9 +478,24 @@ wab_draws <- function(r, par, teams, played, b = 12L, family = "t") {
   list(wab = out, p_bench = p_bench, tg = tg)
 }
 
+#' wab_draws() against a given benchmark strength per draw (benchmark_strength()). Kept apart from
+#' wab_draws(), which the calibration study (run_sbc()) uses with its fixed #12 benchmark
+wab_bench_draws <- function(r, par, teams, played, bench, family = "t") {
+  tg <- team_game_rows(played)
+  S <- nrow(r)
+  venue <- matrix(tg$venue, S, nrow(tg), byrow = TRUE)
+  p_bench <- win_prob(bench + par$hfa * venue - r[, tg$opp, drop = FALSE], par, family)
+  m <- matrix(tg$win, S, nrow(tg), byrow = TRUE) - p_bench
+  out <- matrix(0, S, nrow(teams))
+  agg <- t(rowsum(t(m), tg$team))
+  out[, as.integer(colnames(agg))] <- agg
+  list(wab = out, p_bench = p_bench, tg = tg)
+}
+
 #' Refit each complete season's final week twice (published model; margin-only model), with
 #' every draw kept, and compute what the published summaries cannot show
-run_final_refits <- function(final_inputs, cfg = model_config(), workers = 2L, seed = 2026) {
+#' @param champions each season's decided title games (conference_champions()), named by season
+run_final_refits <- function(final_inputs, cfg = model_config(), workers = 2L, seed = 2026, champions = NULL) {
   jobs <- expand.grid(i = seq_along(final_inputs), model = c("full", "margin"), stringsAsFactors = FALSE)
   fits <- parallel::mclapply(seq_len(nrow(jobs)), function(j) {
     input <- final_inputs[[jobs$i[j]]]
@@ -492,7 +507,8 @@ run_final_refits <- function(final_inputs, cfg = model_config(), workers = 2L, s
     ll <- f$fit$draws("log_lik_margin", format = "draws_array")
     loo_m <- loo::loo(ll, r_eff = loo::relative_eff(exp(ll)))
     out <- list(season = input$season, model = jobs$model[j], loo = loo_m, health = f$health)
-    if (jobs$model[j] == "full") out <- c(out, final_refit_summaries(f$fit, input, cfg$margin_family))
+    if (jobs$model[j] == "full") out <- c(out, final_refit_summaries(f$fit, input, cfg$margin_family,
+      decided_champions(champions[[as.character(input$season)]], input$teams, input$week)))
     unlink(f$fit$output_files())
     out
   }, mc.cores = workers, mc.preschedule = FALSE)
@@ -513,7 +529,8 @@ run_final_refits <- function(final_inputs, cfg = model_config(), workers = 2L, s
 }
 
 #' Benchmark sensitivity, per-draw SOR and Monte Carlo errors from one full-draw fit
-final_refit_summaries <- function(fit, input, family = "t") {
+#' @param champions teams$idx of the decided conference champions (decided_champions())
+final_refit_summaries <- function(fit, input, family = "t", champions = NULL) {
   teams <- input$teams
   fbs <- teams$tier == 1L
   arr_r <- fit$draws("r", format = "draws_array")
@@ -522,16 +539,19 @@ final_refit_summaries <- function(fit, input, family = "t") {
   r <- r - rowMeans(r[, fbs, drop = FALSE])
   par <- extract_draws(fit)$par
 
-  # Benchmark rank b = 4, 12, 25
-  bench <- dplyr::bind_rows(lapply(c(4L, 12L, 25L), function(b) {
-    w <- wab_draws(r, par, teams, input$played, b, family)$wab[, fbs, drop = FALSE]
+  # The published benchmark (b = 0: the last at-large team of a 12-team field) and the b-th best
+  # FBS team for b = 4, 12, 25
+  published <- benchmark_strength(r, teams, 12L, playoff_auto_bids(), champions)
+  bench <- dplyr::bind_rows(lapply(c(0L, 4L, 12L, 25L), function(b) {
+    bs <- if (b == 0L) published else benchmark_strength(r, teams, b)
+    w <- wab_bench_draws(r, par, teams, input$played, bs, family)$wab[, fbs, drop = FALSE]
     rk <- rank_draws(w)
     tibble::tibble(team_id = teams$team_id[fbs], team = teams$team[fbs], b = b, wab = colMeans(w),
                    rank = rank(-colMeans(w), ties.method = "first"), p_top12 = colMeans(rk <= 12))
   }))
 
   # SOR from the posterior-mean benchmark probabilities (published) and averaged per draw
-  wd <- wab_draws(r, par, teams, input$played, 12L, family)
+  wd <- wab_bench_draws(r, par, teams, input$played, published, family)
   tg <- wd$tg
   thin <- round(seq(1, nrow(r), length.out = 400))
   sor <- dplyr::bind_rows(lapply(which(fbs), function(i) {
@@ -569,8 +589,9 @@ final_refit_summaries <- function(fit, input, family = "t") {
 
 #' Refit with one blowout's margin replaced by a one-point result (same winner, efficiency
 #' dropped) and record how the two teams' WAB and power move
-run_margin_leakage <- function(input, cfg = model_config(), n_games = 6L, workers = 2L, seed = 2026) {
+run_margin_leakage <- function(input, cfg = model_config(), n_games = 6L, workers = 2L, seed = 2026, champions = NULL) {
   tm <- input$teams
+  decided <- decided_champions(champions, tm, input$week)
   pl <- input$played
   fbs_g <- which(tm$tier[pl$home] == 1L & tm$tier[pl$away] == 1L)
   picks <- fbs_g[order(-abs(pl$margin[fbs_g]))][seq_len(n_games)]
@@ -586,7 +607,8 @@ run_margin_leakage <- function(input, cfg = model_config(), n_games = 6L, worker
     draws <- extract_draws(f$fit); unlink(f$fit$output_files())
     fbs <- tm$tier == 1L
     r <- draws$r - rowMeans(draws$r[, fbs, drop = FALSE])
-    w <- wab_draws(r, draws$par, tm, pl, 12L, cfg$margin_family)$wab
+    bench <- benchmark_strength(r, tm, cfg$benchmark_rank, playoff_auto_bids(), decided)
+    w <- wab_bench_draws(r, draws$par, tm, pl, bench, cfg$margin_family)$wab
     tibble::tibble(changed = if (is.null(k)) NA_integer_ else k, idx = tm$idx, wab = colMeans(w), power = colMeans(r))
   }, mc.cores = workers, mc.preschedule = FALSE)
   base <- res[[1]]

@@ -5,11 +5,11 @@
 # ==============================================================================
 
 #' Fit + summarise one snapshot. Returns only summaries; CmdStan CSVs are deleted.
-run_snapshot <- function(input, cfg = model_config()) {
+run_snapshot <- function(input, cfg = model_config(), champions = NULL) {
   f <- fit_power(input, cfg)
   draws <- extract_draws(f$fit, family = cfg$margin_family)
   unlink(f$fit$output_files())
-  summarise_snapshot(input, draws, f$health, cfg)
+  summarise_snapshot(input, draws, f$health, cfg, champions)
 }
 
 #' Posterior predictive check on the fitted games: observed statistic vs. 90% predictive interval.

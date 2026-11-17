@@ -51,3 +51,14 @@ test_that("CFP field: five best champions get in even when ranked low, seeds fol
   expect_equal(which(!is.na(f$seed)), c(1:9, 17:19))   # seven at-large: ranks 3-9
   expect_equal(f$seed[c(1:9, 17:19)], 1:12)
 })
+
+test_that("title games are found by their label whatever CFBD's conference-game flag says", {
+  g <- tibble::tibble(
+    season_type = c("regular", "regular", "regular", "regular", "postseason"),
+    home_class = "fbs", away_class = c("fbs", "fbs", "fbs", "fbs", "fbs"),
+    home_conference = c("SEC", "SEC", "SEC", "FBS Independents", "SEC"),
+    away_conference = c("SEC", "SEC", "Big Ten", "FBS Independents", "SEC"),
+    conference_game = c(FALSE, TRUE, FALSE, FALSE, FALSE),
+    notes = c("SEC Championship", NA, "Championship Classic", "Championship", "SEC Championship"))
+  expect_equal(is_title_game(g), c(TRUE, FALSE, FALSE, FALSE, FALSE))
+})

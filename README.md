@@ -5,7 +5,7 @@ Two college football rankings, rebuilt every week from 2014 on:
 | | Question | Unit |
 | :--- | :--- | :--- |
 | **Power** | How good is a team right now? | Points vs. an average FBS team on a neutral field (A − B = predicted spread) |
-| **Resume** | What has a team earned? | Wins Above Benchmark (WAB): wins beyond what the #12 FBS team would have managed with the same schedule |
+| **Resume** | What has a team earned? | Wins Above Baseline (WAB): wins beyond what the last at-large playoff team would have managed with the same schedule |
 
 Output: a static Quarto + Observable JS dashboard (`docs/index.html`, live at <https://thomasqmd.github.io/CFB-Rankings/>), two reports
 (`docs/reports/season_retro.html`, `docs/reports/model_diagnostics.html`) and a methods paper
@@ -28,7 +28,10 @@ with conferences nested in tiers (FBS anchored at 0, FCS, non-D1). *b* is the ye
 carry-over, estimated from the data, so early-season ratings lean on last season and the
 data takes over as games are played. FBS, FCS and lower-division games are all included.
 
-**Resume.** For each posterior draw, the benchmark is that draw's #12 FBS team. A win adds
+**Resume.** For each posterior draw, the benchmark is the last at-large team of a 12-team playoff:
+the five best-rated conference champions take the automatic bids (the winner of each title game
+once it is played, a conference's best-rated team until then) and the benchmark is the 7th-best
+of the other FBS teams, usually the 9th to 11th best overall. A win adds
 1 − P(benchmark wins that game at that venue); a loss subtracts P(benchmark wins). Summing gives
 WAB. Ranks, 80% intervals and P(top 12) come from ranking every draw. Also reported: SOR
 probability (chance the benchmark matches the record), schedule strength (benchmark's expected
@@ -43,7 +46,7 @@ the previous week's snapshot and scores it against results and closing lines (MA
 log loss, CRPS, interval coverage, calibration, ATS). For the paper: ablations (margin only,
 Normal margin, no carry-over, no conference level, recency half-lives), baselines (least
 squares, CFBD Elo, SP+, FPI), leave-one-season-out priors, simulation-based calibration,
-benchmark ranks 4/12/25, and agreement with CFP committee selections.
+the benchmark against fixed ranks 4/12/25, and agreement with CFP committee selections.
 
 **Priors** on the structural parameters (home field, tier offsets, carry-over, scales) are
 centred on full-season refits of 2015–2025 under vague priors, with sd the predictive sd for a
@@ -106,7 +109,8 @@ output freshness. Exits non-zero on any FAIL; WARNs are worth a look but don't b
 - `CFB_FIRST_SEASON=2024 Rscript -e 'targets::tar_make()'` for a quick partial build.
 - The free CFBD tier allows ~1000 calls/month; a full backfill uses ~80, a weekly update ~6,
   and the `external_ratings` target (SP+/FPI) 24 when it reruns.
-- Settings (sampler, priors, benchmark rank, recency half-life) live in `model_config()`.
+- Settings (sampler, priors, playoff field size, recency half-life) live in `model_config()`; the number
+  of automatic bids is `playoff_auto_bids()`.
 - **CBS Sports 138** has no API: each sync archives the live ranking page to
   `data/raw/cbs138/`. Run at least once per week in season, or that week's full 138 is only
   available later as a Wayback Machine capture or an article's top 25. One-off backfill:

@@ -60,8 +60,10 @@ season_targets <- function(s) {
     tar_target_raw(paste0("inputs_", s),
       bquote(prepare_week_input(.(sym("data")), .(sym("weeks")), prior = .(prior), cfg = cfg, prior2 = .(prior2))),
       pattern = bquote(map(.(sym("weeks")))), iteration = "list"),
+    # Title games already played: the resume benchmark's automatic bids (benchmark_strength())
+    tar_target_raw(paste0("champs_", s), bquote(conference_champions(.(sym("data"))$games))),
     tar_target_raw(paste0("snaps_", s),
-      bquote(run_snapshot(.(sym("inputs")), cfg = cfg)),
+      bquote(run_snapshot(.(sym("inputs")), cfg = cfg, champions = .(sym("champs")))),
       pattern = bquote(map(.(sym("inputs")))), iteration = "list"),
     # The published (current-season) snapshot must pass the convergence gates
     tar_target_raw(paste0("checks_", s),
@@ -136,7 +138,8 @@ list(
   # Rest-of-season simulation (conference races, CFP, bowls) for the live season only: refits its
   # latest week (snapshots keep summaries, not draws), so no other season reruns
   tar_target_raw("season_sim", bquote(run_season_sim(.(as.symbol(paste0("inputs_", CURRENT_SEASON))),
-                                                     .(as.symbol(paste0("data_", CURRENT_SEASON))), cfg = cfg))),
+                                                     .(as.symbol(paste0("data_", CURRENT_SEASON))), cfg = cfg,
+                                                     champions = .(as.symbol(paste0("champs_", CURRENT_SEASON)))))),
   tar_target(ratings, attach_polls(snapshots$ratings, season_data)),
   tar_target(games_all, dplyr::bind_rows(lapply(season_data, `[[`, "games"))),
   # Totals get a mismatch calibration fitted on earlier games only (calibrate_totals())
@@ -178,11 +181,13 @@ list(
   tar_target(baselines, run_baselines(season_data, weeks_all)),
   tar_target(external_ratings, run_external_ratings(COMPLETE, teams_meta)),
   tar_target_raw("final_refits",
-    bquote(run_final_refits(.(final_inputs_call), cfg = cfg, workers = FIT_WORKERS)),
+    bquote(run_final_refits(.(final_inputs_call), cfg = cfg, workers = FIT_WORKERS,
+      champions = .(as.call(c(quote(list), setNames(lapply(paste0("champs_", COMPLETE), as.symbol), COMPLETE)))))),
     deployment = "main"),
   tar_target_raw("margin_leakage", bquote({
     inp <- .(last_full_inputs)
-    run_margin_leakage(inp[[length(inp)]], cfg = cfg, workers = FIT_WORKERS)
+    run_margin_leakage(inp[[length(inp)]], cfg = cfg, workers = FIT_WORKERS,
+                       champions = .(as.symbol(paste0("champs_", LAST_FULL))))
   }), deployment = "main"),
   tar_target_raw("sbc", bquote({
     inp <- .(last_full_inputs)

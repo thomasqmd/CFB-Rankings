@@ -1,6 +1,6 @@
 ---
 title: "Two Rankings from One Posterior: A Bayesian Power Rating and a Wins-Above-Benchmark Resume for College Football"
-abstract: "A college football ranking is asked two questions: which team is better, and which has earned more. The first is predictive and should use margin of victory; the second is retrodictive and should reward only results. We answer both from one Bayesian model. Team strength, in points on a neutral field, is observed through the regulation margin and an efficiency margin built from expected points added, modelled jointly so that one performance is not counted twice, pooled within conferences and divisional tiers, carried over between seasons with roster information, and allowed to drift from week to week as a random walk. The shape of the margin distribution is chosen among four families by leave-one-out cross-validation, and a parallel model for the total score splits strength into offence and defence. The power rating is the posterior of strength. The resume, Wins Above Benchmark, counts the wins a team has beyond those the twelfth-best team would expect against the same schedule, computed per posterior draw. We evaluate the system on every week of every season since 2014 with convergence gates, posterior predictive and prior-sensitivity checks, simulation-based calibration, ablations, and a rolling out-of-sample backtest against results, closing betting lines and totals, and baseline ratings."
+abstract: "A college football ranking is asked two questions: which team is better, and which has earned more. The first is predictive and should use margin of victory; the second is retrodictive and should reward only results. We answer both from one Bayesian model. Team strength, in points on a neutral field, is observed through the regulation margin and an efficiency margin built from expected points added, modelled jointly so that one performance is not counted twice, pooled within conferences and divisional tiers, carried over between seasons with roster information, and allowed to drift from week to week as a random walk. The shape of the margin distribution is chosen among four families by leave-one-out cross-validation, and a parallel model for the total score splits strength into offence and defence. The power rating is the posterior of strength. The resume, Wins Above Baseline, counts the wins a team has beyond those the last at-large team of the twelve-team playoff would expect against the same schedule, computed per posterior draw. We evaluate the system on every week of every season since 2014 with convergence gates, posterior predictive and prior-sensitivity checks, simulation-based calibration, ablations, and a rolling out-of-sample backtest against results, closing betting lines and totals, and baseline ratings."
 date: last-modified
 author:
   - name: Thomas Reinke
@@ -195,6 +195,7 @@ ktab <- function(df, ...) {
 ```{r, data}
 # Literal target names, so that tar_quarto() registers each as a dependency
 cfg <- targets::tar_read(cfg, store = store)
+n_auto <- 5L  # automatic bids, as playoff_auto_bids() in R/03_rankings.R
 snapshots <- targets::tar_read(snapshots, store = store)
 params <- snapshots$params
 ratings <- targets::tar_read(ratings, store = store)
@@ -438,9 +439,13 @@ sor_cmp <- local({
               rho_s = cor(sor_mean_pi, sor_strict, method = "spearman", use = "complete.obs"), .groups = "drop")
   list(max_diff = max(abs(x$sor_mean_pi - x$sor_per_draw)), min_rho = min(per$rho), min_rho_strict = min(per$rho_s))
 })
+# The published benchmark's average FBS rank at each complete season's final week
+bench_rk <- params |> filter(season %in% map_int(fr, "season")) |> group_by(season) |>
+  filter(week == max(week)) |> pull(bench_rank)
+# b = 0 is the published benchmark (the last at-large team); 4, 12, 25 are fixed FBS ranks
 bench_cmp <- map_dfr(fr, function(f) {
-  b12 <- f$bench |> filter(b == 12L)
-  map_dfr(c(4L, 25L), function(k) {
+  b12 <- f$bench |> filter(b == 0L)
+  map_dfr(c(4L, 12L, 25L), function(k) {
     j <- inner_join(f$bench |> filter(b == k), b12, by = "team_id", suffix = c("", "_12"))
     tibble(season = f$season, b = k, rho = cor(j$wab, j$wab_12, method = "spearman"),
            top12_changes = sum(xor(j$rank <= 12, j$rank_12 <= 12)) / 2,
@@ -477,7 +482,7 @@ This paper keeps the two apart but derives both from one posterior distribution.
 
 1. A **power model** (@sec-power) for team strength in points on a neutral field, observed through the regulation scoreboard margin and through an efficiency margin built from expected points added per play [@yurkoNflWARReproducibleMethod2019]. The margin is modelled *conditionally* on the efficiency residual, so the two signals share one latent strength without being treated as independent evidence, and their relative weight is estimated rather than set. Strength is pooled within conferences and within three divisional tiers, carried over from the two previous seasons by estimated coefficients, shifted before the season by roster information (returning production and recruited talent), and moves through the season as a random walk whose step size is estimated. The shape of the margin distribution is one of four families, chosen by cross-validation on every complete season (@sec-family); the published one is the `r fam_name[[fam]]`. A parallel model for the total score, observed through the final score and summed offensive efficiency, splits each rating into offence and defence without changing it (@sec-total).
 2. A result on how much the efficiency signal adds (@sec-info). Under a Gaussian version of the model the gain in per-game Fisher information about strength has a closed form, and at the fitted parameters it is `r fmt(100 * min(info$gain), 1)`--`r fmt(100 * max(info$gain), 1)`\% --- small, and explained by the estimated scale of efficiency being close to the value at which the gain vanishes. An ablation backtest measures the same thing out of sample (@sec-ablation).
-3. A **resume** measure, Wins Above Benchmark (@sec-resume): for each posterior draw, the number of wins a team has beyond those the draw's twelfth-best FBS team would be expected to earn against the same opponents at the same venues. It is additive over games, never rewards a loss, is centred at zero for a team exactly as strong as the benchmark, and inherits uncertainty in the opponents, the benchmark and the ranks directly from the posterior.
+3. A **resume** measure, Wins Above Baseline (@sec-resume): for each posterior draw, the number of wins a team has beyond those the draw's last at-large playoff team would be expected to earn against the same opponents at the same venues. It is additive over games, never rewards a loss, is centred at zero for a team exactly as strong as the benchmark, and inherits uncertainty in the opponents, the benchmark and the ranks directly from the posterior.
 4. A **validation** of the whole system (@sec-computation, @sec-checks, @sec-backtest) on every week of every season from `r first_season` to `r current`: `r n_snap` weekly posteriors fitted by the No-U-Turn sampler, of which `r n_pass` pass the convergence gates; posterior predictive checks, which reproduce the spread, the blowouts and home-field advantage but miss the share of one-score games in `r n_w7_fail` of `r nrow(w7)` seasons; prior-sensitivity diagnostics, which flag `r n_flagged_any` of `r nrow(flag_counts)` structural parameters in at least one season; simulation-based calibration; ablations and baselines; and a rolling backtest of `r fmt(bt_all$games)` games, each predicted from the posterior fitted through the week before, scored against the result and the closing betting line.
 
 @fig-overview shows how these pieces fit together. @sec-data describes the data, @sec-power and @sec-info the power model, and @sec-resume the resume and the reference rankings. @sec-computation describes fitting and the pipeline, @sec-checks model checking, @sec-backtest the out-of-sample evaluation, @sec-results the `r last_full` season as a worked example, and @sec-discussion the limitations.
@@ -513,7 +518,7 @@ cat(r"(\begin{tikzpicture}[
 Structure of the paper. One posterior per week feeds both products; the dashed arrow is the only link between them: the Resume values results using opponent and benchmark strengths drawn from the Power posterior, but never uses margin. Each box names the section where it is developed.
 :::
 
-**Related work.** The margin model descends from @harvilleUseLinearmodelMethodology1977 and @harvillePredictionsNationalFootball1980, who fit mixed linear models to scoreboard margin with random team effects, and from @sternProbabilityWinningFootball1991, who showed that National Football League margins are close to normal around the betting line with a standard deviation near fourteen points, so that a spread determines a win probability. @glickmanStatespaceModelNational1998 made team strengths evolve over time in a Bayesian state-space model; the weekly random walk here is a version of theirs. Using the $t$ distribution for robustness to blowouts follows @langeRobustStatisticalModeling1989. On the retrodictive side, @measePenalizedMaximumLikelihood2003 and @colleyColleysBiasFree2002 give record-only rankings; @sternStatisticsCollegeFootball2004 discusses why the Bowl Championship Series excluded margin from its computer rankings, and @lopezHowOftenDoes2018 quantify how much of a season's outcome is noise, which is the reason a resume should report uncertainty. Dynamic paired-comparison models [@glickmanParameterEstimationLarge1999; @knorrheldDynamicRatingSports2000] let strengths drift between games, and @annisHybridPairedComparison2005 combine win--loss and margin information for college football specifically. Among published football ratings, Elo systems [@eloRatingChessplayersPast1978; @silverHowOurNFL2014] update a rating after each game, SP+ [@connellySPPrimer2023] and ESPN's FPI [@espnFPI2023] are proprietary efficiency-based power ratings, and Massey's composite [@masseyCompositeRankings2026] aggregates about a hundred computer rankings. Wins Above Benchmark is the football analogue of the "wins above bubble" measure on the team sheets of the college basketball selection committee [@ncaaNETTeamSheets2024], with the benchmark placed at the playoff boundary. The workflow follows @gelmanBayesianWorkflow2020.
+**Related work.** The margin model descends from @harvilleUseLinearmodelMethodology1977 and @harvillePredictionsNationalFootball1980, who fit mixed linear models to scoreboard margin with random team effects, and from @sternProbabilityWinningFootball1991, who showed that National Football League margins are close to normal around the betting line with a standard deviation near fourteen points, so that a spread determines a win probability. @glickmanStatespaceModelNational1998 made team strengths evolve over time in a Bayesian state-space model; the weekly random walk here is a version of theirs. Using the $t$ distribution for robustness to blowouts follows @langeRobustStatisticalModeling1989. On the retrodictive side, @measePenalizedMaximumLikelihood2003 and @colleyColleysBiasFree2002 give record-only rankings; @sternStatisticsCollegeFootball2004 discusses why the Bowl Championship Series excluded margin from its computer rankings, and @lopezHowOftenDoes2018 quantify how much of a season's outcome is noise, which is the reason a resume should report uncertainty. Dynamic paired-comparison models [@glickmanParameterEstimationLarge1999; @knorrheldDynamicRatingSports2000] let strengths drift between games, and @annisHybridPairedComparison2005 combine win--loss and margin information for college football specifically. Among published football ratings, Elo systems [@eloRatingChessplayersPast1978; @silverHowOurNFL2014] update a rating after each game, SP+ [@connellySPPrimer2023] and ESPN's FPI [@espnFPI2023] are proprietary efficiency-based power ratings, and Massey's composite [@masseyCompositeRankings2026] aggregates about a hundred computer rankings. Wins Above Baseline is the football analogue of the "wins above bubble" measure on the team sheets of the college basketball selection committee [@ncaaNETTeamSheets2024], with the benchmark placed at the playoff boundary. The workflow follows @gelmanBayesianWorkflow2020.
 
 ## Notation {#sec-notation}
 
@@ -1021,17 +1026,17 @@ The efficiency residual explains `r pct(min(info$r2))`--`r pct(max(info$r2))` of
 
 # The Resume {#sec-resume}
 
-## Wins Above Benchmark {#sec-wab}
+## Wins Above Baseline {#sec-wab}
 
-A resume should value results, not performances, and should value them relative to a standard that matters for selection. The playoff takes twelve teams, so the natural standard is the twelfth-best team.
+A resume should value results, not performances, and should value them relative to a standard that matters for selection. The playoff takes twelve teams, five of them the best-ranked conference champions, so the team a resume has to beat is the last one let in on its record alone: the seventh at-large team.
 
 ::: {.defn label="Benchmark."}
-In posterior draw $s$, the benchmark strength $B^{(s)}$ is the twelfth largest of the FBS strengths $\{r_i^{(s)} : \ell(i) = 1\}$.
+In posterior draw $s$, let $c_k^{(s)}$ be the champion of FBS conference $k$: the winner of its title game once that game has been played by the snapshot's week, and otherwise the conference's strongest team in draw $s$. Let $A^{(s)}$ be the `r n_auto` champions with the largest strengths. The benchmark strength $B^{(s)}$ is the `r cfg$benchmark_rank - n_auto`th largest of the FBS strengths outside $A^{(s)}$, $\{r_i^{(s)} : \ell(i) = 1,\ i \notin A^{(s)}\}$.
 :::
 
-The benchmark is a strength, not a team: in different draws it is a different team, and its uncertainty is part of the posterior.
+The benchmark is a strength, not a team: in different draws it is a different team, and its uncertainty is part of the posterior. Its rank among all FBS teams varies from draw to draw too; at the final posterior of the complete seasons its average rank among FBS teams is `r fmt(median(bench_rk), 1)` in a typical season (range `r fmt(min(bench_rk), 1)`--`r fmt(max(bench_rk), 1)`), above twelfth because a champion from a weaker conference takes an automatic place a stronger team would otherwise hold.
 
-::: {.defn label="Wins Above Benchmark."}
+::: {.defn label="Wins Above Baseline."}
 Let team $i$ have played games $g \in G_i$, with result $W_g \in \{0, 1\}$ (overtime wins count), opponent $o(g)$ and venue $v_g \in \{-1, 0, 1\}$ from $i$'s side. The probability that the benchmark would have won the same fixture is
 $$
 \pi_g^{(s)} = 1 - F^{(s)}\bigl(0 \bigm| B^{(s)} - r_{o(g)}^{(s)} + \eta^{(s)} v_g\bigr),
@@ -1087,7 +1092,7 @@ sor_bub <- {
 
 ```{r}
 #| label: tbl-wab-example
-#| tbl-cap: !expr 'paste0("Wins Above Benchmark, game by game, for ", bubble$team, " in ", last_full, ". H, A, N: home, away, neutral site. $\\bar\\pi_g$: probability that the twelfth-best team would win the same fixture.")'
+#| tbl-cap: !expr 'paste0("Wins Above Baseline, game by game, for ", bubble$team, " in ", last_full, ". H, A, N: home, away, neutral site. $\\bar\\pi_g$: probability that the last at-large team would win the same fixture.")'
 bub_games |>
   transmute(Week = week_label, Opponent = gsub("&", "\\&", opp, fixed = TRUE), Venue = venue,
             Score = paste0(pf, "--", pa), `$W_g$` = W, `$\\bar\\pi_g$` = fmt(p_bench, 3),
@@ -1159,11 +1164,11 @@ The ratings average `r fmt(mean(c4), 2)`, as the lemma requires. D is unbeaten b
 
 ## Choosing the Benchmark {#sec-bench}
 
-The benchmark rank $b = 12$ is a choice about what the resume is for, not a parameter that data could estimate: a resume is retrodictive, and there is no future outcome against which a backtest could score it. It was set to the size of the playoff field. Two facts complicate that. From 2014 to 2023 the playoff took four teams, so for those seasons the playoff boundary was the fourth-best team; and the twelve-team format reserves five places for conference champions, so the twelfth-*best* team is not the twelfth team *selected*, and the effective boundary for an at-large team is somewhat above twelve. @tbl-bench shows how much the choice matters, by recomputing $\WAB$ with $b = 4$ and $b = 25$ from each season's final posterior.
+The benchmark is a choice about what the resume is for, not a parameter that data could estimate: a resume is retrodictive, and there is no future outcome against which a backtest could score it. It was set by the selection rule of the current playoff: the resume asks whether a team did more than the last team admitted on its record would have, the standard that college basketball's Wins Above Bubble also uses. An earlier version used the twelfth-best FBS team, the size of the field; the last at-large team is stronger than that whenever a champion from a weaker conference takes one of the automatic places. Two other choices are defensible. From 2014 to 2023 the playoff took four teams, so for those seasons the boundary was the fourth-best team, and the published resume applies the current format to every season so that seasons are comparable. @tbl-bench shows how much the choice matters, by recomputing $\WAB$ against the fourth, twelfth and twenty-fifth best FBS team from each season's final posterior.
 
 ```{r}
 #| label: tbl-bench
-#| tbl-cap: "Sensitivity of the final resume to the benchmark rank, relative to $b = 12$, over complete seasons. Rank correlation of $\\WAB$ among FBS teams; teams entering or leaving the top 4 and the top 12; the largest rank change within the $b = 12$ top 25. Median over seasons, with the range."
+#| tbl-cap: "Sensitivity of the final resume to the benchmark, relative to the published last at-large team, over complete seasons. A fixed benchmark $b$ is the $b$-th best FBS team in each draw. Rank correlation of $\\WAB$ among FBS teams; teams entering or leaving the top 4 and the top 12; the largest rank change within the published top 25. Median over seasons, with the range."
 bench_cmp |>
   group_by(b) |>
   summarise(rho = sprintf("%s (%s--%s)", fmt(median(rho), 3), fmt(min(rho), 3), fmt(max(rho), 3)),
@@ -1171,12 +1176,12 @@ bench_cmp |>
             t12 = sprintf("%s (%s--%s)", fmt(median(top12_changes)), fmt(min(top12_changes)), fmt(max(top12_changes))),
             mv = sprintf("%s (%s--%s)", fmt(median(max_move_top25)), fmt(min(max_move_top25)), fmt(max(max_move_top25))),
             .groups = "drop") |>
-  transmute(`Benchmark` = paste0("$b = ", b, "$"), `$\\rho$ with $b = 12$` = rho, `Top-4 changes` = t4,
+  transmute(`Benchmark` = paste0("$b = ", b, "$"), `$\\rho$ with published` = rho, `Top-4 changes` = t4,
             `Top-12 changes` = t12, `Max move, top 25` = mv) |>
   ktab(align = "lrrrr")
 ```
 
-Over the whole FBS the order barely depends on the benchmark (median rank correlation `r fmt(median(bench_cmp$rho[bench_cmp$b == 4]), 3)` for $b = 4$ and `r fmt(median(bench_cmp$rho[bench_cmp$b == 25]), 3)` for $b = 25$), because a benchmark changes the price of each result but not which results are good. The top of the order does move: a strong benchmark makes a loss cheap and a win over a weak team nearly worthless, which favours difficult schedules, while a weak benchmark makes every win count and every loss costly. A typical season changes `r fmt(median(bench_cmp$top12_changes[bench_cmp$b == 4]))` of its top 12 under $b = 4$ and `r fmt(median(bench_cmp$top12_changes[bench_cmp$b == 25]))` under $b = 25$. The published $b = 12$ answers "what would a bubble team in the current format have done"; the benchmark is a setting (`benchmark_rank` in `model_config()`), so the four-team-era question can be asked of the earlier seasons directly.
+Over the whole FBS the order barely depends on the benchmark (median rank correlation with the published resume `r fmt(median(bench_cmp$rho[bench_cmp$b == 4]), 3)` for $b = 4$, `r fmt(median(bench_cmp$rho[bench_cmp$b == 12]), 3)` for $b = 12$ and `r fmt(median(bench_cmp$rho[bench_cmp$b == 25]), 3)` for $b = 25$), because a benchmark changes the price of each result but not which results are good. The top of the order does move: a strong benchmark makes a loss cheap and a win over a weak team nearly worthless, which favours difficult schedules, while a weak benchmark makes every win count and every loss costly. A typical season changes `r fmt(median(bench_cmp$top12_changes[bench_cmp$b == 4]))` of its top 12 under $b = 4$, `r fmt(median(bench_cmp$top12_changes[bench_cmp$b == 12]))` under $b = 12$ and `r fmt(median(bench_cmp$top12_changes[bench_cmp$b == 25]))` under $b = 25$. The field size and the number of automatic bids are settings (`benchmark_rank` in `model_config()` and `playoff_auto_bids()`), so the four-team-era question can be asked of the earlier seasons directly.
 
 ## How Margin Reaches the Resume {#sec-leakage}
 
@@ -1661,7 +1666,7 @@ tibble::tribble(
   "Preseason terms", "returning production, talent, two seasons back", "Early-week predictions, leave-one-season-out priors (Section~\\ref{sec-loso})", "Yes",
   "Margin family", fam_name[[fam]], "Pooled PSIS-LOO, final week of every complete season (Section~\\ref{sec-family})", "Yes",
   "Seasons left out of the pooling", paste0(first_season, "; 2020 for $\\eta$"), "Structural reasons, not tuned", "No",
-  "Benchmark rank $b$", as.character(cfg$benchmark_rank), "Playoff size (Section~\\ref{sec-bench})", "No",
+  "Benchmark", paste0("last at-large team (", cfg$benchmark_rank, "-team field, ", n_auto, " automatic bids)"), "Playoff format (Section~\\ref{sec-bench})", "No",
   "Family shape priors", "Table~\\ref{tbl-priors-other}", if (has_nu) "$\\nu$ pooled like the structural priors" else "Weakly informative", if (has_nu) "Yes" else "No",
   "Minimum plays for $e_g$", as.character(cfg$min_plays), "Judgement", "No",
   "Total mismatch calibration", "slope refitted each week, cap 50", "Regression on earlier games' next-week predictions (Section~\\ref{sec-total})", "No (fitted walk-forward)",
@@ -1758,7 +1763,7 @@ luck_cor <- cor(sc_df$resid, sc_df$luck)
 
 ```{r}
 #| label: fig-scatter
-#| fig-cap: !expr 'paste0("Resume against power at the end of ", last_full, ", all FBS teams. Left: the dashed line is zero Wins Above Benchmark, teams above it did better than the twelfth-best team would have with their schedule; the grey curve is a LOESS fit; labelled, the resume top 12. Right: each team''s distance above or below that curve against its win luck, actual minus expected wins.")'
+#| fig-cap: !expr 'paste0("Resume against power at the end of ", last_full, ", all FBS teams. Left: the dashed line is zero Wins Above Baseline, teams above it did better than the last at-large team would have with their schedule; the grey curve is a LOESS fit; labelled, the resume top 12. Right: each team''s distance above or below that curve against its win luck, actual minus expected wins.")'
 #| fig-scap: "Resume against power"
 #| fig-width: 6.5
 #| fig-asp: 0.5
@@ -1770,7 +1775,7 @@ p_sc <- sc_df |>
   ggrepel::geom_text_repel(aes(label = lab), size = 2.2, colour = col_ink, na.rm = TRUE,
                            min.segment.length = 0, seed = 1, max.overlaps = 30) +
   scale_colour_manual(values = c(`TRUE` = col_resume, `FALSE` = col_ref), guide = "none") +
-  labs(x = "Power rating (points)", y = "Wins Above Benchmark")
+  labs(x = "Power rating (points)", y = "Wins Above Baseline")
 p_luck <- sc_df |>
   ggplot(aes(luck, resid)) +
   geom_hline(yintercept = 0, colour = col_faint) + geom_vline(xintercept = 0, colour = col_faint) +

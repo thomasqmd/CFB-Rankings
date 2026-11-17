@@ -78,3 +78,71 @@ test_that("preseason snapshot (no games) summarises without error", {
   expect_equal(res$summary$games, rep(0L, 4))
   expect_equal(nrow(res$games), 0)
 })
+
+test_that("SP+ resume: WAB against the b-th best SP+ team, other opponents valued through power", {
+  teams <- tibble::tibble(team_id = 101:105, tier = c(1L, 1L, 1L, 1L, 2L), power = c(10, 5, 0, -5, -20),
+                          conference = c("X", "X", "X", "Y", NA))
+  sp <- tibble::tibble(team_id = 101:104, sp = c(20, 10, 0, -10))   # SP+ = 2 x power; the FCS team has none
+  tg <- tibble::tibble(team_id = c(101L, 102L, 103L, 105L), opp_id = c(102L, 101L, 105L, 103L),
+                       venue = c(1, -1, 0, 0), win = c(1L, 0L, 1L, 0L))
+  par <- data.frame(hfa = 2, sigma_marg = 10, nu = 1e6, gamma_m = 0, p_wide = 0, sigma_marg_w = 10)
+  res <- sp_resume(teams, tg, sp, par, family = "t", benchmark_rank = 2L)
+  expect_equal(res$team_id, 101:103)                                 # FBS teams with a game
+  # benchmark = 2nd best SP+ = 10. A beat B (SP+ 10) at home; B lost at A (SP+ 20)
+  expect_equal(res$sp_wab[1], 1 - pnorm((10 + 2 - 10) / 10), tolerance = 1e-4)
+  expect_equal(res$sp_wab[2], -pnorm((10 - 2 - 20) / 10), tolerance = 1e-4)
+  # C beat the FCS team on a neutral field: its SP+ is read off the fit, 2 x -20 = -40
+  expect_equal(res$sp_wab[3], 1 - pnorm((10 + 40) / 10), tolerance = 1e-4)
+  expect_equal(res$sp_resume_rank, c(1L, 3L, 2L))
+  expect_equal(nrow(sp_resume(teams, tg[0, ], sp, par, benchmark_rank = 2L)), 0)
+  expect_equal(nrow(sp_resume(teams, tg, sp[1:2, ], par, benchmark_rank = 12L)), 0)
+  # With automatic bids. One bid: it goes to the better champion, A (X), so the benchmark is the 2nd
+  # best of B, C, D = C (0). Two bids, A and D (champion of Y): the benchmark is the best of B, C = B
+  two <- sp_resume(teams, tg, sp, par, family = "t", benchmark_rank = 3L, n_auto = 2L, champions = 4L)
+  expect_equal(two$sp_wab, res$sp_wab, tolerance = 1e-8)
+  auto <- sp_resume(teams, tg, sp, par, family = "t", benchmark_rank = 3L, n_auto = 1L, champions = 4L)
+  expect_equal(auto$sp_wab[1], 1 - pnorm((0 + 2 - 10) / 10), tolerance = 1e-4)
+})
+
+test_that("benchmark: the last at-large team once the best-rated champions take the automatic bids", {
+  teams <- tibble::tibble(idx = 1:8, team_id = 201:208, tier = c(rep(1L, 7), 2L),
+                          conference = c("A", "A", "A", "B", "B", "FBS Independents", "C", "A"))
+  r <- matrix(c(30, 25, 5, 20, 10, 22, 0, 99), nrow = 2, ncol = 8, byrow = TRUE)
+  # No automatic bids: the 3rd best FBS team (the FCS team's 99 never counts)
+  expect_equal(benchmark_strength(r, teams, field = 3L), c(22, 22))
+  # Two bids go to the best-rated champions, A's 30 and B's 20; C's champion (0) misses out and
+  # the independent (22) cannot be one. The 2nd best of the rest (25, 22, 10, 5, 0) is 22
+  expect_equal(benchmark_strength(r, teams, field = 4L, n_auto = 2L), c(22, 22))
+  # A title game upset: team 3 (5) is A's champion, so 30 and 25 are both at-large candidates
+  expect_equal(benchmark_strength(r, teams, field = 4L, n_auto = 2L, champions = 3L), c(25, 25))
+  # More bids than conferences: every champion gets one
+  expect_equal(benchmark_strength(r, teams, field = 5L, n_auto = 9L), c(22, 22))
+  # Champions are picked draw by draw
+  r2 <- rbind(r[1, ], c(25, 30, 5, 20, 10, 22, 0, 99))
+  expect_equal(benchmark_strength(r2, teams, field = 3L, n_auto = 2L), c(25, 25))
+})
+
+test_that("decided champions: title games played by the snapshot week, as team positions", {
+  games <- tibble::tibble(season_type = "regular", completed = c(TRUE, TRUE, FALSE, TRUE),
+                          notes = c("SEC Championship", NA, "ACC Championship", "Some Championship"),
+                          home_class = "fbs", away_class = "fbs", home_id = c(1L, 3L, 5L, 7L), away_id = c(2L, 4L, 6L, 8L),
+                          home_conference = c("SEC", "SEC", "ACC", "MAC"), away_conference = c("SEC", "SEC", "ACC", "Sun Belt"),
+                          neutral_site = TRUE, home_points = c(10L, 20L, NA, 30L), away_points = c(24L, 3L, NA, 7L),
+                          week_seq = c(16L, 15L, 16L, 16L))
+  ch <- conference_champions(games)   # the unplayed ACC game and the cross-conference game do not count
+  expect_equal(ch$team_id, 2L)
+  # Without labels: a round robin of four, then the top two meet again in the last week
+  rr <- t(combn(11:14, 2))
+  sched <- tibble::tibble(season_type = "regular", completed = TRUE, notes = NA_character_, home_class = "fbs", away_class = "fbs",
+                          home_id = c(rr[, 1], 11L), away_id = c(rr[, 2], 12L), home_conference = "X", away_conference = "X",
+                          neutral_site = c(rep(FALSE, 6), TRUE), home_points = 21L, away_points = c(rep(7L, 6), 28L),
+                          week_seq = c(1L, 2L, 3L, 3L, 2L, 1L, 4L))
+  expect_equal(conference_champions(sched), tibble::tibble(team_id = 12L, week_seq = 4L))
+  expect_equal(nrow(conference_champions(sched[1:6, ])), 0)    # no title game: no decided champion
+  open <- sched; open$completed[5] <- FALSE                    # a conference game still to play: not decided
+  expect_equal(nrow(conference_champions(open)), 0)
+  teams <- tibble::tibble(idx = 1:3, team_id = c(9L, 2L, 1L))
+  expect_equal(decided_champions(ch, teams, 16L), 2L)
+  expect_equal(decided_champions(ch, teams, 15L), integer(0))
+  expect_equal(decided_champions(NULL, teams, 16L), integer(0))
+})

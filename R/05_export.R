@@ -15,6 +15,8 @@ clean_color <- function(x) ifelse(is.na(x) | !grepl("^#[0-9A-Fa-f]{6}$", x), NA_
 
 #' @param sp each season's latest SP+ (read_sp()). CFBD has no weekly SP+ history, so it is shown on
 #'   each season's latest snapshot only: final SP+ for finished seasons, the newest fetch for the live one.
+#'   The same snapshot carries the resume recomputed from SP+ (sp_wab, sp_rrk; see sp_resume()),
+#'   against the last at-large team by SP+.
 #' @param game_times kickoff-time-TBD flags (read_game_times()); dates and times are US Central
 #' @return list of data frames, each small enough to inline in a static HTML page
 build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, backtest, cfg, sp = NULL,
@@ -51,6 +53,26 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
       dplyr::transmute(s = season, w = last, id = team_id, sp = round(sp, 1), sp_rk = sp_rank,
                        sp_off = round(sp_off, 1), sp_def = round(sp_def, 1))
     rank_rows <- rank_rows |> dplyr::left_join(sp_rows, by = c("s", "w", "id"))
+    # The resume recomputed from SP+ (sp_resume()), on the same games as that snapshot's own resume
+    tg <- snapshots$game_resume |>
+      dplyr::inner_join(last_week, by = "season") |>
+      dplyr::filter(week == last) |>
+      dplyr::inner_join(games_all |> dplyr::select(season, game_id, home_id, away_id, home_points, away_points, neutral_site),
+                        by = c("season", "game_id")) |>
+      dplyr::transmute(season, team_id, opp_id = ifelse(team_id == home_id, away_id, home_id),
+                       venue = ifelse(neutral_site, 0, ifelse(team_id == home_id, 1, -1)),
+                       win = as.integer(ifelse(team_id == home_id, home_points > away_points, away_points > home_points)))
+    sp_res <- dplyr::bind_rows(lapply(intersect(unique(sp$season), last_week$season), function(yr) {
+      wk <- last_week$last[last_week$season == yr]
+      p <- params[params$season == yr & params$week == wk, ]
+      par <- data.frame(hfa = p$hfa, sigma_marg = p$sigma, nu = p$nu, gamma_m = p$gamma, p_wide = p$p_wide, sigma_marg_w = p$sigma_w)
+      tm <- ratings[ratings$season == yr & ratings$week == wk, ]
+      champs <- decided_champions(conference_champions(games_all[games_all$season == yr, ]), tm, wk)
+      sp_resume(tm, tg[tg$season == yr, ], sp[sp$season == yr, ], par, p$family, cfg$benchmark_rank,
+                playoff_auto_bids(), champs) |>
+        dplyr::transmute(s = yr, w = wk, id = team_id, sp_wab = round(sp_wab, 2), sp_rrk = sp_resume_rank)
+    }))
+    if (nrow(sp_res) > 0) rank_rows <- rank_rows |> dplyr::left_join(sp_res, by = c("s", "w", "id"))
   }
 
   snaps_meta <- params |>
@@ -58,7 +80,8 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
                      hfa = round(hfa, 2), sigma = round(sigma, 2), nu = round(nu, 1),
                      noise_sd = round(noise_sd, 2), noise_slope = round(noise_slope, 4),
                      tau = round(tau, 2), base = round(base, 2),
-                     b_prev = round(b_prev, 2), passed, max_rhat = round(max_rhat, 3),
+                     b_prev = round(b_prev, 2), bench = round(bench, 1), bench_rank = round(bench_rank, 1),
+                     passed, max_rhat = round(max_rhat, 3),
                      min_ess = round(pmin(min_ess_bulk, min_ess_tail)), divergences)
 
   # Pre-game view of each game: the prediction made by the previous week's snapshot
@@ -140,7 +163,7 @@ build_dashboard_data <- function(ratings, snapshots, games_all, teams_meta, back
       calibration = backtest$calibration |> dplyr::mutate(bin = as.character(bin),
                                                           dplyr::across(where(is.numeric), \(x) round(x, 3)))
     ),
-    config = list(benchmark_rank = cfg$benchmark_rank, margin_family = cfg$margin_family,
+    config = list(benchmark_rank = cfg$benchmark_rank, n_auto = playoff_auto_bids(), margin_family = cfg$margin_family,
                   generated = format(Sys.time(), "%Y-%m-%d %H:%M %Z"),
                   # "%-d" (no leading zero) isn't portable, so build "Oct 6" by hand
                   sp_asof = if (is.null(sp) || nrow(sp) == 0) NULL else {
